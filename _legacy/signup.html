@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create account · Subbie - Storefront</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: "#F1F7F3", 600: "#245A41", 700: "#1B4633", 800: "#143528" },
+            ink: "#1C1C1C",
+            mute: "#5C5C5C",
+            line: "#D8D8D8",
+            paper: "#F3F4F2",
+          },
+          fontFamily: { sans: ['"IBM Plex Sans"', "Helvetica", "Arial", "sans-serif"] },
+        },
+      },
+    };
+  </script>
+</head>
+<body class="bg-paper text-ink font-sans antialiased min-h-screen">
+  <header class="bg-white border-b border-line">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <a href="index.html" class="flex items-center gap-2.5">
+        <span class="inline-flex h-9 w-9 items-center justify-center rounded-sm bg-brand-600 text-white font-bold text-sm">SB</span>
+        <div class="leading-tight">
+          <span class="block text-lg font-bold">Subbie</span>
+          <span class="block text-[11px] text-mute">Storefront</span>
+        </div>
+      </a>
+      <a href="login.html" class="text-sm text-mute hover:text-brand-600">Already have an account?</a>
+    </div>
+  </header>
+
+  <main class="max-w-md mx-auto px-4 py-12">
+    <div class="bg-white border border-line p-6 sm:p-8">
+      <p class="text-xs font-semibold uppercase tracking-wide text-brand-600 mb-2">Account</p>
+      <h1 class="text-2xl font-bold text-brand-800">Create account</h1>
+      <p class="mt-2 text-sm text-mute">Create a Subbie Storefront account to shop and request quotes.</p>
+
+      <form id="signupForm" class="mt-6 space-y-4">
+        <div>
+          <label for="name" class="block text-sm font-medium mb-1">Full name</label>
+          <input id="name" name="name" type="text" required placeholder="Alex Chen"
+            class="w-full border border-line px-3 py-2 text-sm outline-none focus:border-brand-600" />
+        </div>
+        <div>
+          <label for="email" class="block text-sm font-medium mb-1">Email</label>
+          <input id="email" name="email" type="email" required placeholder="you@company.com"
+            class="w-full border border-line px-3 py-2 text-sm outline-none focus:border-brand-600" />
+        </div>
+        <div>
+          <label for="password" class="block text-sm font-medium mb-1">Password</label>
+          <input id="password" name="password" type="password" required minlength="4" placeholder="••••••••"
+            class="w-full border border-line px-3 py-2 text-sm outline-none focus:border-brand-600" />
+        </div>
+        <button type="submit" class="w-full rounded-sm bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">
+          Create account
+        </button>
+      </form>
+
+      <p class="mt-5 text-sm text-mute">
+        Already registered?
+        <a href="login.html" class="font-semibold text-brand-600 hover:underline">Login</a>
+      </p>
+    </div>
+  </main>
+
+  <script src="js/store.js"></script>
+  <script>
+    document.getElementById("signupForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const name = document.getElementById("name").value.trim();
+      const email = document.getElementById("email").value.trim();
+      loginUser({ email, name });
+      window.location.href = consumePendingAfterAuth();
+    });
+  </script>
+</body>
+</html>

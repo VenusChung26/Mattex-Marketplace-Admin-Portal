@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My RFQs · Subbie - Storefront</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: "#F1F7F3", 100: "#DCECE2", 600: "#245A41", 700: "#1B4633", 800: "#143528" },
+            ink: "#1C1C1C",
+            mute: "#5C5C5C",
+            line: "#D8D8D8",
+            paper: "#F3F4F2",
+          },
+          fontFamily: { sans: ['"IBM Plex Sans"', "Helvetica", "Arial", "sans-serif"] },
+        },
+      },
+    };
+  </script>
+  <style>
+    .fade-in { animation: fade-in 0.28s ease-out; }
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body class="bg-paper text-ink font-sans antialiased min-h-screen">
+  <header class="bg-white border-b border-line">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <a href="index.html" class="flex items-center gap-2.5">
+        <span class="inline-flex h-9 w-9 items-center justify-center rounded-sm bg-brand-600 text-white font-bold text-sm">SB</span>
+        <div class="leading-tight">
+          <span class="block text-lg font-bold">Subbie</span>
+          <span class="block text-[11px] text-mute">Storefront</span>
+        </div>
+      </a>
+      <nav class="flex items-center gap-3 text-sm">
+        <a href="index.html#products" class="text-mute hover:text-brand-600">Catalog</a>
+        <a href="rfq.html" class="text-mute hover:text-brand-600">RFQ draft</a>
+        <a href="login.html" class="font-semibold text-brand-600 hover:underline">Account</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-8 sm:py-10 fade-in">
+    <p class="text-xs font-semibold uppercase tracking-wide text-brand-600">History</p>
+    <h1 class="mt-1 text-2xl sm:text-3xl font-bold text-brand-800">My RFQs</h1>
+    <p class="mt-2 text-sm text-mute">Submitted quote requests on this browser. Open a row for details or reorder.</p>
+
+    <div id="gate" class="hidden mt-8 bg-white border border-line p-6">
+      <h2 class="text-lg font-bold text-brand-800">Login required</h2>
+      <p class="mt-2 text-sm text-mute">Sign in to see your submitted RFQs.</p>
+      <a href="login.html" class="inline-flex mt-5 rounded-sm bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">Login</a>
+    </div>
+
+    <div id="empty" class="hidden mt-8 bg-white border border-line p-8 text-center">
+      <p class="text-lg font-semibold text-brand-800">No RFQs yet</p>
+      <p class="mt-2 text-sm text-mute">Submit a draft from your cart to see it here.</p>
+      <a href="rfq.html" class="inline-flex mt-5 rounded-sm bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">Open RFQ draft</a>
+    </div>
+
+    <div id="list" class="hidden mt-6 space-y-3"></div>
+
+    <div id="detail" class="hidden mt-6 bg-white border border-line p-5 sm:p-6 fade-in"></div>
+  </main>
+
+  <script src="js/store.js"></script>
+  <script>
+    const gate = document.getElementById("gate");
+    const empty = document.getElementById("empty");
+    const list = document.getElementById("list");
+    const detail = document.getElementById("detail");
+    const focusId = getQueryParam("id");
+
+    function formatWhen(iso) {
+      try {
+        return new Date(iso).toLocaleString();
+      } catch {
+        return iso;
+      }
+    }
+
+    function showDetail(id) {
+      const rfq = getRfq(id);
+      if (!rfq) {
+        detail.classList.add("hidden");
+        return;
+      }
+      detail.classList.remove("hidden");
+      detail.innerHTML = `
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-wide text-brand-600">${rfq.status}</p>
+            <h2 class="text-xl font-bold text-brand-800">${rfq.id}</h2>
+            <p class="mt-1 text-xs text-mute">${formatWhen(rfq.submittedAt)}</p>
+          </div>
+          <button type="button" data-reorder="${rfq.id}" class="rounded-sm bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
+            Order again
+          </button>
+        </div>
+        <ul class="mt-5 space-y-2 text-sm border-t border-line pt-4">
+          ${rfq.lines
+            .map(
+              (l) =>
+                `<li class="flex justify-between gap-3"><span>${l.name} × ${l.qty}${
+                  l.supplier ? `<span class="block text-xs text-mute">${l.supplier}</span>` : ""
+                }</span><span class="text-mute">${formatPrice(
+                  l.unitPrice
+                )}</span></li>`
+            )
+            .join("")}
+        </ul>
+        ${rfq.note ? `<p class="mt-4 text-sm text-mute"><span class="font-medium text-ink">Note:</span> ${rfq.note}</p>` : ""}
+        <p class="mt-4 text-sm font-semibold text-brand-600">Priced subtotal: ${formatPrice(rfq.pricedSubtotal)}</p>
+        ${
+          rfq.unpricedCount
+            ? `<p class="text-xs text-mute mt-1">${rfq.unpricedCount} item(s) price upon request</p>`
+            : ""
+        }
+      `;
+    }
+
+    function render() {
+      if (!isLoggedIn()) {
+        gate.classList.remove("hidden");
+        empty.classList.add("hidden");
+        list.classList.add("hidden");
+        detail.classList.add("hidden");
+        return;
+      }
+      gate.classList.add("hidden");
+      const rfqs = getRfqs();
+      if (!rfqs.length) {
+        empty.classList.remove("hidden");
+        list.classList.add("hidden");
+        detail.classList.add("hidden");
+        return;
+      }
+      empty.classList.add("hidden");
+      list.classList.remove("hidden");
+      list.innerHTML = rfqs
+        .map(
+          (r) => `
+        <button type="button" data-open="${r.id}"
+          class="w-full text-left bg-white border border-line px-4 py-4 hover:border-brand-600 transition-colors">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p class="font-semibold text-brand-800">${r.id}</p>
+              <p class="text-xs text-mute mt-0.5">${formatWhen(r.submittedAt)} · ${r.lines.length} line(s)</p>
+            </div>
+            <div class="text-right">
+              <p class="text-xs uppercase tracking-wide text-brand-600 font-semibold">${r.status}</p>
+              <p class="text-sm font-semibold">${formatPrice(r.pricedSubtotal)}</p>
+            </div>
+          </div>
+        </button>`
+        )
+        .join("");
+
+      if (focusId) showDetail(focusId);
+      else if (rfqs[0]) showDetail(rfqs[0].id);
+    }
+
+    list.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-open]");
+      if (!btn) return;
+      showDetail(btn.getAttribute("data-open"));
+    });
+
+    detail.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-reorder]");
+      if (!btn) return;
+      const result = reorderRfq(btn.getAttribute("data-reorder"));
+      if (result.ok) window.location.href = "rfq.html";
+    });
+
+    render();
+  </script>
+</body>
+</html>

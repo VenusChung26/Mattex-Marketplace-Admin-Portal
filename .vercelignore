@@ -1,0 +1,10 @@
+.tmp-pillow
+node_modules
+dist
+.DS_Store
+*.log
+.env*
+.local-shared-store.json
+.local-shared-store.lock
+.cursor
+supabase/.temp

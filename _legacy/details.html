@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product details · Subbie - Storefront</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: "#F1F7F3", 600: "#245A41", 700: "#1B4633", 800: "#143528" },
+            ink: "#1C1C1C",
+            mute: "#5C5C5C",
+            line: "#D8D8D8",
+            paper: "#F3F4F2",
+          },
+          fontFamily: { sans: ['"IBM Plex Sans"', "Helvetica", "Arial", "sans-serif"] },
+        },
+      },
+    };
+  </script>
+</head>
+<body class="bg-paper text-ink font-sans antialiased min-h-screen">
+  <header class="bg-white border-b border-line">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <a href="index.html" class="flex items-center gap-2.5">
+        <span class="inline-flex h-9 w-9 items-center justify-center rounded-sm bg-brand-600 text-white font-bold text-sm">SB</span>
+        <div class="leading-tight">
+          <span class="block text-lg font-bold">Subbie</span>
+          <span class="block text-[11px] text-mute">Storefront</span>
+        </div>
+      </a>
+      <div class="flex items-center gap-3">
+        <a href="index.html#products" class="text-sm text-mute hover:text-brand-600">All products</a>
+        <a href="rfq.html" class="text-sm text-mute hover:text-brand-600">RFQ draft</a>
+        <a href="login.html" class="inline-flex items-center rounded-sm bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Login</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-8 sm:py-10">
+    <div id="notFound" class="hidden bg-white border border-line p-8">
+      <h1 class="text-xl font-bold text-brand-800">Product not found</h1>
+      <p class="mt-2 text-sm text-mute">This product is unavailable.</p>
+      <a href="index.html" class="inline-flex mt-5 rounded-sm bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Back to storefront</a>
+    </div>
+
+    <div id="productView" class="hidden grid lg:grid-cols-2 gap-6 lg:gap-10">
+      <div class="bg-white border border-line overflow-hidden">
+        <img id="productImage" src="" alt="" class="w-full aspect-[4/3] object-cover" />
+      </div>
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-wide text-brand-600">Product details</p>
+        <p id="productCategory" class="mt-2 text-xs font-semibold uppercase tracking-wide text-mute"></p>
+        <h1 id="productName" class="mt-1 text-3xl font-bold text-brand-800"></h1>
+        <p id="productSupplier" class="mt-2 text-sm text-mute"></p>
+        <p id="productPrice" class="mt-3 text-2xl font-bold text-brand-600"></p>
+        <p id="productSku" class="mt-1 text-xs text-mute"></p>
+        <p id="productDesc" class="mt-5 text-sm text-mute leading-relaxed"></p>
+
+        <h2 class="mt-8 text-sm font-semibold text-ink">Specifications</h2>
+        <ul id="productSpecs" class="mt-3 space-y-2 text-sm text-mute"></ul>
+
+        <div class="mt-8 flex flex-wrap gap-2">
+          <button id="addBtn" type="button" class="rounded-sm bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">
+            Add to Cart
+          </button>
+          <a id="askBtn" href="#" class="rounded-sm border border-brand-600 px-4 py-2.5 text-sm font-semibold text-brand-600 hover:bg-brand-50">
+            Ask for Price
+          </a>
+          <a href="index.html#products" class="rounded-sm border border-line px-4 py-2.5 text-sm font-semibold text-ink hover:border-brand-600 hover:text-brand-600">
+            Back to catalog
+          </a>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Auth modal -->
+  <div id="authModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4" aria-hidden="true">
+    <div class="absolute inset-0 bg-black/35" data-close-auth></div>
+    <div class="relative bg-white border border-line max-w-sm w-full p-6" role="dialog" aria-modal="true">
+      <button type="button" class="absolute top-3 right-3 text-mute hover:text-ink text-xl leading-none" data-close-auth aria-label="Close">×</button>
+      <p class="text-xs font-semibold uppercase tracking-wide text-brand-600 mb-2">Account required</p>
+      <h3 class="text-xl font-bold text-brand-800">Create an account or login?</h3>
+      <p class="mt-3 text-sm text-mute">You need to be signed in before adding items to your cart.</p>
+      <div class="mt-6 grid grid-cols-1 gap-2">
+        <a href="signup.html" class="inline-flex justify-center rounded-sm bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">Create account</a>
+        <a href="login.html" class="inline-flex justify-center rounded-sm border border-brand-600 px-4 py-2.5 text-sm font-semibold text-brand-600 hover:bg-brand-50">Login</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/store.js"></script>
+  <script>
+    const id = getQueryParam("id");
+    const product = getProduct(id);
+    const authModal = document.getElementById("authModal");
+
+    if (!product) {
+      document.getElementById("notFound").classList.remove("hidden");
+      document.title = "Not found · Subbie - Storefront";
+    } else {
+      document.getElementById("productView").classList.remove("hidden");
+      document.title = `${product.name} · Subbie - Storefront`;
+      document.getElementById("productImage").src = product.image;
+      document.getElementById("productImage").alt = product.name;
+      document.getElementById("productName").textContent = product.name;
+      document.getElementById("productCategory").textContent = product.category || "";
+      document.getElementById("productSupplier").textContent = product.supplier
+        ? `Supplier: ${product.supplier}`
+        : "";
+      document.getElementById("productPrice").textContent = formatPrice(product.price);
+      document.getElementById("productSku").textContent = `SKU: ${product.id.toUpperCase()}`;
+      document.getElementById("productDesc").textContent = product.description;
+      document.getElementById("productSpecs").innerHTML = product.specs
+        .map((s) => `<li class="border-b border-line pb-2">• ${s}</li>`)
+        .join("");
+      document.getElementById("askBtn").href = `whatsapp.html?id=${product.id}`;
+
+      document.getElementById("addBtn").addEventListener("click", () => {
+        if (!isLoggedIn()) {
+          setPendingCart(product.id);
+          authModal.classList.remove("hidden");
+          authModal.classList.add("flex");
+          return;
+        }
+        addToCart(product.id);
+        window.location.href = "rfq.html";
+      });
+    }
+
+    authModal.addEventListener("click", (e) => {
+      if (e.target.closest("[data-close-auth]")) {
+        authModal.classList.add("hidden");
+        authModal.classList.remove("flex");
+      }
+    });
+  </script>
+</body>
+</html>

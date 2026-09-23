@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RFQ review · Subbie - Storefront</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: "#F1F7F3", 100: "#DCECE2", 600: "#245A41", 700: "#1B4633", 800: "#143528" },
+            ink: "#1C1C1C",
+            mute: "#5C5C5C",
+            line: "#D8D8D8",
+            paper: "#F3F4F2",
+          },
+          fontFamily: { sans: ['"IBM Plex Sans"', "Helvetica", "Arial", "sans-serif"] },
+        },
+      },
+    };
+  </script>
+  <style>
+    .fade-in { animation: fade-in 0.28s ease-out; }
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body class="bg-paper text-ink font-sans antialiased min-h-screen">
+  <header class="bg-white border-b border-line">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <a href="index.html" class="flex items-center gap-2.5">
+        <span class="inline-flex h-9 w-9 items-center justify-center rounded-sm bg-brand-600 text-white font-bold text-sm">SB</span>
+        <div class="leading-tight">
+          <span class="block text-lg font-bold">Subbie</span>
+          <span class="block text-[11px] text-mute">Storefront</span>
+        </div>
+      </a>
+      <nav class="flex items-center gap-3 text-sm">
+        <a href="index.html#products" class="text-mute hover:text-brand-600">Catalog</a>
+        <a href="rfqs.html" class="text-mute hover:text-brand-600">My RFQs</a>
+        <a href="login.html" class="font-semibold text-brand-600 hover:underline">Account</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-8 sm:py-10 fade-in">
+    <p class="text-xs font-semibold uppercase tracking-wide text-brand-600">RFQ draft</p>
+    <h1 class="mt-1 text-2xl sm:text-3xl font-bold text-brand-800">Review your quote request</h1>
+    <p class="mt-2 text-sm text-mute">Cart and RFQ draft are the same list. Adjust quantities, then submit.</p>
+
+    <div id="gate" class="hidden mt-8 bg-white border border-line p-6">
+      <h2 class="text-lg font-bold text-brand-800">Login required</h2>
+      <p class="mt-2 text-sm text-mute">Sign in to review and submit an RFQ.</p>
+      <div class="mt-5 flex flex-wrap gap-2">
+        <a href="login.html" class="rounded-sm bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">Login</a>
+        <a href="signup.html" class="rounded-sm border border-brand-600 px-4 py-2.5 text-sm font-semibold text-brand-600 hover:bg-brand-50">Create account</a>
+      </div>
+    </div>
+
+    <div id="empty" class="hidden mt-8 bg-white border border-line p-8 text-center">
+      <p class="text-lg font-semibold text-brand-800">Your RFQ draft is empty</p>
+      <p class="mt-2 text-sm text-mute">Add products from the catalog to start a quote request.</p>
+      <a href="index.html#products" class="inline-flex mt-5 rounded-sm bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">Browse catalog</a>
+    </div>
+
+    <div id="review" class="hidden mt-6 space-y-4">
+      <div id="lines" class="bg-white border border-line divide-y divide-line"></div>
+
+      <div class="bg-white border border-line p-4 sm:p-5">
+        <label for="note" class="block text-sm font-medium mb-1">Order note (optional)</label>
+        <textarea id="note" rows="3" placeholder="Delivery window, site constraints, alternate specs…"
+          class="w-full border border-line px-3 py-2 text-sm outline-none focus:border-brand-600"></textarea>
+      </div>
+
+      <div class="bg-white border border-line p-4 sm:p-5 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+        <div>
+          <p class="text-sm text-mute">Priced subtotal</p>
+          <p id="subtotal" class="text-2xl font-bold text-brand-600"></p>
+          <p id="unpriced" class="mt-1 text-xs text-mute"></p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <a href="index.html#products" class="rounded-sm border border-line px-4 py-2.5 text-sm font-semibold hover:border-brand-600 hover:text-brand-600">Keep shopping</a>
+          <button id="submitBtn" type="button" class="rounded-sm bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">
+            Submit RFQ
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="success" class="hidden mt-8 bg-brand-50 border border-brand-100 p-6 fade-in">
+      <p class="text-xs font-semibold uppercase tracking-wide text-brand-600">Submitted</p>
+      <h2 class="mt-1 text-xl font-bold text-brand-800">RFQ sent</h2>
+      <p id="successId" class="mt-2 text-sm text-mute"></p>
+      <div class="mt-5 flex flex-wrap gap-2">
+        <a href="rfqs.html" class="rounded-sm bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">View my RFQs</a>
+        <a href="index.html#products" class="rounded-sm border border-brand-600 px-4 py-2.5 text-sm font-semibold text-brand-600 hover:bg-white">Back to catalog</a>
+      </div>
+    </div>
+  </main>
+
+  <script src="js/store.js"></script>
+  <script>
+    const gate = document.getElementById("gate");
+    const empty = document.getElementById("empty");
+    const review = document.getElementById("review");
+    const success = document.getElementById("success");
+    const linesEl = document.getElementById("lines");
+    const noteEl = document.getElementById("note");
+    const subtotalEl = document.getElementById("subtotal");
+    const unpricedEl = document.getElementById("unpriced");
+
+    function render() {
+      if (!isLoggedIn()) {
+        gate.classList.remove("hidden");
+        empty.classList.add("hidden");
+        review.classList.add("hidden");
+        return;
+      }
+      gate.classList.add("hidden");
+      const totals = draftTotals(getDraft());
+      if (!totals.lines.length) {
+        empty.classList.remove("hidden");
+        review.classList.add("hidden");
+        return;
+      }
+      empty.classList.add("hidden");
+      review.classList.remove("hidden");
+      noteEl.value = totals.note;
+      subtotalEl.textContent = formatPrice(totals.pricedSubtotal);
+      unpricedEl.textContent = totals.unpricedCount
+        ? `${totals.unpricedCount} item(s) priced upon request — not included in subtotal`
+        : "All lines have listed prices";
+
+      linesEl.innerHTML = totals.lines
+        .map(
+          (l) => `
+        <div class="p-4 sm:p-5 flex gap-4 items-start" data-line="${l.productId}">
+          <div class="w-16 h-16 shrink-0 border border-line bg-brand-50 overflow-hidden">
+            ${l.image ? `<img src="${l.image}" alt="" class="w-full h-full object-cover" />` : ""}
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="font-semibold text-ink">${l.name}</p>
+            <p class="mt-0.5 text-xs text-mute">${l.supplier ? `Supplier: ${l.supplier}` : ""}</p>
+            <p class="mt-1 text-sm text-brand-600">${formatPrice(l.unitPrice)}</p>
+            <div class="mt-3 flex flex-wrap items-center gap-3">
+              <label class="text-xs text-mute">Qty
+                <input type="number" min="1" step="1" value="${l.qty}" data-qty="${l.productId}"
+                  class="ml-2 w-16 border border-line px-2 py-1 text-sm outline-none focus:border-brand-600" />
+              </label>
+              <button type="button" data-remove="${l.productId}" class="text-xs font-semibold text-mute hover:text-brand-600">Remove</button>
+            </div>
+          </div>
+          <p class="text-sm font-semibold shrink-0">${l.unitPrice == null ? "—" : formatPrice(l.unitPrice * l.qty)}</p>
+        </div>`
+        )
+        .join("");
+    }
+
+    linesEl.addEventListener("change", (e) => {
+      const input = e.target.closest("[data-qty]");
+      if (!input) return;
+      setLineQty(input.getAttribute("data-qty"), input.value);
+      render();
+    });
+
+    linesEl.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-remove]");
+      if (!btn) return;
+      removeLine(btn.getAttribute("data-remove"));
+      render();
+    });
+
+    noteEl.addEventListener("change", () => setDraftNote(noteEl.value));
+    noteEl.addEventListener("blur", () => setDraftNote(noteEl.value));
+
+    document.getElementById("submitBtn").addEventListener("click", () => {
+      setDraftNote(noteEl.value);
+      const result = submitRfq();
+      if (!result.ok) {
+        alert(result.error === "empty" ? "Your RFQ draft is empty." : "Please login first.");
+        render();
+        return;
+      }
+      review.classList.add("hidden");
+      success.classList.remove("hidden");
+      document.getElementById("successId").textContent =
+        `${result.rfq.id} · ${result.rfq.lines.length} line(s) · ${formatPrice(result.rfq.pricedSubtotal)}` +
+        (result.rfq.unpricedCount ? ` · ${result.rfq.unpricedCount} upon request` : "");
+    });
+
+    render();
+  </script>
+</body>
+</html>

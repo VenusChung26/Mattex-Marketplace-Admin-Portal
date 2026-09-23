@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/assets/mattex-favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mattex Marketplace</title>
+    <!--seo-head-->
+    <meta name="description" content="Engineering products, ready to quote. Specs first, then a clean RFQ path for construction buyers." />
+    <meta property="og:title" content="Mattex Marketplace" />
+    <meta property="og:description" content="Engineering products, ready to quote. Specs first, then a clean RFQ path for construction buyers." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Mattex Marketplace" />
+    <meta property="og:image" content="/og-default.jpg" />
+    <meta property="og:image:url" content="/og-default.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Mattex Marketplace" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/og-default.jpg" />
+    <!--/seo-head-->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                50: "#F1F7F3",
+                100: "#DCECE2",
+                200: "#B7D6C3",
+                400: "#4F8F6C",
+                500: "#2F6B4F",
+                600: "#245A41",
+                700: "#1B4633",
+                800: "#143528",
+                900: "#0C1F17",
+              },
+              ink: "#121816",
+              mute: "#5A665F",
+              line: "#D6DDD8",
+              paper: "#F6F7F5",
+              charcoal: "#101513",
+            },
+            fontFamily: {
+              sans: ['"IBM Plex Sans"', "Helvetica", "Arial", "sans-serif"],
+              display: ['"IBM Plex Serif"', "Georgia", "serif"],
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      .mattex-boot {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(900px 480px at 12% 8%, rgba(79, 143, 108, 0.28), transparent 58%),
+          radial-gradient(720px 420px at 92% 92%, rgba(36, 90, 65, 0.22), transparent 52%),
+          #101513;
+        color: #f6f7f5;
+        text-align: center;
+        padding: 2rem 1.25rem;
+      }
+      .mattex-boot-orb {
+        position: relative;
+        width: 7.25rem;
+        height: 7.25rem;
+        margin: 0 auto 1.35rem;
+        display: grid;
+        place-items: center;
+      }
+      .mattex-boot-orb::before,
+      .mattex-boot-orb::after {
+        content: "";
+        position: absolute;
+        inset: -8%;
+        border-radius: 50%;
+        border: 1.5px solid rgba(143, 203, 155, 0.38);
+        animation: mattex-boot-pulse 1.9s ease-out infinite;
+      }
+      .mattex-boot-orb::after { animation-delay: 0.75s; }
+      .mattex-boot-logo {
+        position: relative;
+        z-index: 1;
+        width: 4.75rem;
+        height: 4.75rem;
+        object-fit: contain;
+        filter: drop-shadow(0 14px 28px rgba(0, 0, 0, 0.38));
+        animation: mattex-boot-float 2.4s ease-in-out infinite;
+      }
+      .mattex-boot h1 {
+        margin: 0;
+        font-family: "IBM Plex Serif", Georgia, serif;
+        font-size: clamp(1.45rem, 3vw, 1.9rem);
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+      .mattex-boot p {
+        margin: 0.7rem auto 0;
+        max-width: 28rem;
+        color: rgba(246, 247, 245, 0.72);
+        font-size: 0.95rem;
+        line-height: 1.55;
+      }
+      .mattex-boot-status {
+        margin-top: 0.35rem;
+        font-size: 0.78rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #8fcb9b;
+      }
+      .mattex-boot-bar {
+        width: min(16rem, 70vw);
+        height: 3px;
+        margin: 1.35rem auto 0;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .mattex-boot-bar span {
+        display: block;
+        height: 100%;
+        width: 42%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #4f8f6c, #8fcb9b, #4f8f6c);
+        animation: mattex-boot-shimmer 1.15s ease-in-out infinite;
+      }
+      @keyframes mattex-boot-pulse {
+        from { transform: scale(0.78); opacity: 0.75; }
+        to { transform: scale(1.42); opacity: 0; }
+      }
+      @keyframes mattex-boot-float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-7px); }
+      }
+      @keyframes mattex-boot-shimmer {
+        from { transform: translateX(-130%); }
+        to { transform: translateX(280%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .mattex-boot-orb::before,
+        .mattex-boot-orb::after,
+        .mattex-boot-logo,
+        .mattex-boot-bar span { animation: none; }
+      }
+    </style>
+  </head>
+  <body class="bg-paper text-ink font-sans antialiased">
+    <div id="root"><!--app-root-->
+      <div data-ssr="mattex" class="mattex-boot">
+        <div class="mattex-boot-orb" aria-hidden="true">
+          <img class="mattex-boot-logo" src="/assets/mattex-logo.png" alt="" />
+        </div>
+        <h1>Mattex Marketplace</h1>
+        <p>Engineering products, ready to quote. Specs first, then a clear quote path for construction buyers.</p>
+        <div class="mattex-boot-bar" aria-hidden="true"><span></span></div>
+        <p class="mattex-boot-status">Loading catalog</p>
+      </div>
+    <!--/app-root--></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

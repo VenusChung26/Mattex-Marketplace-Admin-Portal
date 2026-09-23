@@ -1,0 +1,1699 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PROTOTYPE — Admin Portal 狀態模型</title>
+  <style>
+    :root {
+      --brand: #245a41;
+      --brand-soft: #e8f2ec;
+      --ink: #1a1f1c;
+      --muted: #5c6b63;
+      --line: #d5e0d9;
+      --warn: #8a5a00;
+      --warn-bg: #fff6e5;
+      --danger: #8b2e2e;
+      --danger-bg: #fbeeee;
+      --ok: #1d6b45;
+      --ok-bg: #e7f6ee;
+      --bg: #f4f7f5;
+      --card: #fff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Songti TC", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #d9ebe1 0%, transparent 55%),
+        var(--bg);
+      line-height: 1.45;
+    }
+    button, input, select, textarea {
+      font: inherit;
+    }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 24px 18px 72px; }
+    .badge {
+      display: inline-block;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--brand);
+      background: var(--brand-soft);
+      border: 1px solid #b7d2c4;
+      padding: 4px 8px;
+      margin-bottom: 10px;
+    }
+    h1 { font-size: 1.65rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+    .lede { color: var(--muted); margin: 0 0 22px; max-width: 78ch; }
+    h2 {
+      font-size: 0.75rem;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 10px;
+    }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .state-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px 14px;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.88rem;
+    }
+    @media (max-width: 900px) { .state-grid { grid-template-columns: 1fr 1fr; } }
+    .field label {
+      display: block;
+      font-size: 0.7rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+    .delta {
+      grid-column: 1 / -1;
+      padding: 8px 10px;
+      border: 1px solid #efd7a2;
+      background: var(--warn-bg);
+      font-size: 0.88rem;
+    }
+    .delta.ok { background: var(--ok-bg); border-color: #b7dcc6; }
+    .delta.err { background: var(--danger-bg); border-color: #e4b4b4; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .tab, .chip, .btn {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 7px 10px;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    .tab.on, .chip.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+    .btn.primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+    .btn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+    .btn.warn { background: var(--warn); color: #fff; border-color: var(--warn); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .scenario p { margin: 0 0 10px; color: var(--muted); }
+    .steps { display: flex; flex-direction: column; gap: 8px; }
+    .step {
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 8px; border: 1px dashed var(--line);
+    }
+    .step.done { opacity: 0.55; }
+    .step.now { border-style: solid; border-color: var(--brand); background: var(--brand-soft); }
+    .n {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.72rem; color: var(--muted); min-width: 1.6rem; padding-top: 6px;
+    }
+    .surfaces { display: flex; gap: 8px; margin: 8px 0 12px; }
+    table { width: 100%; border-collapse: collapse; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.8rem; }
+    th, td { border-bottom: 1px solid var(--line); padding: 7px 6px; text-align: left; vertical-align: top; }
+    th { font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+    .scroll { overflow: auto; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+    .card { border: 1px solid var(--line); padding: 12px; background: #fff; }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    .tag { display: inline-block; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; padding: 2px 6px; border: 1px solid var(--line); margin: 0 4px 4px 0; }
+    .tag.green { background: #e7f6ee; color: var(--ok); }
+    .tag.hit { background: #fff6e5; color: var(--warn); }
+    .tag.hold { background: var(--warn-bg); }
+    .tag.draft { background: #eef1f4; }
+    .tag.del { background: var(--danger-bg); color: var(--danger); }
+    .imgph {
+      height: 88px; display: flex; align-items: center; justify-content: center;
+      background: #eef3f0; color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .imgph img { max-height: 88px; max-width: 100%; object-fit: cover; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .form label { display: block; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.72rem; color: var(--muted); margin: 8px 0 4px; }
+    .form input, .form select, .form textarea {
+      width: 100%; padding: 7px 8px; border: 1px solid var(--line); background: #fff;
+    }
+    .form textarea { min-height: 72px; }
+    .split { display: grid; grid-template-columns: 1.4fr 0.8fr; gap: 14px; }
+    @media (max-width: 980px) { .split, .row { grid-template-columns: 1fr; } }
+    .pre {
+      font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+      background: #f3f6f4; padding: 10px; overflow: auto; max-height: 220px; white-space: pre-wrap;
+    }
+    .nav { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="badge">Throwaway prototype · 唔改 production storefront</div>
+    <h1>Admin Portal：貨、帳、Report、RFQ → TMS</h1>
+    <p class="lede">
+      問嘅係狀態模型啱唔啱：草稿／Provisional SKU／Publish／Hold／軟刪、Excel 列級匯入、已上架貨被 report、買家 login 送 RFQ、Sales 接單／退回／拒絕、accepted 後先模擬上傳 TMS。
+      上面導覽係極端情況；下面可以切去迷你買家面或 Sales 後台自由撳。
+    </p>
+
+    <section class="panel">
+      <h2>而家嘅狀態</h2>
+      <div class="state-grid" id="state-panel"></div>
+    </section>
+
+    <section class="panel">
+      <h2>導覽（重置後按步驟）</h2>
+      <div class="tabs" id="scenario-tabs"></div>
+      <div id="scenario-body"></div>
+    </section>
+
+    <div class="surfaces">
+      <button class="chip" data-surface="buyer" id="chip-buyer">迷你買家 Storefront</button>
+      <button class="chip" data-surface="admin" id="chip-admin">Sales Admin</button>
+    </div>
+    <div id="surface"></div>
+  </div>
+
+<script>
+const SubbieAdminModel = (() => {
+  const CATEGORIES = [
+    "Reinforcement Mesh",
+    "Dense Mesh Flame Retardant Safety Net",
+    "Gypsum Block",
+    "XPS Foam Board",
+    "Tiles",
+    "Vinyl",
+    "Precasted Concrete",
+    "Cat Ladder",
+    "Logistics Storage Platform & Steel Shelving",
+    "Handrails",
+    "Balustrades",
+    "Forge-welded Grating",
+    "Press-Lock Grating",
+    "GU Type Drainage Gratings",
+    "GT Type Drainage Gratings",
+    "Gypsum Board",
+    "Software",
+  ];
+
+  const EXCEL_HEADERS = [
+    "Provisional SKU ID",
+    "Official SKU",
+    "Category",
+    "IMG (Gen)",
+    "Product name",
+    "Size / Description",
+    "Certifications / Relevant Reports",
+    "Primary Spec Description",
+    "Sales Unit",
+    "MOQ",
+    "Lead Time",
+    "Purposes (Indicator for Searching)",
+    "Remark",
+    "Tag (Green / Hit)",
+  ];
+
+  const HEADER_MAP = {
+    "provisional sku id": "provisionalSku",
+    "official sku": "productNo",
+    "category": "category",
+    "img (gen)": "image",
+    "product name": "name",
+    "size / description": "sizeDesc",
+    "certifications / relevant reports": "certifications",
+    "primary spec description": "primarySpec",
+    "sales unit": "salesUnit",
+    "moq": "moq",
+    "lead time": "leadTime",
+    "purposes (indicator for searching)": "purposes",
+    "remark": "remark",
+    "tag (green / hit)": "tags",
+  };
+
+  function clone(v) {
+    return JSON.parse(JSON.stringify(v));
+  }
+
+  function seed() {
+    return {
+      seq: { tmp: 4, rfq: 100, report: 20, tms: 500, staff: 2 },
+      session: { role: "anon", email: "" },
+      staff: [
+        { email: "sales@mattex.com", name: "Bootstrap Sales", password: "mattex", enabled: true, bootstrap: true },
+        { email: "ops@mattex.com", name: "Second Sales", password: "mattex", enabled: true, bootstrap: false },
+      ],
+      buyers: [
+        {
+          email: "buyer@harbour.hk",
+          name: "Alex Chan",
+          password: "harbour",
+          enabled: true,
+          companyName: "Harbour Construction",
+          companyPhone: "2123 0001",
+          companyAddress: "Kowloon Bay",
+        },
+      ],
+      products: [
+        product({
+          id: "p-mesh",
+          provisionalSku: "TMP-0001",
+          productNo: "MKT-MESH-A142",
+          category: "Reinforcement Mesh",
+          name: "A142 — 2.1m×4.8m / Customize",
+          sizeDesc: "2.1m×4.8m / Customize",
+          certifications: "BS4483:2005; BS4449:2005",
+          primarySpec: "Square mesh for road / slab",
+          salesUnit: "sheet",
+          moq: 90,
+          leadTime: "3-7 days",
+          purposes: ["Anti-cracking", "Pavement laying", "路面防裂"],
+          remark: "",
+          green: false,
+          hit: true,
+          image: "/assets/prod-mesh.png",
+          imageSource: "upload",
+          published: true,
+          held: false,
+          discontinued: false,
+          deleted: false,
+        }),
+        product({
+          id: "p-vinyl",
+          provisionalSku: "TMP-0002",
+          productNo: "MKT-VINYL-HETERO",
+          category: "Vinyl",
+          name: "Heterogeneous Vinyl Flooring — 2×20m",
+          sizeDesc: "2×20m roll",
+          certifications: "EN 649",
+          primarySpec: "Heterogeneous vinyl sheet",
+          salesUnit: "m²",
+          moq: 20,
+          leadTime: "7-14 days",
+          purposes: [
+            "Vinyl flooring", "Rubber Floor", "vinyl floor mats", "Heterogeneous Vinyl",
+            "乙烯基地板", "膠地板", "膠地蓆", "異質乙烯基", "卷材", "無縫膠地板",
+          ],
+          remark: "Search keywords from Excel",
+          green: true,
+          hit: false,
+          image: "/assets/prod-vinyl.png",
+          imageSource: "upload",
+          published: true,
+        }),
+        product({
+          id: "p-brick",
+          provisionalSku: "TMP-0003",
+          productNo: "MKT-PC-BRICK-01",
+          category: "Precasted Concrete",
+          name: "Soil filling concrete bricks",
+          sizeDesc: "Modular civil brick",
+          certifications: "",
+          primarySpec: "Precast concrete brick",
+          salesUnit: "pc",
+          moq: 200,
+          leadTime: "14-21 days",
+          purposes: [
+            "Soil filling concrete bricks", "Civil engineering concrete bricks",
+            "填土工程石屎磚", "土木工程石屎磚", "石屎躉", "水泥躉",
+          ],
+          image: "/assets/prod-precast.png",
+          imageSource: "upload",
+          published: true,
+        }),
+        product({
+          id: "p-draft",
+          provisionalSku: "TMP-0004",
+          productNo: "",
+          category: "Gypsum Board",
+          name: "Fire-resistant gypsum board 1220×2440",
+          sizeDesc: "1220×2440 × 12mm",
+          certifications: "",
+          primarySpec: "Fire-resistant board",
+          salesUnit: "sheet",
+          moq: 50,
+          leadTime: "5-10 days",
+          purposes: ["Partition", "防火石膏板"],
+          image: "",
+          imageSource: "generated",
+          published: false,
+        }),
+        product({
+          id: "p-held",
+          provisionalSku: "TMP-0005",
+          productNo: "MKT-NET-FR-01",
+          category: "Dense Mesh Flame Retardant Safety Net",
+          name: "FR Safety Net — green",
+          sizeDesc: "Custom panel",
+          certifications: "FR",
+          primarySpec: "Dense mesh FR net",
+          salesUnit: "sheet",
+          moq: 10,
+          leadTime: "7 days",
+          purposes: ["Edge protection"],
+          image: "/assets/prod-safetynet.png",
+          imageSource: "upload",
+          published: true,
+          held: true,
+        }),
+        product({
+          id: "p-dead",
+          provisionalSku: "TMP-0006",
+          productNo: "MKT-SOFT-001",
+          category: "Software",
+          name: "Legacy site licence",
+          sizeDesc: "Annual",
+          certifications: "",
+          primarySpec: "End-of-life licence",
+          salesUnit: "license",
+          moq: 1,
+          leadTime: "1 day",
+          purposes: ["BIM"],
+          image: "/assets/vfd.png",
+          imageSource: "upload",
+          published: true,
+          discontinued: true,
+        }),
+        product({
+          id: "p-deleted",
+          provisionalSku: "TMP-0007",
+          productNo: "MKT-LADDER-01",
+          category: "Cat Ladder",
+          name: "Galvanized cat ladder",
+          sizeDesc: "By drawing",
+          certifications: "",
+          primarySpec: "Galvanized",
+          salesUnit: "lot",
+          moq: 1,
+          leadTime: "21 days",
+          purposes: ["Access"],
+          image: "/assets/prod-ironwork.png",
+          imageSource: "upload",
+          published: false,
+          deleted: true,
+        }),
+      ],
+      carts: {},
+      rfqs: [],
+      reports: [],
+      lastDelta: "已載入種子資料（7 隻貨、1 買家、2 Sales）。",
+      lastOk: true,
+      lastTms: null,
+    };
+  }
+
+  function product(p) {
+    return {
+      remark: "",
+      green: false,
+      hit: false,
+      held: false,
+      discontinued: false,
+      deleted: false,
+      certFiles: [],
+      ...p,
+    };
+  }
+
+  function fail(state, msg) {
+    return { ...state, lastDelta: msg, lastOk: false };
+  }
+
+  function ok(state, msg) {
+    return { ...state, lastDelta: msg, lastOk: true };
+  }
+
+  function staffBy(state, email) {
+    return state.staff.find((s) => s.email === email);
+  }
+  function buyerBy(state, email) {
+    return state.buyers.find((b) => b.email === email);
+  }
+  function productBy(state, id) {
+    return state.products.find((p) => p.id === id);
+  }
+
+  function buyerVisible(p) {
+    return p.published && !p.held && !p.deleted;
+  }
+  function canOrder(p) {
+    return buyerVisible(p) && !p.discontinued;
+  }
+  function publishBlockers(p, products) {
+    const reasons = [];
+    if (!String(p.productNo || "").trim()) reasons.push("未填正式 SKU");
+    if (!p.category) reasons.push("未選 Category");
+    if (!String(p.name || "").trim()) reasons.push("未填 Product name");
+    if (!String(p.salesUnit || "").trim()) reasons.push("未填 Sales Unit");
+    if (p.moq == null || p.moq === "") reasons.push("未填 MOQ");
+    if (!String(p.leadTime || "").trim()) reasons.push("未填 Lead Time");
+    const sku = String(p.productNo || "").trim().toUpperCase();
+    if (sku && products.some((o) => o.id !== p.id && String(o.productNo || "").toUpperCase() === sku)) {
+      reasons.push("正式 SKU 與其他貨重複");
+    }
+    return reasons;
+  }
+
+  function matchCategory(name) {
+    const n = String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+    return CATEGORIES.find((c) => c.toLowerCase() === n) || null;
+  }
+
+  function splitPurposes(text) {
+    return String(text || "")
+      .split(/[\n,;]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  function parseTags(text) {
+    const t = String(text || "").toLowerCase();
+    return { green: /green|綠/.test(t), hit: /hit|熱/.test(t) };
+  }
+
+  function splitCsvLine(line) {
+    const out = [];
+    let cur = "";
+    let q = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (q) {
+        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') q = false;
+        else cur += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ",") { out.push(cur); cur = ""; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out.map((s) => s.trim());
+  }
+
+  function parseExcelCsv(text) {
+    const lines = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim());
+    if (!lines.length) return { headers: [], mapped: [], unknown: [], rows: [] };
+    const headers = splitCsvLine(lines[0]);
+    const mapped = [];
+    const unknown = [];
+    headers.forEach((h) => {
+      const key = HEADER_MAP[h.trim().toLowerCase()];
+      if (key) mapped.push({ header: h, key });
+      else unknown.push(h);
+    });
+    const rows = lines.slice(1).map((line, idx) => {
+      const cells = splitCsvLine(line);
+      const raw = {};
+      headers.forEach((h, i) => { raw[h] = cells[i] || ""; });
+      const rec = { _line: idx + 2 };
+      mapped.forEach(({ header, key }) => { rec[key] = raw[header] || ""; });
+      return rec;
+    });
+    return { headers, mapped, unknown, rows };
+  }
+
+  function excelTemplate() {
+    return EXCEL_HEADERS.join(",") + "\n";
+  }
+
+  function snapshotLine(p, qty) {
+    return {
+      productId: p.id,
+      productNo: p.productNo,
+      name: p.name,
+      qty,
+      unit: p.salesUnit,
+      category: p.category,
+    };
+  }
+
+  function requireSales(state) {
+    if (state.session.role !== "sales") return "要 Sales 登入先做到。";
+    const me = staffBy(state, state.session.email);
+    if (!me || !me.enabled) return "呢個 Sales 帳已停用。";
+    return "";
+  }
+  function requireBuyer(state) {
+    if (state.session.role !== "buyer") return "要買家登入先做到。";
+    const me = buyerBy(state, state.session.email);
+    if (!me || !me.enabled) return "呢個買家帳已停用。";
+    return "";
+  }
+
+  function reduce(state, action) {
+    const s = clone(state);
+    const t = action.type;
+
+    if (t === "RESET") return ok(seed(), "已重置種子資料。");
+
+    if (t === "LOGIN_SALES") {
+      const email = String(action.email || "").trim().toLowerCase();
+      const u = staffBy(s, email);
+      if (!u || u.password !== action.password) return fail(s, "Sales 登入失敗。");
+      if (!u.enabled) return fail(s, "Sales 帳已停用。");
+      if (buyerBy(s, email)) return fail(s, "同一 email 不能身兼買家同 Sales。");
+      s.session = { role: "sales", email };
+      return ok(s, `Sales ${email} 已進入後台。`);
+    }
+
+    if (t === "LOGIN_BUYER") {
+      const email = String(action.email || "").trim().toLowerCase();
+      if (staffBy(s, email)) return fail(s, "呢個 email 係 Sales，不能當買家登入。");
+      const u = buyerBy(s, email);
+      if (!u || u.password !== action.password) return fail(s, "買家登入失敗。");
+      if (!u.enabled) return fail(s, "買家帳已停用，不能登入或送 RFQ。");
+      s.session = { role: "buyer", email };
+      return ok(s, `買家 ${email} 已進入 storefront。`);
+    }
+
+    if (t === "LOGOUT") {
+      s.session = { role: "anon", email: "" };
+      return ok(s, "已登出。");
+    }
+
+    if (t === "BUYER_UPDATE_PROFILE") {
+      const err = requireBuyer(s);
+      if (err) return fail(s, err);
+      const u = buyerBy(s, s.session.email);
+      if (action.password) u.password = action.password;
+      if (action.name != null) u.name = action.name;
+      if (action.companyName != null) u.companyName = action.companyName;
+      if (action.companyPhone != null) u.companyPhone = action.companyPhone;
+      if (action.companyAddress != null) u.companyAddress = action.companyAddress;
+      return ok(s, "買家已更新自己的公司資料／密碼。Sales 後台改唔到呢啲。");
+    }
+
+    if (t === "STAFF_CREATE") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const email = String(action.email || "").trim().toLowerCase();
+      if (!email) return fail(s, "要有員工 email。");
+      if (staffBy(s, email) || buyerBy(s, email)) return fail(s, "Email 已被買家或員工使用。");
+      s.staff.push({
+        email, name: action.name || email, password: action.password || "mattex",
+        enabled: true, bootstrap: false,
+      });
+      return ok(s, `已開員工 ${email}。不能自助註冊 Staff。`);
+    }
+
+    if (t === "STAFF_DISABLE") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const u = staffBy(s, action.email);
+      if (!u) return fail(s, "找不到員工。");
+      const enabled = s.staff.filter((x) => x.enabled);
+      if (enabled.length <= 1 && u.enabled) return fail(s, "最後一個 bootstrap／啟用中 Sales 不能停用。");
+      u.enabled = false;
+      s.rfqs.forEach((r) => {
+        if (r.reviewingBy === u.email) r.reviewingBy = "";
+      });
+      s.reports.forEach((r) => {
+        if (r.lookingBy === u.email) {
+          r.lookingBy = "";
+          if (r.status === "looking") r.status = "open";
+        }
+      });
+      if (s.session.email === u.email) s.session = { role: "anon", email: "" };
+      return ok(s, `已停用 ${u.email}。手上 RFQ／report 放回共用佇列。`);
+    }
+
+    if (t === "BUYER_SET_ENABLED") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const u = buyerBy(s, action.email);
+      if (!u) return fail(s, "找不到買家。");
+      u.enabled = !!action.enabled;
+      if (!u.enabled && s.session.email === u.email) s.session = { role: "anon", email: "" };
+      return ok(s, `${u.email} 已${u.enabled ? "啟用" : "停用"}（停用後不能登入／送 RFQ）。`);
+    }
+
+    if (t === "PRODUCT_CREATE") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      if (!matchCategory(action.category)) return fail(s, "Category 必須係現有 17 類之一。");
+      if (!String(action.name || "").trim()) return fail(s, "要有 Product name。");
+      s.seq.tmp += 1;
+      const tmp = `TMP-${String(s.seq.tmp).padStart(4, "0")}`;
+      const p = product({
+        id: "p-" + tmp.toLowerCase(),
+        provisionalSku: tmp,
+        productNo: String(action.productNo || "").trim(),
+        category: matchCategory(action.category),
+        name: action.name,
+        sizeDesc: action.sizeDesc || "",
+        certifications: action.certifications || "",
+        primarySpec: action.primarySpec || "",
+        salesUnit: action.salesUnit || "",
+        moq: action.moq === "" || action.moq == null ? "" : Number(action.moq),
+        leadTime: action.leadTime || "",
+        purposes: Array.isArray(action.purposes) ? action.purposes : splitPurposes(action.purposes),
+        remark: action.remark || "",
+        green: !!action.green,
+        hit: !!action.hit,
+        image: action.image || "",
+        imageSource: action.image ? "upload" : "generated",
+        published: false,
+      });
+      s.products.push(p);
+      return ok(s, `已新增草稿 ${p.name}（${tmp}）。買家暫時睇唔到。`);
+    }
+
+    if (t === "PRODUCT_UPDATE") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const p = productBy(s, action.id);
+      if (!p || p.deleted) return fail(s, "找不到貨，或已軟刪。");
+      const fields = [
+        "productNo", "category", "name", "sizeDesc", "certifications", "primarySpec",
+        "salesUnit", "leadTime", "remark", "image", "imageSource",
+      ];
+      fields.forEach((k) => { if (action[k] != null) p[k] = action[k]; });
+      if (action.category && !matchCategory(action.category)) return fail(s, "Category 不在閉集。");
+      if (action.category) p.category = matchCategory(action.category);
+      if (action.moq != null) p.moq = action.moq === "" ? "" : Number(action.moq);
+      if (action.purposes != null) p.purposes = Array.isArray(action.purposes) ? action.purposes : splitPurposes(action.purposes);
+      if (action.green != null) p.green = !!action.green;
+      if (action.hit != null) p.hit = !!action.hit;
+      if (action.certFiles != null) p.certFiles = action.certFiles;
+      return ok(s, `已更新 ${p.name}。上架狀態不變。`);
+    }
+
+    if (t === "PRODUCT_SET_IMAGE") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const p = productBy(s, action.id);
+      if (!p) return fail(s, "找不到貨。");
+      p.image = action.image || "";
+      p.imageSource = action.imageSource || (p.image ? "upload" : "generated");
+      return ok(s, `${p.name} 圖來源＝${p.imageSource}。Chain 真同步不在這期。`);
+    }
+
+    if (t === "PRODUCT_PUBLISH") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const p = productBy(s, action.id);
+      if (!p || p.deleted) return fail(s, "找不到貨。");
+      const blockers = publishBlockers(p, s.products);
+      if (blockers.length) return fail(s, `不能 Publish：${blockers.join("、")}。`);
+      p.published = true;
+      p.held = false;
+      p.deleted = false;
+      return ok(s, `${p.productNo} 已上架。買家而家睇到。圖可空／Gen。`);
+    }
+
+    if (t === "PRODUCT_HOLD" || t === "PRODUCT_UNHOLD") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const p = productBy(s, action.id);
+      if (!p || !p.published || p.deleted) return fail(s, "只能 Hold 已上架、未刪的貨。");
+      p.held = t === "PRODUCT_HOLD";
+      return ok(s, p.held
+        ? `${p.productNo} 已 Hold：買家 catalog 隱藏；已送 RFQ 歷史不動。`
+        : `${p.productNo} 已取消 Hold。`);
+    }
+
+    if (t === "PRODUCT_DISCONTINUE") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const p = productBy(s, action.id);
+      if (!p) return fail(s, "找不到貨。");
+      p.discontinued = !!action.value;
+      return ok(s, `${p.name} discontinued＝${p.discontinued}（仍可能睇到，但不能落 RFQ）。`);
+    }
+
+    if (t === "PRODUCT_SOFT_DELETE") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const p = productBy(s, action.id);
+      if (!p) return fail(s, "找不到貨。");
+      p.deleted = true;
+      p.published = false;
+      p.held = false;
+      return ok(s, `${p.productNo || p.provisionalSku} 已軟刪。Excel 同一正式 SKU 可復活成草稿。`);
+    }
+
+    if (t === "EXCEL_IMPORT") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const parsed = typeof action.csv === "string" ? parseExcelCsv(action.csv) : action.parsed;
+      const results = [];
+      parsed.rows.forEach((row) => {
+        const name = String(row.name || "").trim();
+        const cat = matchCategory(row.category);
+        if (!name || !cat) {
+          results.push({ line: row._line, ok: false, msg: !name ? "缺 Product name" : `Category「${row.category}」不在 17 類閉集` });
+          return;
+        }
+        const sku = String(row.productNo || "").trim();
+        const tmp = String(row.provisionalSku || "").trim();
+        let p = null;
+        if (sku) p = s.products.find((x) => String(x.productNo || "").toUpperCase() === sku.toUpperCase());
+        if (!p && tmp) p = s.products.find((x) => x.provisionalSku === tmp || x.id === tmp);
+        const tags = parseTags(row.tags);
+        const purposes = splitPurposes(row.purposes);
+        const imgRaw = String(row.image || "").trim();
+        const imgIsGen = !imgRaw || /^gen/i.test(imgRaw);
+        if (!p) {
+          s.seq.tmp += 1;
+          const provisionalSku = tmp || `TMP-${String(s.seq.tmp).padStart(4, "0")}`;
+          p = product({
+            id: "p-xls-" + s.seq.tmp,
+            provisionalSku,
+            productNo: sku,
+            category: cat,
+            name,
+            sizeDesc: row.sizeDesc || "",
+            certifications: row.certifications || "",
+            primarySpec: row.primarySpec || "",
+            salesUnit: row.salesUnit || "",
+            moq: row.moq === "" ? "" : Number(row.moq),
+            leadTime: row.leadTime || "",
+            purposes,
+            remark: row.remark || "",
+            green: tags.green,
+            hit: tags.hit,
+            image: imgIsGen ? "" : imgRaw,
+            imageSource: imgIsGen ? "generated" : "upload",
+            published: false,
+          });
+          s.products.push(p);
+          results.push({ line: row._line, ok: true, msg: `新增草稿 ${name}（${p.provisionalSku}）` });
+          return;
+        }
+        if (p.deleted) {
+          p.deleted = false;
+          p.published = false;
+          p.held = false;
+          results.push({ line: row._line, ok: true, msg: `復活 ${sku || tmp} 成未上架草稿` });
+        } else {
+          results.push({ line: row._line, ok: true, msg: p.published
+            ? `更新已上架 ${p.productNo}（不上架狀態不變）`
+            : `更新草稿 ${p.provisionalSku}` });
+        }
+        p.category = cat;
+        p.name = name;
+        if (sku) p.productNo = sku;
+        if (row.sizeDesc != null) p.sizeDesc = row.sizeDesc;
+        if (row.certifications != null) p.certifications = row.certifications;
+        if (row.primarySpec != null) p.primarySpec = row.primarySpec;
+        if (row.salesUnit != null) p.salesUnit = row.salesUnit;
+        if (row.moq !== "" && row.moq != null) p.moq = Number(row.moq);
+        if (row.leadTime != null) p.leadTime = row.leadTime;
+        p.purposes = purposes.length ? purposes : p.purposes;
+        if (row.remark != null) p.remark = row.remark;
+        if (String(row.tags || "").trim()) {
+          p.green = tags.green;
+          p.hit = tags.hit;
+        }
+        const officialImg = p.imageSource === "upload" || p.imageSource === "chain";
+        if (!imgIsGen) {
+          p.image = imgRaw;
+          p.imageSource = "upload";
+        } else if (!officialImg) {
+          p.imageSource = "generated";
+        }
+      });
+      s.lastExcel = results;
+      const okN = results.filter((r) => r.ok).length;
+      const badN = results.length - okN;
+      return ok(s, `Excel 完成：${okN} 列成功、${badN} 列失敗。多餘欄已忽略。`);
+    }
+
+    if (t === "CART_ADD") {
+      const err = requireBuyer(s);
+      if (err) return fail(s, err);
+      const p = productBy(s, action.productId);
+      if (!p || !canOrder(p)) return fail(s, "呢隻貨而家不能加入（未上架／Hold／停產／已刪）。");
+      const email = s.session.email;
+      s.carts[email] = s.carts[email] || [];
+      const line = s.carts[email].find((l) => l.productId === p.id);
+      if (line) line.qty += Number(action.qty || 1);
+      else s.carts[email].push({ productId: p.id, qty: Number(action.qty || 1) });
+      return ok(s, `已加入 ${p.name}。`);
+    }
+
+    if (t === "CART_REMOVE") {
+      const err = requireBuyer(s);
+      if (err) return fail(s, err);
+      const email = s.session.email;
+      s.carts[email] = (s.carts[email] || []).filter((l) => l.productId !== action.productId);
+      return ok(s, "已從 cart 移除。");
+    }
+
+    if (t === "RFQ_SUBMIT") {
+      const err = requireBuyer(s);
+      if (err) return fail(s, err);
+      const email = s.session.email;
+      const cart = s.carts[email] || [];
+      if (!cart.length) return fail(s, "Cart 係空。");
+      const blocked = [];
+      const lines = [];
+      cart.forEach((l) => {
+        const p = productBy(s, l.productId);
+        if (!p || !canOrder(p)) blocked.push((p && p.name) || l.productId);
+        else lines.push(snapshotLine(p, l.qty));
+      });
+      if (blocked.length) return fail(s, `不能送出：${blocked.join("、")} 已 Hold／不能訂。請先喺 cart 拎走。`);
+      s.seq.rfq += 1;
+      const id = "RFQ-" + s.seq.rfq;
+      s.rfqs.push({
+        id,
+        buyerEmail: email,
+        lines,
+        note: action.note || "",
+        status: "received",
+        reviewingBy: "",
+        reason: "",
+        tmsRfqId: "",
+        tmsPayload: null,
+        history: [{ at: "now", event: "submitted" }],
+      });
+      s.carts[email] = [];
+      return ok(s, `已送出 ${id}。Sales inbox 而家睇到。`);
+    }
+
+    if (t === "RFQ_START_REVIEW") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const r = s.rfqs.find((x) => x.id === action.id);
+      if (!r) return fail(s, "找不到 RFQ。");
+      if (r.status === "accepted" || r.status === "rejected") return fail(s, `${r.status} 單不能再搶。`);
+      if (r.reviewingBy && r.reviewingBy !== s.session.email) {
+        return fail(s, `而家 ${r.reviewingBy} 佔緊 reviewing。`);
+      }
+      r.status = "reviewing";
+      r.reviewingBy = s.session.email;
+      return ok(s, `${r.id} → reviewing（${s.session.email}）。`);
+    }
+
+    if (t === "RFQ_ACCEPT" || t === "RFQ_RETURN" || t === "RFQ_REJECT") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const r = s.rfqs.find((x) => x.id === action.id);
+      if (!r) return fail(s, "找不到 RFQ。");
+      if (r.status === "accepted") return fail(s, "已 accepted，內容已鎖。");
+      if (r.status === "rejected") return fail(s, "已 rejected，終態。");
+      if (t === "RFQ_RETURN" && !String(action.reason || "").trim()) return fail(s, "退回必須寫原因。");
+      if (t === "RFQ_REJECT" && !String(action.reason || "").trim()) return fail(s, "拒絕必須寫原因。");
+      r.reviewingBy = "";
+      r.reason = action.reason || "";
+      if (t === "RFQ_ACCEPT") r.status = "accepted";
+      if (t === "RFQ_RETURN") r.status = "returned";
+      if (t === "RFQ_REJECT") r.status = "rejected";
+      r.history.push({ at: "now", event: r.status, reason: r.reason });
+      return ok(s, `${r.id} → ${r.status}${r.reason ? "：" + r.reason : ""}。不出價、不建 PO。`);
+    }
+
+    if (t === "RFQ_RESUBMIT") {
+      const err = requireBuyer(s);
+      if (err) return fail(s, err);
+      const r = s.rfqs.find((x) => x.id === action.id);
+      if (!r || r.buyerEmail !== s.session.email) return fail(s, "不是你嘅單。");
+      if (r.status !== "returned") return fail(s, r.status === "rejected" ? "Rejected 係終態，不能再送。" : "只有 returned 可以改同一張再送。");
+      if (action.lines) r.lines = action.lines;
+      r.status = "received";
+      r.reviewingBy = "";
+      r.history.push({ at: "now", event: "resubmitted" });
+      return ok(s, `${r.id} 已再送，回到 received。`);
+    }
+
+    if (t === "RFQ_UPLOAD_TMS") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const r = s.rfqs.find((x) => x.id === action.id);
+      if (!r) return fail(s, "找不到 RFQ。");
+      if (r.status !== "accepted") return fail(s, "只有 accepted 可以 Upload to TMS。");
+      if (r.tmsRfqId) return fail(s, `已上傳過（${r.tmsRfqId}），不能再開新 TMS 單。`);
+      const payload = {
+        model: "inbound_request_for_quotes",
+        source: "subbie-admin-prototype",
+        rfqId: r.id,
+        buyerEmail: r.buyerEmail,
+        lines: r.lines,
+        note: r.note,
+      };
+      if (action.fail) {
+        s.lastTms = { ok: false, payload, error: "模擬 TMS 失敗（UAT 未打出去）" };
+        return fail(s, "TMS 模擬失敗。可重試。未寫 tmsRfqId。");
+      }
+      s.seq.tms += 1;
+      r.tmsRfqId = "TMS-INB-" + s.seq.tms;
+      r.tmsPayload = payload;
+      s.lastTms = { ok: true, id: r.tmsRfqId, payload };
+      return ok(s, `模擬上傳成功：${r.tmsRfqId}。真 UAT 不在這期。`);
+    }
+
+    if (t === "REPORT_CREATE") {
+      const role = s.session.role;
+      if (role !== "buyer" && role !== "sales") return fail(s, "要登入先開 report。");
+      if (role === "buyer") {
+        const b = buyerBy(s, s.session.email);
+        if (!b || !b.enabled) return fail(s, "買家已停用。");
+      }
+      const p = productBy(s, action.productId);
+      if (!p || !p.published || p.deleted) return fail(s, "只能 report 已上架貨。");
+      const type = action.reportType;
+      if (!["圖片不對", "資料不對", "其他"].includes(type)) return fail(s, "要選類型。");
+      if (!String(action.text || "").trim()) return fail(s, "要寫文字。");
+      s.seq.report += 1;
+      const id = "RPT-" + s.seq.report;
+      s.reports.push({
+        id,
+        productId: p.id,
+        productNo: p.productNo,
+        type,
+        text: action.text,
+        evidence: action.evidence || "",
+        status: "open",
+        lookingBy: "",
+        filerEmail: s.session.email,
+        filerRole: role,
+      });
+      return ok(s, `${id} 已入共用佇列（${p.productNo}／${type}）。證據圖可選。`);
+    }
+
+    if (t === "REPORT_START_LOOKING") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const r = s.reports.find((x) => x.id === action.id);
+      if (!r || r.status === "dismissed" || r.status === "fixed") return fail(s, "呢張 report 已完。");
+      if (r.lookingBy && r.lookingBy !== s.session.email) return fail(s, `${r.lookingBy} 睇緊。`);
+      r.status = "looking";
+      r.lookingBy = s.session.email;
+      return ok(s, `${r.id} → looking。`);
+    }
+
+    if (t === "REPORT_DISMISS" || t === "REPORT_FIX") {
+      const err = requireSales(s);
+      if (err) return fail(s, err);
+      const r = s.reports.find((x) => x.id === action.id);
+      if (!r) return fail(s, "找不到 report。");
+      const p = productBy(s, r.productId);
+      if (t === "REPORT_DISMISS") {
+        r.status = "dismissed";
+        r.lookingBy = "";
+        return ok(s, `${r.id} dismissed。貨狀態不變。`);
+      }
+      if (action.hold && p && p.published) p.held = true;
+      if (action.markChain && p) p.imageSource = p.imageSource === "generated" ? "generated" : p.imageSource;
+      if (action.markChain && p) p.needsChainImage = true;
+      if (action.patch && p) {
+        Object.keys(action.patch).forEach((k) => { p[k] = action.patch[k]; });
+      }
+      r.status = "fixed";
+      r.lookingBy = "";
+      r.fixNote = action.note || (action.hold ? "Hold" : "fixed");
+      return ok(s, `${r.id} fixed。${action.hold ? "貨已 Hold。" : ""}${action.markChain ? "已標需重拉 Chain 圖。" : ""}預設不自動 Hold。`);
+    }
+
+    return fail(s, "未知動作：" + t);
+  }
+
+  function inspect(state) {
+    const products = state.products;
+    return {
+      session: state.session.role === "anon" ? "未登入" : `${state.session.role} · ${state.session.email}`,
+      catalog: `${products.filter(buyerVisible).length} 隻買家睇到`,
+      pipeline: `草稿 ${products.filter((p) => !p.published && !p.deleted).length}／Hold ${products.filter((p) => p.held && !p.deleted).length}／軟刪 ${products.filter((p) => p.deleted).length}`,
+      rfqs: `${state.rfqs.filter((r) => r.status === "received" || r.status === "reviewing" || r.status === "returned").length} 張未完 · 共 ${state.rfqs.length}`,
+      reports: `${state.reports.filter((r) => r.status === "open" || r.status === "looking").length} 張待處理`,
+      tms: state.lastTms
+        ? (state.lastTms.ok ? state.lastTms.id : "上次模擬失敗")
+        : "尚未上傳",
+      last: state.lastDelta,
+      lastOk: state.lastOk,
+    };
+  }
+
+  return { CATEGORIES, EXCEL_HEADERS, seed, reduce, parseExcelCsv, excelTemplate, inspect, buyerVisible, canOrder, publishBlockers, productBy, clone };
+})();
+
+const SCENARIOS = [
+  {
+    id: "publish",
+    title: "1. 草稿 → 正式 SKU → 上架",
+    blurb: "買家一開始睇唔到石膏板草稿。Sales 填正式貨號再 Publish 之後，迷你 storefront 先出現。無圖都可以上架。",
+    steps: [
+      { label: "Sales 登入 sales@mattex.com", action: { type: "LOGIN_SALES", email: "sales@mattex.com", password: "mattex" }, surface: "admin" },
+      { label: "草稿補正式 SKU MKT-GB-0012", action: { type: "PRODUCT_UPDATE", id: "p-draft", productNo: "MKT-GB-0012" } },
+      { label: "Publish 石膏板", action: { type: "PRODUCT_PUBLISH", id: "p-draft" } },
+      { label: "買家 buyer@harbour.hk 登入", action: { type: "LOGIN_BUYER", email: "buyer@harbour.hk", password: "harbour" }, surface: "buyer" },
+    ],
+  },
+  {
+    id: "excel",
+    title: "2. Excel 改已上架 MOQ、空圖不覆蓋",
+    blurb: "同一正式 SKU 更新已上架列：MOQ 變 120、Hit tag、圖欄空白。上架狀態不變，A142 原圖保留。",
+    steps: [
+      { label: "Sales 登入", action: { type: "LOGIN_SALES", email: "sales@mattex.com", password: "mattex" }, surface: "admin" },
+      { label: "匯入 A142 列（MOQ 120、IMG 空）", action: { type: "EXCEL_IMPORT", csv: "Provisional SKU ID,Official SKU,Category,IMG (Gen),Product name,Size / Description,Certifications / Relevant Reports,Primary Spec Description,Sales Unit,MOQ,Lead Time,Purposes (Indicator for Searching),Remark,Tag (Green / Hit)\n,MKT-MESH-A142,Reinforcement Mesh,,A142 — 2.1m×4.8m / Customize,2.1m×4.8m,BS4483:2005,Square mesh,sheet,120,3-7 days,\"Anti-cracking,路面防裂\",excel upsert,Hit\n" } },
+    ],
+  },
+  {
+    id: "hold-cart",
+    title: "3. Hold 鎖 cart、舊 RFQ 不動",
+    blurb: "買家先送出 A142。之後 Hold 呢隻貨：新 cart 不能再送；已送出嗰張 RFQ 快照仍在。",
+    steps: [
+      { label: "買家登入", action: { type: "LOGIN_BUYER", email: "buyer@harbour.hk", password: "harbour" }, surface: "buyer" },
+      { label: "A142 加入 cart", action: { type: "CART_ADD", productId: "p-mesh", qty: 90 } },
+      { label: "送出 RFQ", action: { type: "RFQ_SUBMIT", note: "Kai Tak" } },
+      { label: "Sales 登入", action: { type: "LOGIN_SALES", email: "sales@mattex.com", password: "mattex" }, surface: "admin" },
+      { label: "Hold A142", action: { type: "PRODUCT_HOLD", id: "p-mesh" } },
+      { label: "買家再登入", action: { type: "LOGIN_BUYER", email: "buyer@harbour.hk", password: "harbour" }, surface: "buyer" },
+      { label: "再加 A142（應該失敗）", action: { type: "CART_ADD", productId: "p-mesh", qty: 1 } },
+    ],
+  },
+  {
+    id: "report",
+    title: "4. 已上架貨被 report → Sales Hold",
+    blurb: "買家投訴 Vinyl 圖不對。Sales 唔自動 Hold；處理時先揀 Hold + 標 Chain 圖，report 變 fixed。",
+    steps: [
+      { label: "買家登入", action: { type: "LOGIN_BUYER", email: "buyer@harbour.hk", password: "harbour" }, surface: "buyer" },
+      { label: "Report Vinyl 圖片不對", action: { type: "REPORT_CREATE", productId: "p-vinyl", reportType: "圖片不對", text: "卷材圖同現場色差", evidence: "optional.jpg" } },
+      { label: "Sales 登入接單", action: { type: "LOGIN_SALES", email: "sales@mattex.com", password: "mattex" }, surface: "admin" },
+      { label: "開始 looking", action: { type: "REPORT_START_LOOKING", id: "RPT-21" } },
+      { label: "Fix：Hold + 標需重拉 Chain 圖", action: { type: "REPORT_FIX", id: "RPT-21", hold: true, markChain: true, note: "等 Chain" } },
+    ],
+  },
+  {
+    id: "rfq-tms",
+    title: "5. RFQ 退回再送 → Accept → TMS 一次",
+    blurb: "退回要原因、同一 rfqId 再送。Accept 後鎖內容。TMS 先模擬失敗可重試，成功後不能再傳。Rejected 終態。",
+    steps: [
+      { label: "買家登入", action: { type: "LOGIN_BUYER", email: "buyer@harbour.hk", password: "harbour" }, surface: "buyer" },
+      { label: "石屎磚加入 cart", action: { type: "CART_ADD", productId: "p-brick", qty: 200 } },
+      { label: "送出 RFQ", action: { type: "RFQ_SUBMIT", note: "斜坡維修" } },
+      { label: "Sales 開始 review", action: { type: "LOGIN_SALES", email: "sales@mattex.com", password: "mattex" }, surface: "admin" },
+      { label: "Review 最新一張", action: { type: "RFQ_START_REVIEW", idFrom: "latest" } },
+      { label: "退回：請補送貨地址", action: { type: "RFQ_RETURN", idFrom: "latest", reason: "請補送貨地址" } },
+      { label: "買家再登入", action: { type: "LOGIN_BUYER", email: "buyer@harbour.hk", password: "harbour" }, surface: "buyer" },
+      { label: "同一張 RFQ 再送", action: { type: "RFQ_RESUBMIT", idFrom: "latest" } },
+      { label: "Sales 再 review 並 Accept", action: { type: "LOGIN_SALES", email: "sales@mattex.com", password: "mattex" }, surface: "admin" },
+      { label: "Start review", action: { type: "RFQ_START_REVIEW", idFrom: "latest" } },
+      { label: "Accept", action: { type: "RFQ_ACCEPT", idFrom: "latest" } },
+      { label: "Upload TMS（模擬失敗）", action: { type: "RFQ_UPLOAD_TMS", idFrom: "latest", fail: true } },
+      { label: "再 Upload TMS（成功）", action: { type: "RFQ_UPLOAD_TMS", idFrom: "latest" } },
+      { label: "第三次 Upload（應該拒絕）", action: { type: "RFQ_UPLOAD_TMS", idFrom: "latest" } },
+    ],
+  },
+  {
+    id: "resurrect",
+    title: "6. 軟刪 + Excel 復活成草稿",
+    blurb: "Cat ladder 種子已軟刪。Excel 用同一正式 SKU 匯入 → 復活但打回未上架，要再 Publish。",
+    steps: [
+      { label: "Sales 登入", action: { type: "LOGIN_SALES", email: "sales@mattex.com", password: "mattex" }, surface: "admin" },
+      { label: "Excel 復活 MKT-LADDER-01", action: { type: "EXCEL_IMPORT", csv: "Provisional SKU ID,Official SKU,Category,IMG (Gen),Product name,Size / Description,Certifications / Relevant Reports,Primary Spec Description,Sales Unit,MOQ,Lead Time,Purposes (Indicator for Searching),Remark,Tag (Green / Hit)\n,MKT-LADDER-01,Cat Ladder,,Galvanized cat ladder,By drawing,,Galvanized,lot,1,21 days,Access,resurrected,\n" } },
+    ],
+  },
+  {
+    id: "illegal",
+    title: "7. 應該失敗嘅動作",
+    blurb: "無正式 SKU 不能 Publish；未 accept 不能 TMS；最後一個啟用 Sales 不能停；Excel 第 18 類該列失敗。",
+    steps: [
+      { label: "Sales 登入", action: { type: "LOGIN_SALES", email: "sales@mattex.com", password: "mattex" }, surface: "admin" },
+      { label: "Publish 無 SKU 草稿（應失敗）", action: { type: "PRODUCT_PUBLISH", id: "p-draft" } },
+      { label: "對空 inbox 上傳 TMS（應失敗）", action: { type: "RFQ_UPLOAD_TMS", id: "RFQ-NONE" } },
+      { label: "停用 ops@mattex.com", action: { type: "STAFF_DISABLE", email: "ops@mattex.com" } },
+      { label: "再停用最後一個 Sales（應失敗）", action: { type: "STAFF_DISABLE", email: "sales@mattex.com" } },
+      { label: "Excel 未知類別（該列失敗）", action: { type: "EXCEL_IMPORT", csv: "Provisional SKU ID,Official SKU,Category,IMG (Gen),Product name,Size / Description,Certifications / Relevant Reports,Primary Spec Description,Sales Unit,MOQ,Lead Time,Purposes (Indicator for Searching),Remark,Tag (Green / Hit)\n,,Widgets,,Bad row,,,,,,,\n,MKT-MESH-A142,Reinforcement Mesh,,A142 — 2.1m×4.8m / Customize,2.1m×4.8m,BS4483,mesh,sheet,90,3-7 days,Anti-cracking,,Hit\n" } },
+    ],
+  },
+];
+
+let state = SubbieAdminModel.seed();
+let ui = { surface: "buyer", scenario: 0, step: 0, adminTab: "products", editing: "", rfqReason: "", reportText: "" };
+
+function resolveAction(action) {
+  const a = { ...action };
+  if (a.idFrom === "latest") {
+    const last = state.rfqs[state.rfqs.length - 1];
+    a.id = last ? last.id : "RFQ-NONE";
+    delete a.idFrom;
+  }
+  return a;
+}
+
+function dispatch(action, surface) {
+  state = SubbieAdminModel.reduce(state, resolveAction(action));
+  if (surface) ui.surface = surface;
+  render();
+}
+
+function renderState() {
+  const i = SubbieAdminModel.inspect(state);
+  const cls = i.lastOk ? "ok" : "err";
+  document.getElementById("state-panel").innerHTML = `
+    <div class="field"><label>Session</label><div>${esc(i.session)}</div></div>
+    <div class="field"><label>買家 catalog</label><div>${esc(i.catalog)}</div></div>
+    <div class="field"><label>貨 pipeline</label><div>${esc(i.pipeline)}</div></div>
+    <div class="field"><label>RFQ</label><div>${esc(i.rfqs)}</div></div>
+    <div class="field"><label>Reports</label><div>${esc(i.reports)}</div></div>
+    <div class="field"><label>TMS mock</label><div>${esc(i.tms)}</div></div>
+    <div class="delta ${cls}"><strong>剛發生：</strong> ${esc(i.last)}</div>
+  `;
+}
+
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function renderScenarios() {
+  const tabs = document.getElementById("scenario-tabs");
+  tabs.innerHTML = SCENARIOS.map((sc, i) =>
+    `<button class="tab ${ui.scenario === i ? "on" : ""}" data-sc="${i}">${esc(sc.title)}</button>`
+  ).join("");
+  const sc = SCENARIOS[ui.scenario];
+  document.getElementById("scenario-body").innerHTML = `
+    <div class="scenario">
+      <p>${esc(sc.blurb)}</p>
+      <div class="steps">
+        ${sc.steps.map((st, i) => `
+          <div class="step ${i < ui.step ? "done" : i === ui.step ? "now" : ""}">
+            <div class="n">${i + 1}</div>
+            <div>
+              <button class="btn ${i === ui.step ? "primary" : ""}" data-step="${i}" ${i !== ui.step ? "disabled" : ""}>${esc(st.label)}</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      <p class="muted" style="margin-top:10px">撳分頁會重置種子再開呢條導覽。完成後可以切去買家／Admin 睇結果。</p>
+    </div>
+  `;
+}
+
+function statusTags(p) {
+  const tags = [];
+  if (p.deleted) tags.push('<span class="tag del">軟刪</span>');
+  else if (!p.published) tags.push('<span class="tag draft">草稿</span>');
+  else tags.push('<span class="tag green">已上架</span>');
+  if (p.held) tags.push('<span class="tag hold">Hold</span>');
+  if (p.discontinued) tags.push('<span class="tag">Discontinued</span>');
+  if (p.green) tags.push('<span class="tag green">Green</span>');
+  if (p.hit) tags.push('<span class="tag hit">Hit</span>');
+  if (p.needsChainImage) tags.push('<span class="tag">需 Chain 圖</span>');
+  tags.push(`<span class="tag">${esc(p.imageSource || "generated")}</span>`);
+  return tags.join("");
+}
+
+function imgBox(p) {
+  if (p.image && p.imageSource !== "generated") {
+    return `<div class="imgph"><img src="${esc(p.image)}" alt=""></div>`;
+  }
+  return `<div class="imgph">GEN placeholder</div>`;
+}
+
+function renderBuyer() {
+  const sess = state.session;
+  if (sess.role !== "buyer") {
+    return `
+      <section class="panel">
+        <h2>買家登入（獨立於 Admin）</h2>
+        <p class="muted">Demo：buyer@harbour.hk / harbour。Sales email 唔能喺呢度入。</p>
+        <div class="form row">
+          <div><label>Email</label><input id="b-email" value="buyer@harbour.hk"></div>
+          <div><label>Password</label><input id="b-pass" type="password" value="harbour"></div>
+        </div>
+        <p><button class="btn primary" id="b-login">登入 Storefront</button></p>
+      </section>`;
+  }
+  const buyer = state.buyers.find((b) => b.email === sess.email);
+  const catalog = state.products.filter(SubbieAdminModel.buyerVisible);
+  const q = (document.getElementById("buyer-q") || { value: ui.buyerQ || "" }).value;
+  ui.buyerQ = q;
+  const filtered = catalog.filter((p) => {
+    if (!q) return true;
+    const blob = [p.name, p.productNo, p.category, p.remark, ...(p.purposes || [])].join(" ").toLowerCase();
+    return blob.includes(q.toLowerCase());
+  });
+  const cart = state.carts[sess.email] || [];
+  const myRfqs = state.rfqs.filter((r) => r.buyerEmail === sess.email);
+  return `
+    <section class="panel">
+      <div class="nav">
+        <div><strong>${esc(buyer.companyName)}</strong> · ${esc(buyer.name)} · ${esc(buyer.email)}</div>
+        <div>
+          <button class="btn" id="b-logout">登出</button>
+        </div>
+      </div>
+      <div class="form"><label>搜尋（Name / SKU / Purposes）</label><input id="buyer-q" value="${esc(q)}" placeholder="例如 膠地板、Anti-cracking"></div>
+    </section>
+    <section class="panel">
+      <h2>Catalog（已上架且未 Hold）</h2>
+      <div class="grid">
+        ${filtered.map((p) => `
+          <div class="card">
+            ${imgBox(p)}
+            <div>${esc(p.name)}</div>
+            <div class="muted">${esc(p.productNo)} · ${esc(p.category)}</div>
+            <div>${statusTags(p)}</div>
+            <div class="muted">MOQ ${esc(p.moq)} ${esc(p.salesUnit)} · ${esc(p.leadTime)}</div>
+            <p>${(p.purposes || []).slice(0, 4).map((x) => `<span class="tag">${esc(x)}</span>`).join("")}</p>
+            ${SubbieAdminModel.canOrder(p)
+              ? `<button class="btn primary" data-add="${p.id}">加入 RFQ cart</button>`
+              : `<span class="muted">停產，不能詢價</span>`}
+            <button class="btn" data-rep="${p.id}">Report 問題</button>
+          </div>
+        `).join("") || "<p class='muted'>冇貨。</p>"}
+      </div>
+    </section>
+    <section class="panel">
+      <h2>RFQ cart</h2>
+      ${cart.length ? `<table><thead><tr><th>貨</th><th>Qty</th><th></th></tr></thead><tbody>
+        ${cart.map((l) => {
+          const p = state.products.find((x) => x.id === l.productId);
+          const blocked = !p || !SubbieAdminModel.canOrder(p);
+          return `<tr>
+            <td>${esc(p ? p.name : l.productId)} ${blocked ? '<span class="tag hold">不能送出</span>' : ""}</td>
+            <td>${l.qty}</td>
+            <td><button class="btn" data-rm="${l.productId}">拎走</button></td>
+          </tr>`;
+        }).join("")}
+      </tbody></table>
+      <label class="muted">Note</label>
+      <input id="rfq-note" placeholder="項目／備註">
+      <p><button class="btn primary" id="rfq-send">Login 後送出 RFQ</button></p>` : "<p class='muted'>Cart 空。</p>"}
+    </section>
+    <section class="panel">
+      <h2>My RFQs</h2>
+      ${myRfqs.map((r) => `
+        <div class="card" style="margin-bottom:8px">
+          <strong>${esc(r.id)}</strong> · ${esc(r.status)}
+          ${r.tmsRfqId ? `<span class="tag">TMS ${esc(r.tmsRfqId)}</span>` : ""}
+          <div class="muted">${r.lines.map((l) => `${esc(l.name)} × ${l.qty}`).join("；")}</div>
+          ${r.reason ? `<div>Sales 原因：${esc(r.reason)}</div>` : ""}
+          ${r.status === "returned" ? `<button class="btn primary" data-resub="${r.id}">補資料後同一張再送</button>` : ""}
+          ${r.status === "rejected" ? `<span class="muted">終態，不能再送。</span>` : ""}
+          ${r.status === "accepted" ? `<span class="muted">已接單，內容已鎖。</span>` : ""}
+        </div>
+      `).join("") || "<p class='muted'>未有 RFQ。</p>"}
+    </section>
+    <section class="panel form">
+      <h2>自己改公司資料／密碼</h2>
+      <div class="row">
+        <div><label>Name</label><input id="bp-name" value="${esc(buyer.name)}"></div>
+        <div><label>New password</label><input id="bp-pass" placeholder="留空＝唔改"></div>
+      </div>
+      <label>Company</label><input id="bp-co" value="${esc(buyer.companyName)}">
+      <button class="btn" id="bp-save">儲存</button>
+    </section>
+    <section class="panel form ${ui.reportFor ? "" : "hidden"}" id="report-box">
+      <h2>Report 已上架貨</h2>
+      <input type="hidden" id="rep-pid" value="${esc(ui.reportFor || "")}">
+      <label>類型</label>
+      <select id="rep-type">
+        <option>圖片不對</option>
+        <option>資料不對</option>
+        <option>其他</option>
+      </select>
+      <label>說明</label>
+      <textarea id="rep-text">圖同實物唔夾</textarea>
+      <button class="btn primary" id="rep-send">提交入共用佇列</button>
+    </section>
+  `;
+}
+
+function renderAdmin() {
+  if (state.session.role !== "sales") {
+    return `
+      <section class="panel">
+        <h2>Sales 登入（獨立入口）</h2>
+        <p class="muted">Demo：sales@mattex.com / mattex。買家 email 唔能入後台。</p>
+        <div class="form row">
+          <div><label>Email</label><input id="s-email" value="sales@mattex.com"></div>
+          <div><label>Password</label><input id="s-pass" type="password" value="mattex"></div>
+        </div>
+        <p><button class="btn primary" id="s-login">進入 Admin</button></p>
+      </section>`;
+  }
+  const tabs = [
+    ["products", "產品表"],
+    ["excel", "Excel 匯入"],
+    ["rfqs", "RFQ inbox"],
+    ["reports", "Product reports"],
+    ["accounts", "帳號"],
+  ];
+  return `
+    <section class="panel">
+      <div class="nav">
+        <div>Sales · ${esc(state.session.email)}</div>
+        <button class="btn" id="s-logout">登出</button>
+      </div>
+      <div class="tabs">
+        ${tabs.map(([id, lab]) => `<button class="tab ${ui.adminTab === id ? "on" : ""}" data-atab="${id}">${lab}</button>`).join("")}
+      </div>
+    </section>
+    ${ui.adminTab === "products" ? adminProducts() : ""}
+    ${ui.adminTab === "excel" ? adminExcel() : ""}
+    ${ui.adminTab === "rfqs" ? adminRfqs() : ""}
+    ${ui.adminTab === "reports" ? adminReports() : ""}
+    ${ui.adminTab === "accounts" ? adminAccounts() : ""}
+  `;
+}
+
+function adminProducts() {
+  const rows = state.products;
+  const editing = ui.editing ? state.products.find((p) => p.id === ui.editing) : null;
+  return `
+    <section class="panel">
+      <h2>Manage products</h2>
+      <p class="muted">Hold＝對買家隱藏。軟刪唔硬刪。Publish 要正式 SKU + Category + Name + Unit + MOQ + Lead Time。</p>
+      <div class="scroll">
+        <table>
+          <thead><tr>
+            <th>Provisional</th><th>Official SKU</th><th>Category</th><th>IMG</th><th>Name</th>
+            <th>Size</th><th>Certs</th><th>Spec</th><th>Unit</th><th>MOQ</th><th>Lead</th>
+            <th>Purposes</th><th>Remark</th><th>Tag</th><th>Status</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${rows.map((p) => `
+              <tr>
+                <td>${esc(p.provisionalSku)}</td>
+                <td>${esc(p.productNo || "—")}</td>
+                <td>${esc(p.category)}</td>
+                <td>${esc(p.imageSource)}</td>
+                <td>${esc(p.name)}</td>
+                <td>${esc(p.sizeDesc)}</td>
+                <td>${esc(p.certifications)}</td>
+                <td>${esc(p.primarySpec)}</td>
+                <td>${esc(p.salesUnit)}</td>
+                <td>${esc(p.moq)}</td>
+                <td>${esc(p.leadTime)}</td>
+                <td>${(p.purposes || []).map((x) => `<span class="tag">${esc(x)}</span>`).join("")}</td>
+                <td>${esc(p.remark)}</td>
+                <td>${p.green ? "Green " : ""}${p.hit ? "Hit" : ""}</td>
+                <td>${statusTags(p)}</td>
+                <td><button class="btn" data-edit="${p.id}">改</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel form">
+      <h2>${editing ? "編輯 " + esc(editing.name) : "新增草稿"}</h2>
+      <div class="row">
+        <div><label>Product name</label><input id="f-name" value="${esc(editing ? editing.name : "")}"></div>
+        <div><label>Category</label>
+          <select id="f-cat">${SubbieAdminModel.CATEGORIES.map((c) =>
+            `<option ${editing && editing.category === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
+        </div>
+      </div>
+      <div class="row">
+        <div><label>Official SKU（上架前必填）</label><input id="f-sku" value="${esc(editing ? editing.productNo : "")}"></div>
+        <div><label>Sales Unit</label><input id="f-unit" value="${esc(editing ? editing.salesUnit : "sheet")}"></div>
+      </div>
+      <div class="row">
+        <div><label>MOQ</label><input id="f-moq" value="${esc(editing ? editing.moq : "1")}"></div>
+        <div><label>Lead Time</label><input id="f-lead" value="${esc(editing ? editing.leadTime : "7 days")}"></div>
+      </div>
+      <label>Size / Description</label><input id="f-size" value="${esc(editing ? editing.sizeDesc : "")}">
+      <label>Primary Spec</label><input id="f-spec" value="${esc(editing ? editing.primarySpec : "")}">
+      <label>Certifications / Reports（文字；檔案只係示範標記）</label><input id="f-cert" value="${esc(editing ? editing.certifications : "")}">
+      <label>Purposes（逗號／分號／換行）</label><textarea id="f-use">${esc((editing && editing.purposes || []).join("\n"))}</textarea>
+      <label>Remark</label><input id="f-remark" value="${esc(editing ? editing.remark : "")}">
+      <p>
+        <label><input type="checkbox" id="f-green" ${editing && editing.green ? "checked" : ""}> Green</label>
+        &nbsp;
+        <label><input type="checkbox" id="f-hit" ${editing && editing.hit ? "checked" : ""}> Hit</label>
+      </p>
+      <p>
+        <button class="btn primary" id="f-save">${editing ? "儲存（不上架狀態不變）" : "新增草稿"}</button>
+        ${editing && !editing.deleted && !editing.published ? `<button class="btn" id="f-pub">Publish</button>` : ""}
+        ${editing && editing.published && !editing.deleted && !editing.held ? `<button class="btn warn" id="f-hold">Hold</button>` : ""}
+        ${editing && editing.held ? `<button class="btn" id="f-unhold">取消 Hold</button>` : ""}
+        ${editing && !editing.deleted ? `<button class="btn danger" id="f-del">軟刪</button>` : ""}
+        ${editing ? `<button class="btn" id="f-gen">標成 Gen 圖</button>` : ""}
+      </p>
+    </section>
+  `;
+}
+
+function adminExcel() {
+  const res = state.lastExcel || [];
+  return `
+    <section class="panel form">
+      <h2>Bulk upload</h2>
+      <p class="muted">表頭用範本。多餘欄忽略。缺 Name／Category 或類別不在 17 類 → 該列失敗。空 Official SKU → 派 Provisional。已上架唔會被打回草稿。空／Gen 圖不覆蓋 upload／chain 圖。</p>
+      <p>
+        <button class="btn" id="xls-dl">下載 CSV 範本</button>
+      </p>
+      <label>貼上 CSV</label>
+      <textarea id="xls-csv" placeholder="${esc(SubbieAdminModel.EXCEL_HEADERS.join(","))}"></textarea>
+      <p><button class="btn primary" id="xls-go">匯入</button></p>
+      ${res.length ? `<table><thead><tr><th>列</th><th>結果</th></tr></thead><tbody>
+        ${res.map((r) => `<tr><td>${r.line}</td><td>${r.ok ? "OK" : "失敗"} — ${esc(r.msg)}</td></tr>`).join("")}
+      </tbody></table>` : ""}
+    </section>
+  `;
+}
+
+function adminRfqs() {
+  return `
+    <section class="panel">
+      <h2>RFQ inbox（Phase 2）</h2>
+      <p class="muted">received → reviewing → accepted／returned／rejected。只有 accepted 可模擬 TMS。真 UAT 唔打出去。</p>
+      ${state.rfqs.map((r) => `
+        <div class="card" style="margin-bottom:10px">
+          <strong>${esc(r.id)}</strong>
+          <span class="tag">${esc(r.status)}</span>
+          ${r.reviewingBy ? `<span class="tag">looking ${esc(r.reviewingBy)}</span>` : ""}
+          ${r.tmsRfqId ? `<span class="tag green">${esc(r.tmsRfqId)}</span>` : ""}
+          <div class="muted">${esc(r.buyerEmail)} · ${r.lines.map((l) => `${esc(l.productNo || l.name)} × ${l.qty}`).join("、")}</div>
+          ${r.reason ? `<div>原因：${esc(r.reason)}</div>` : ""}
+          <p>
+            ${r.status === "received" || (r.status === "reviewing" && !r.reviewingBy) || r.status === "returned" || r.status === "reviewing"
+              ? `<button class="btn" data-rev="${r.id}">開始 review</button>` : ""}
+            ${r.status === "reviewing" || r.status === "received" || r.status === "returned" ? `
+              <button class="btn primary" data-acc="${r.id}">Accept</button>
+              <button class="btn warn" data-ret="${r.id}">退回</button>
+              <button class="btn danger" data-rej="${r.id}">拒絕</button>
+            ` : ""}
+            ${r.status === "accepted" && !r.tmsRfqId ? `
+              <button class="btn" data-tmsf="${r.id}">TMS 模擬失敗</button>
+              <button class="btn primary" data-tms="${r.id}">Upload to TMS</button>
+            ` : ""}
+          </p>
+        </div>
+      `).join("") || "<p class='muted'>未有 RFQ。去買家面 login 送單。</p>"}
+      ${state.lastTms ? `<h2>上次 TMS payload</h2><pre class="pre">${esc(JSON.stringify(state.lastTms, null, 2))}</pre>` : ""}
+      <p class="muted">退回／拒絕會用提示框問原因。</p>
+    </section>
+  `;
+}
+
+function adminReports() {
+  return `
+    <section class="panel">
+      <h2>已上架貨 reports（共用佇列）</h2>
+      ${state.reports.map((r) => {
+        const p = state.products.find((x) => x.id === r.productId);
+        return `<div class="card" style="margin-bottom:10px">
+          <strong>${esc(r.id)}</strong> <span class="tag">${esc(r.status)}</span>
+          <div>${esc(r.type)} · ${esc(p ? p.name : r.productId)} · 由 ${esc(r.filerRole)} ${esc(r.filerEmail)}</div>
+          <div class="muted">${esc(r.text)} ${r.evidence ? "· 證據 " + esc(r.evidence) : ""}</div>
+          ${r.status === "open" || r.status === "looking" ? `
+            <button class="btn" data-look="${r.id}">開始 looking</button>
+            <button class="btn" data-dis="${r.id}">Dismiss</button>
+            <button class="btn warn" data-fixh="${r.id}">Fix + Hold</button>
+            <button class="btn" data-fix="${r.id}">Fix 改備註</button>
+          ` : ""}
+        </div>`;
+      }).join("") || "<p class='muted'>未有 report。</p>"}
+    </section>
+  `;
+}
+
+function adminAccounts() {
+  return `
+    <section class="panel">
+      <h2>員工（Sales＝Admin）</h2>
+      <table><thead><tr><th>Email</th><th>Name</th><th>狀態</th><th></th></tr></thead><tbody>
+        ${state.staff.map((u) => `<tr>
+          <td>${esc(u.email)}${u.bootstrap ? " · bootstrap" : ""}</td>
+          <td>${esc(u.name)}</td>
+          <td>${u.enabled ? "啟用" : "停用"}</td>
+          <td>${u.enabled ? `<button class="btn danger" data-off="${u.email}">停用</button>` : ""}</td>
+        </tr>`).join("")}
+      </tbody></table>
+      <div class="form row">
+        <div><label>新員工 email</label><input id="st-email" placeholder="ops2@mattex.com"></div>
+        <div><label>Name</label><input id="st-name" placeholder="Ops"></div>
+      </div>
+      <p><button class="btn" id="st-add">開員工帳（不能自助註冊）</button></p>
+    </section>
+    <section class="panel">
+      <h2>買家（只能停用／啟用，不能改密碼）</h2>
+      <table><thead><tr><th>Email</th><th>公司</th><th>狀態</th><th></th></tr></thead><tbody>
+        ${state.buyers.map((u) => `<tr>
+          <td>${esc(u.email)}</td>
+          <td>${esc(u.companyName)}</td>
+          <td>${u.enabled ? "啟用" : "停用"}</td>
+          <td>${u.enabled
+            ? `<button class="btn danger" data-boff="${u.email}">停用</button>`
+            : `<button class="btn" data-bon="${u.email}">啟用</button>`}</td>
+        </tr>`).join("")}
+      </tbody></table>
+    </section>
+  `;
+}
+
+function render() {
+  renderState();
+  renderScenarios();
+  document.getElementById("chip-buyer").classList.toggle("on", ui.surface === "buyer");
+  document.getElementById("chip-admin").classList.toggle("on", ui.surface === "admin");
+  document.getElementById("surface").innerHTML = ui.surface === "admin" ? renderAdmin() : renderBuyer();
+}
+
+document.body.addEventListener("click", (e) => {
+  const sc = e.target.closest("[data-sc]");
+  if (sc) {
+    ui.scenario = Number(sc.dataset.sc);
+    ui.step = 0;
+    state = SubbieAdminModel.reduce(state, { type: "RESET" });
+    render();
+    return;
+  }
+  const stepBtn = e.target.closest("[data-step]");
+  if (stepBtn && !stepBtn.disabled) {
+    const scn = SCENARIOS[ui.scenario];
+    const st = scn.steps[Number(stepBtn.dataset.step)];
+    dispatch(st.action, st.surface);
+    ui.step = Math.min(ui.step + 1, scn.steps.length);
+    render();
+    return;
+  }
+  if (e.target.id === "chip-buyer") { ui.surface = "buyer"; render(); return; }
+  if (e.target.id === "chip-admin") { ui.surface = "admin"; render(); return; }
+  if (e.target.id === "b-login") {
+    dispatch({ type: "LOGIN_BUYER", email: document.getElementById("b-email").value, password: document.getElementById("b-pass").value });
+    return;
+  }
+  if (e.target.id === "s-login") {
+    dispatch({ type: "LOGIN_SALES", email: document.getElementById("s-email").value, password: document.getElementById("s-pass").value });
+    return;
+  }
+  if (e.target.id === "b-logout" || e.target.id === "s-logout") { dispatch({ type: "LOGOUT" }); return; }
+  const add = e.target.closest("[data-add]");
+  if (add) { dispatch({ type: "CART_ADD", productId: add.dataset.add, qty: 1 }); return; }
+  const rm = e.target.closest("[data-rm]");
+  if (rm) { dispatch({ type: "CART_REMOVE", productId: rm.dataset.rm }); return; }
+  if (e.target.id === "rfq-send") {
+    dispatch({ type: "RFQ_SUBMIT", note: (document.getElementById("rfq-note") || {}).value || "" });
+    return;
+  }
+  const resub = e.target.closest("[data-resub]");
+  if (resub) { dispatch({ type: "RFQ_RESUBMIT", id: resub.dataset.resub }); return; }
+  const rep = e.target.closest("[data-rep]");
+  if (rep) { ui.reportFor = rep.dataset.rep; render(); return; }
+  if (e.target.id === "rep-send") {
+    dispatch({
+      type: "REPORT_CREATE",
+      productId: document.getElementById("rep-pid").value,
+      reportType: document.getElementById("rep-type").value,
+      text: document.getElementById("rep-text").value,
+    });
+    ui.reportFor = "";
+    render();
+    return;
+  }
+  if (e.target.id === "bp-save") {
+    dispatch({
+      type: "BUYER_UPDATE_PROFILE",
+      name: document.getElementById("bp-name").value,
+      companyName: document.getElementById("bp-co").value,
+      password: document.getElementById("bp-pass").value,
+    });
+    return;
+  }
+  const atab = e.target.closest("[data-atab]");
+  if (atab) { ui.adminTab = atab.dataset.atab; render(); return; }
+  const edit = e.target.closest("[data-edit]");
+  if (edit) { ui.editing = edit.dataset.edit; ui.adminTab = "products"; render(); return; }
+  if (e.target.id === "f-save") {
+    const payload = {
+      name: document.getElementById("f-name").value,
+      category: document.getElementById("f-cat").value,
+      productNo: document.getElementById("f-sku").value,
+      salesUnit: document.getElementById("f-unit").value,
+      moq: document.getElementById("f-moq").value,
+      leadTime: document.getElementById("f-lead").value,
+      sizeDesc: document.getElementById("f-size").value,
+      primarySpec: document.getElementById("f-spec").value,
+      certifications: document.getElementById("f-cert").value,
+      purposes: document.getElementById("f-use").value,
+      remark: document.getElementById("f-remark").value,
+      green: document.getElementById("f-green").checked,
+      hit: document.getElementById("f-hit").checked,
+    };
+    if (ui.editing) dispatch({ type: "PRODUCT_UPDATE", id: ui.editing, ...payload });
+    else dispatch({ type: "PRODUCT_CREATE", ...payload });
+    return;
+  }
+  if (e.target.id === "f-pub") { dispatch({ type: "PRODUCT_PUBLISH", id: ui.editing }); return; }
+  if (e.target.id === "f-hold") { dispatch({ type: "PRODUCT_HOLD", id: ui.editing }); return; }
+  if (e.target.id === "f-unhold") { dispatch({ type: "PRODUCT_UNHOLD", id: ui.editing }); return; }
+  if (e.target.id === "f-del") { dispatch({ type: "PRODUCT_SOFT_DELETE", id: ui.editing }); return; }
+  if (e.target.id === "f-gen") { dispatch({ type: "PRODUCT_SET_IMAGE", id: ui.editing, image: "", imageSource: "generated" }); return; }
+  if (e.target.id === "xls-dl") {
+    const blob = new Blob([SubbieAdminModel.excelTemplate()], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "admin-product-template.csv";
+    a.click();
+    return;
+  }
+  if (e.target.id === "xls-go") {
+    dispatch({ type: "EXCEL_IMPORT", csv: document.getElementById("xls-csv").value });
+    return;
+  }
+  const rev = e.target.closest("[data-rev]");
+  if (rev) { dispatch({ type: "RFQ_START_REVIEW", id: rev.dataset.rev }); return; }
+  const acc = e.target.closest("[data-acc]");
+  if (acc) { dispatch({ type: "RFQ_ACCEPT", id: acc.dataset.acc }); return; }
+  const ret = e.target.closest("[data-ret]");
+  if (ret) {
+    const reason = prompt("退回原因（必填）", "請補送貨地址");
+    if (reason) dispatch({ type: "RFQ_RETURN", id: ret.dataset.ret, reason });
+    return;
+  }
+  const rej = e.target.closest("[data-rej]");
+  if (rej) {
+    const reason = prompt("拒絕原因（必填）", "規格做唔到");
+    if (reason) dispatch({ type: "RFQ_REJECT", id: rej.dataset.rej, reason });
+    return;
+  }
+  const tms = e.target.closest("[data-tms]");
+  if (tms) { dispatch({ type: "RFQ_UPLOAD_TMS", id: tms.dataset.tms }); return; }
+  const tmsf = e.target.closest("[data-tmsf]");
+  if (tmsf) { dispatch({ type: "RFQ_UPLOAD_TMS", id: tmsf.dataset.tmsf, fail: true }); return; }
+  const look = e.target.closest("[data-look]");
+  if (look) { dispatch({ type: "REPORT_START_LOOKING", id: look.dataset.look }); return; }
+  const dis = e.target.closest("[data-dis]");
+  if (dis) { dispatch({ type: "REPORT_DISMISS", id: dis.dataset.dis }); return; }
+  const fixh = e.target.closest("[data-fixh]");
+  if (fixh) { dispatch({ type: "REPORT_FIX", id: fixh.dataset.fixh, hold: true, markChain: true }); return; }
+  const fix = e.target.closest("[data-fix]");
+  if (fix) { dispatch({ type: "REPORT_FIX", id: fix.dataset.fix, patch: { remark: "sales corrected" } }); return; }
+  const off = e.target.closest("[data-off]");
+  if (off) { dispatch({ type: "STAFF_DISABLE", email: off.dataset.off }); return; }
+  const boff = e.target.closest("[data-boff]");
+  if (boff) { dispatch({ type: "BUYER_SET_ENABLED", email: boff.dataset.boff, enabled: false }); return; }
+  const bon = e.target.closest("[data-bon]");
+  if (bon) { dispatch({ type: "BUYER_SET_ENABLED", email: bon.dataset.bon, enabled: true }); return; }
+  if (e.target.id === "st-add") {
+    dispatch({ type: "STAFF_CREATE", email: document.getElementById("st-email").value, name: document.getElementById("st-name").value });
+    return;
+  }
+});
+
+document.body.addEventListener("change", (e) => {
+  if (e.target.id === "buyer-q") { ui.buyerQ = e.target.value; render(); }
+});
+
+render();
+</script>
+</body>
+</html>

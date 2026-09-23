@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Subbie - Storefront</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: "#F1F7F3",
+              100: "#DCECE2",
+              200: "#B7D6C3",
+              400: "#4F8F6C",
+              500: "#2F6B4F",
+              600: "#245A41",
+              700: "#1B4633",
+              800: "#143528",
+              900: "#0C1F17",
+            },
+            ink: "#121816",
+            mute: "#5A665F",
+            line: "#D6DDD8",
+            paper: "#F6F7F5",
+            charcoal: "#101513",
+          },
+          fontFamily: {
+            sans: ['"IBM Plex Sans"', "Helvetica", "Arial", "sans-serif"],
+            display: ['"IBM Plex Serif"', "Georgia", "serif"],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    html { scroll-behavior: smooth; }
+    body { background: #f6f7f5; }
+    .hero-shell {
+      background-color: #101513;
+      background-image:
+        linear-gradient(105deg, rgba(12, 20, 17, 0.92) 0%, rgba(12, 20, 17, 0.72) 42%, rgba(12, 20, 17, 0.35) 100%),
+        url("assets/cat-steel.png");
+      background-size: cover;
+      background-position: center right;
+    }
+    .sheet {
+      margin-top: -2.5rem;
+      border-radius: 1.25rem 1.25rem 0 0;
+      background: #f6f7f5;
+      box-shadow: 0 -18px 40px rgba(0, 0, 0, 0.18);
+    }
+    #products, #categories, #top, #green, #support {
+      scroll-margin-top: 5.5rem;
+    }
+    .nav-glass {
+      background: rgba(16, 21, 19, 0.55);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .nav-glass.is-solid {
+      background: rgba(16, 21, 19, 0.94);
+    }
+    .toast { animation: toast-in 0.22s ease-out; }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .cart-bump { animation: bump 0.3s ease; }
+    @keyframes bump {
+      0%, 100% { transform: scale(1); }
+      45% { transform: scale(1.12); }
+    }
+    .reveal { animation: rise 0.55s ease-out both; }
+    .reveal-delay { animation-delay: 0.12s; }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(14px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .product-tile {
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+      border: 0;
+      background: #fff;
+      box-shadow: 0 1px 0 rgba(16, 21, 19, 0.06);
+    }
+    .product-tile:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 14px 28px rgba(16, 21, 19, 0.1);
+    }
+    .cat-tile {
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+      border: 0;
+      min-height: 0;
+      aspect-ratio: 1 / 1.05;
+      background: #1b4633;
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+    }
+    .cat-tile:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 24px rgba(16, 21, 19, 0.14);
+    }
+    .cat-tile.is-active {
+      outline: 2px solid #245a41;
+      outline-offset: 2px;
+    }
+    .cat-tile img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.45s ease;
+    }
+    .cat-tile:hover img {
+      transform: scale(1.08);
+    }
+    .cat-tile::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(12, 20, 17, 0.05) 20%, rgba(12, 20, 17, 0.78) 100%);
+      z-index: 1;
+    }
+    .cat-tile-body {
+      position: absolute;
+      inset: auto 0 0 0;
+      z-index: 2;
+      padding: 0.65rem 0.7rem 0.75rem;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 0.35rem;
+    }
+  </style>
+</head>
+<body class="text-ink font-sans antialiased">
+
+  <div class="hero-shell min-h-[88vh] flex flex-col">
+    <header id="siteNav" class="nav-glass sticky top-0 z-40">
+      <div class="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4">
+        <a href="index.html" class="shrink-0 flex items-center gap-2.5 text-white">
+          <span class="inline-flex h-9 w-9 items-center justify-center bg-brand-600 text-white font-bold text-sm tracking-wide">SB</span>
+          <div class="leading-tight">
+            <span class="block text-lg font-semibold tracking-tight">Subbie</span>
+            <span class="block text-[11px] tracking-[0.14em] uppercase text-white/55">Storefront</span>
+          </div>
+        </a>
+
+        <nav class="hidden md:flex items-center gap-6 ml-8 text-sm font-medium text-white/70">
+          <a href="#categories" class="hover:text-white">Categories</a>
+          <a href="#green" class="hover:text-white">Green</a>
+          <a href="#top" class="hover:text-white">Top 5</a>
+          <a href="#products" class="hover:text-white">Catalog</a>
+          <a href="rfq.html" class="hover:text-white">RFQ draft</a>
+          <a href="rfqs.html" class="hover:text-white">My RFQs</a>
+          <a href="#support" class="hover:text-white">Support</a>
+        </nav>
+
+        <div class="ml-auto flex items-center gap-2 sm:gap-3">
+          <button
+            id="cartBtn"
+            type="button"
+            class="relative inline-flex items-center gap-2 border border-white/20 bg-white/5 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
+            aria-label="Shopping cart"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 3h2l.4 2M7 13h10l3-8H6.4M7 13L5.4 5M7 13l-2 6h14M10 21a1 1 0 100-2 1 1 0 000 2zm8 0a1 1 0 100-2 1 1 0 000 2z"/>
+            </svg>
+            <span class="hidden sm:inline">Cart</span>
+            <span id="cartCount" class="absolute -top-2 -right-2 min-w-[1.25rem] h-5 px-1 bg-brand-400 text-charcoal text-xs font-bold flex items-center justify-center">0</span>
+          </button>
+
+          <a
+            id="loginBtn"
+            href="login.html"
+            class="inline-flex items-center bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-500"
+          >
+            Login
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <section class="flex-1 flex items-end">
+      <div class="max-w-6xl mx-auto w-full px-4 pb-20 pt-16 sm:pb-24 sm:pt-20">
+        <p class="reveal text-brand-200 text-sm font-semibold tracking-[0.18em] uppercase mb-4">Subbie — Storefront</p>
+        <h1 class="reveal reveal-delay font-display text-4xl sm:text-5xl lg:text-[3.4rem] font-semibold text-white max-w-2xl leading-[1.1] tracking-tight">
+          Engineering products,<br class="hidden sm:block" /> ready to quote
+        </h1>
+        <p class="reveal reveal-delay mt-5 text-base sm:text-lg text-white/70 max-w-xl leading-relaxed">
+          Industrial catalog for construction buyers who need specs first, then a clean RFQ path.
+        </p>
+        <div class="reveal reveal-delay mt-8 flex flex-wrap gap-3">
+          <a href="#products" class="inline-flex items-center bg-brand-600 px-6 py-3 text-sm font-semibold text-white hover:bg-brand-500">
+            Browse catalog
+          </a>
+          <a href="rfq.html" class="inline-flex items-center border border-white/30 px-6 py-3 text-sm font-semibold text-white hover:bg-white/10">
+            Open RFQ draft
+          </a>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="sheet relative z-10">
+    <section id="categories" class="max-w-6xl mx-auto px-4 pt-8 sm:pt-10">
+      <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.14em] text-mute mb-1">Browse by category</p>
+          <h2 class="font-display text-2xl sm:text-3xl font-semibold text-brand-800">Material categories</h2>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <button type="button" id="toggleCategories" class="text-sm font-semibold text-brand-600 hover:text-brand-700">
+            Show more
+          </button>
+          <button type="button" id="clearCategory" class="text-sm font-semibold text-brand-600 hover:text-brand-700">
+            Show all products
+          </button>
+        </div>
+      </div>
+      <div id="categoryChips" class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-8 gap-2.5"></div>
+    </section>
+
+    <section id="green" class="max-w-6xl mx-auto px-4 pt-12 sm:pt-14">
+      <div class="bg-brand-800 text-white p-6 sm:p-8 mb-6">
+        <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-5">
+          <div class="max-w-2xl">
+            <p class="text-xs font-semibold uppercase tracking-[0.16em] text-brand-200">Green preferred</p>
+            <h2 class="mt-2 font-display text-3xl sm:text-4xl font-semibold leading-tight">
+              5 lower-impact products for greener builds
+            </h2>
+            <p class="mt-3 text-sm sm:text-base text-white/70 leading-relaxed">
+              FSC timber, high-R insulation, recycled aggregate, and low-VOC boards — ready for your RFQ draft.
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-3 shrink-0">
+            <button
+              type="button"
+              id="filterGreenBtn"
+              class="inline-flex items-center bg-brand-400 px-5 py-2.5 text-sm font-semibold text-charcoal hover:bg-brand-200"
+            >
+              Shop all green
+            </button>
+            <a href="#products" class="inline-flex items-center border border-white/25 px-5 py-2.5 text-sm font-semibold text-white hover:bg-white/10">
+              Full catalog
+            </a>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center justify-between gap-3 mb-4">
+        <p id="greenCount" class="text-sm text-mute"></p>
+        <a href="#products" class="text-sm font-semibold text-brand-600 hover:text-brand-700">View in catalog →</a>
+      </div>
+      <div id="greenGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4"></div>
+    </section>
+
+    <section id="top" class="max-w-6xl mx-auto px-4 pt-12 sm:pt-14">
+      <div class="flex items-end justify-between gap-4 mb-6">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.14em] text-mute mb-2">Featured</p>
+          <h2 class="font-display text-3xl font-semibold text-brand-800">Top 5 products</h2>
+        </div>
+        <a href="#products" class="text-sm font-semibold text-brand-600 hover:text-brand-700">Full catalog →</a>
+      </div>
+      <div id="topGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4"></div>
+    </section>
+
+    <section class="max-w-6xl mx-auto px-4 pt-12 sm:pt-14">
+      <div class="grid md:grid-cols-2 gap-6">
+        <div class="bg-white border border-line p-5 sm:p-6 flex flex-col justify-between min-h-[200px]">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.14em] text-mute">Purchasing flow</p>
+            <h2 class="mt-3 font-display text-2xl font-semibold text-brand-800">From catalog to RFQ</h2>
+            <p class="mt-3 text-sm text-mute leading-relaxed">
+              Add line items after login, review quantities and notes, then submit a tracked quote request.
+            </p>
+          </div>
+          <a href="#support" class="mt-6 inline-flex w-fit items-center bg-charcoal px-4 py-2.5 text-sm font-semibold text-white hover:bg-ink">
+            How it works
+          </a>
+        </div>
+        <div class="bg-charcoal text-white p-5 sm:p-6 flex flex-col justify-between min-h-[200px]">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.14em] text-white/50">Sales desk</p>
+            <h2 class="mt-3 font-display text-2xl font-semibold leading-snug">Construction materials, quote-ready</h2>
+            <p class="mt-3 text-sm text-white/65 leading-relaxed">
+              Factory pricing where listed. Price-upon-request items can still join your RFQ draft.
+            </p>
+          </div>
+          <a href="#contact" class="mt-6 inline-flex w-fit items-center bg-white px-4 py-2.5 text-sm font-semibold text-charcoal hover:bg-brand-50">
+            Contact sales
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section id="support" class="bg-white border-y border-line mt-8 sm:mt-10">
+      <div class="max-w-6xl mx-auto px-4 py-5 grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 text-sm">
+        <div>
+          <p class="font-semibold text-ink">Spec support</p>
+          <p class="mt-0.5 text-mute leading-snug">Open Details for datasheet-style product information before you quote.</p>
+        </div>
+        <div>
+          <p class="font-semibold text-ink">WhatsApp pricing</p>
+          <p class="mt-0.5 text-mute leading-snug">Ask for Price opens sales chat. Optionally add the same SKU to your RFQ draft.</p>
+        </div>
+        <div>
+          <p class="font-semibold text-ink">RFQ after login</p>
+          <p class="mt-0.5 text-mute leading-snug">Cart is your RFQ draft — submit, track, and reorder from My RFQs.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="products" class="max-w-6xl mx-auto px-4 py-14 sm:py-16">
+      <div class="flex flex-col gap-5 mb-6">
+        <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.14em] text-mute mb-2">Full catalog</p>
+            <h2 class="font-display text-3xl font-semibold text-brand-800">All products</h2>
+            <p class="text-sm text-mute mt-2">Search by spec, size, material, SKU, or description</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <p id="productCount" class="text-sm text-mute"></p>
+            <button type="button" id="clearFilters" class="text-sm font-semibold text-brand-600 hover:text-brand-700">
+              Clear filters
+            </button>
+          </div>
+        </div>
+        <div class="flex flex-col sm:flex-row gap-3">
+          <label class="relative flex-1">
+            <span class="sr-only">Search products</span>
+            <input
+              id="productSearch"
+              type="search"
+              placeholder="e.g. DN600, S355, plywood, membrane, gypsum…"
+              class="w-full border border-line bg-white pl-10 pr-3 py-3 text-sm outline-none focus:border-brand-600"
+              autocomplete="off"
+            />
+            <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-mute" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 21l-4.3-4.3m1.3-5.2a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"/>
+            </svg>
+          </label>
+          <label class="flex items-center gap-2 shrink-0">
+            <span class="text-sm text-mute whitespace-nowrap">Category</span>
+            <select
+              id="categoryFilter"
+              class="border border-line bg-white px-3 py-3 text-sm outline-none focus:border-brand-600 min-w-[12rem]"
+            >
+              <option value="all">All categories</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div id="productGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+      <p id="catalogEmpty" class="hidden mt-8 text-sm text-mute">No products match your search. <button type="button" data-clear-filters class="font-semibold text-brand-600 hover:underline">Clear filters</button></p>
+    </section>
+
+    <footer id="contact" class="bg-charcoal text-white">
+      <div class="max-w-6xl mx-auto px-4 py-12 grid grid-cols-2 md:grid-cols-4 gap-8">
+        <div class="col-span-2 md:col-span-1">
+          <div class="flex items-center gap-2.5">
+            <span class="inline-flex h-8 w-8 items-center justify-center bg-brand-600 text-white font-bold text-xs">SB</span>
+            <span class="font-semibold">Subbie</span>
+          </div>
+          <p class="mt-4 text-sm text-white/55 leading-relaxed max-w-[16rem]">
+            Engineering products marketplace for quote-ready purchasing.
+          </p>
+        </div>
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.14em] text-white/40 mb-3">Catalog</p>
+          <ul class="space-y-2 text-sm text-white/70">
+            <li><a href="#green" class="hover:text-white">Green products</a></li>
+            <li><a href="#top" class="hover:text-white">Top 5</a></li>
+            <li><a href="#products" class="hover:text-white">All products</a></li>
+          </ul>
+        </div>
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.14em] text-white/40 mb-3">Quotes</p>
+          <ul class="space-y-2 text-sm text-white/70">
+            <li><a href="rfq.html" class="hover:text-white">RFQ draft</a></li>
+            <li><a href="rfqs.html" class="hover:text-white">My RFQs</a></li>
+            <li><a href="login.html" class="hover:text-white">Login</a></li>
+          </ul>
+        </div>
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.14em] text-white/40 mb-3">Contact</p>
+          <ul class="space-y-2 text-sm text-white/70">
+            <li>sales@subbie.store</li>
+            <li>Industrial RFQ desk</li>
+            <li>WhatsApp sales bridge</li>
+          </ul>
+        </div>
+      </div>
+      <div class="border-t border-white/10">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs text-white/40">
+          <p>© 2026 Subbie — Storefront</p>
+          <p>Prototype · localStorage auth &amp; RFQ</p>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <div id="toast" class="fixed bottom-6 right-6 z-50 hidden max-w-sm border border-brand-700 bg-charcoal text-white px-4 py-3 text-sm toast" role="status"></div>
+
+  <div id="authModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4" aria-hidden="true">
+    <div class="absolute inset-0 bg-black/45" data-close-auth></div>
+    <div class="relative bg-white border border-line max-w-sm w-full p-6" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+      <button type="button" class="absolute top-3 right-3 text-mute hover:text-ink text-xl leading-none" data-close-auth aria-label="Close">×</button>
+      <p class="text-xs font-semibold uppercase tracking-[0.14em] text-brand-600 mb-2">Account required</p>
+      <h3 id="authTitle" class="font-display text-xl font-semibold text-brand-800">Create an account or login?</h3>
+      <p class="mt-3 text-sm text-mute leading-relaxed">
+        Sign in before adding items to your RFQ draft.
+      </p>
+      <div class="mt-6 grid grid-cols-1 gap-2">
+        <a href="signup.html" class="inline-flex justify-center bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">
+          Create account
+        </a>
+        <a href="login.html" class="inline-flex justify-center border border-brand-600 px-4 py-2.5 text-sm font-semibold text-brand-600 hover:bg-brand-50">
+          Login
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/store.js"></script>
+  <script>
+    const productGrid = document.getElementById("productGrid");
+    const topGrid = document.getElementById("topGrid");
+    const greenGrid = document.getElementById("greenGrid");
+    const categoryChips = document.getElementById("categoryChips");
+    const categoryFilter = document.getElementById("categoryFilter");
+    const productSearch = document.getElementById("productSearch");
+    const catalogEmpty = document.getElementById("catalogEmpty");
+    const cartCountEl = document.getElementById("cartCount");
+    const cartBtn = document.getElementById("cartBtn");
+    const loginBtn = document.getElementById("loginBtn");
+    const toastEl = document.getElementById("toast");
+    const authModal = document.getElementById("authModal");
+    const siteNav = document.getElementById("siteNav");
+    let pendingCartProductId = null;
+    let activeCategory = "all";
+    let searchQuery = "";
+    let greenOnly = false;
+    let categoriesExpanded = false;
+    const CATEGORY_PREVIEW_COUNT = 8;
+
+    window.addEventListener("scroll", () => {
+      siteNav.classList.toggle("is-solid", window.scrollY > 24);
+    });
+
+    function showToast(message) {
+      toastEl.textContent = message;
+      toastEl.classList.remove("hidden");
+      toastEl.classList.add("toast");
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => toastEl.classList.add("hidden"), 3200);
+    }
+
+    function updateCartUI() {
+      const count = cartCount();
+      cartCountEl.textContent = String(count);
+      cartCountEl.classList.remove("cart-bump");
+      void cartCountEl.offsetWidth;
+      cartCountEl.classList.add("cart-bump");
+    }
+
+    function updateAuthUI() {
+      const user = getUser();
+      if (user) {
+        loginBtn.textContent = user.name || "Account";
+        loginBtn.href = "login.html";
+        loginBtn.title = `Signed in as ${user.email}`;
+      } else {
+        loginBtn.textContent = "Login";
+        loginBtn.href = "login.html";
+      }
+    }
+
+    function openAuthModal(productId) {
+      pendingCartProductId = productId;
+      if (productId) setPendingCart(productId);
+      authModal.classList.remove("hidden");
+      authModal.classList.add("flex");
+      authModal.setAttribute("aria-hidden", "false");
+    }
+
+    function closeAuthModal() {
+      authModal.classList.add("hidden");
+      authModal.classList.remove("flex");
+      authModal.setAttribute("aria-hidden", "true");
+    }
+
+    function handleAddToCart(productId) {
+      if (!isLoggedIn()) {
+        openAuthModal(productId);
+        return;
+      }
+      addToCart(productId);
+      const product = getProduct(productId);
+      updateCartUI();
+      showToast(`Added “${product.name}” to RFQ draft (${cartCount()}).`);
+    }
+
+    function setCategory(name) {
+      activeCategory = name || "all";
+      categoryFilter.value = activeCategory;
+      renderCategoryChips();
+      renderProducts();
+    }
+
+    function clearAllFilters() {
+      greenOnly = false;
+      searchQuery = "";
+      productSearch.value = "";
+      setCategory("all");
+    }
+
+    function productCard(p, opts) {
+      const compact = opts && opts.compact;
+      const greenCompact = opts && opts.greenCompact;
+      const rankBadge =
+        opts && opts.rank
+          ? `<span class="absolute top-2 left-2 z-10 bg-charcoal text-white text-[11px] font-bold px-2 py-1">#${opts.rank}</span>`
+          : "";
+      const greenBadge = p.green
+        ? `<span class="absolute top-2 right-2 z-10 bg-brand-400 text-charcoal text-[10px] font-bold px-2 py-1 tracking-wide">GREEN</span>`
+        : "";
+      if (greenCompact) {
+        return `
+          <article class="flex gap-3 bg-white/5 border border-white/10 p-3 hover:bg-white/10 transition-colors">
+            <a href="details.html?id=${p.id}" class="w-16 h-16 shrink-0 overflow-hidden bg-brand-900">
+              <img src="${p.image}" alt="" class="w-full h-full object-cover" loading="lazy" />
+            </a>
+            <div class="min-w-0 flex-1">
+              <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-200">Green preferred</p>
+              <h3 class="mt-1 text-sm font-semibold text-white leading-snug truncate">
+                <a href="details.html?id=${p.id}" class="hover:text-brand-200">${p.name}</a>
+              </h3>
+              <p class="mt-1 text-xs text-white/55 line-clamp-2">${p.description}</p>
+              <div class="mt-2 flex items-center justify-between gap-2">
+                <p class="text-sm font-bold text-brand-200">${formatPrice(p.price)}</p>
+                <button type="button" data-action="add" data-id="${p.id}" class="bg-brand-400 text-charcoal text-[10px] font-bold px-2.5 py-1.5 hover:bg-brand-200">Add</button>
+              </div>
+            </div>
+          </article>`;
+      }
+      return `
+        <article class="product-tile relative flex flex-col overflow-hidden">
+          ${rankBadge}
+          ${greenBadge}
+          <a href="details.html?id=${p.id}" class="${compact ? "aspect-square" : "aspect-[4/3]"} overflow-hidden bg-brand-50 block">
+            <img src="${p.image}" alt="${p.name}" class="w-full h-full object-cover transition-transform duration-400 hover:scale-[1.03]" loading="lazy" />
+          </a>
+          <div class="p-3.5 flex flex-col flex-1">
+            <p class="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">${p.category}</p>
+            <h3 class="mt-1 font-semibold text-ink leading-snug text-sm">
+              <a href="details.html?id=${p.id}" class="hover:text-brand-600">${p.name}</a>
+            </h3>
+            <p class="mt-1 text-xs text-mute truncate">by ${p.supplier || "Subbie Partner"}</p>
+            ${compact ? "" : `<p class="mt-2 text-sm text-mute line-clamp-2 flex-1">${p.description}</p>`}
+            <p class="mt-2.5 text-base font-bold text-brand-700">${formatPrice(p.price)}</p>
+            <div class="mt-3 grid ${compact ? "grid-cols-1 gap-1.5" : "grid-cols-3 gap-1.5"}">
+              <button type="button" data-action="add" data-id="${p.id}" class="bg-brand-600 text-white text-[11px] font-semibold py-2 px-1 hover:bg-brand-700">Add to Cart</button>
+              ${
+                compact
+                  ? `<a href="details.html?id=${p.id}" class="border border-line/80 text-ink text-[11px] font-semibold py-2 px-1 hover:border-brand-600 hover:text-brand-600 text-center">Details</a>`
+                  : `<a href="whatsapp.html?id=${p.id}" class="border border-brand-600/70 text-brand-700 text-[11px] font-semibold py-2 px-1 hover:bg-brand-50 text-center">Ask for Price</a>
+              <a href="details.html?id=${p.id}" class="border border-line/80 text-ink text-[11px] font-semibold py-2 px-1 hover:border-brand-600 hover:text-brand-600 text-center">Details</a>`
+              }
+            </div>
+          </div>
+        </article>`;
+    }
+
+    function renderGreenProducts() {
+      const greens = getGreenProducts(5);
+      const countEl = document.getElementById("greenCount");
+      if (countEl) countEl.textContent = `Showing ${greens.length} of ${getGreenProducts().length} green SKUs`;
+      greenGrid.innerHTML = greens
+        .map((p) => productCard(p, { compact: true }))
+        .join("");
+    }
+
+    function renderCategoryChips() {
+      const all = getCategoryDefs();
+      const list = categoriesExpanded ? all : all.slice(0, CATEGORY_PREVIEW_COUNT);
+      const toggleBtn = document.getElementById("toggleCategories");
+      if (toggleBtn) {
+        toggleBtn.textContent = categoriesExpanded
+          ? "Show less"
+          : `Show more (${all.length - CATEGORY_PREVIEW_COUNT})`;
+        toggleBtn.classList.toggle("hidden", all.length <= CATEGORY_PREVIEW_COUNT);
+      }
+      categoryChips.innerHTML = list
+        .map((c) => {
+          const active = activeCategory === c.name;
+          return `
+          <button
+            type="button"
+            data-cat="${c.name}"
+            title="${c.name}"
+            class="cat-tile group ${active ? "is-active" : ""}"
+          >
+            <img src="${c.image}" alt="" loading="lazy" />
+            <span class="cat-tile-body">
+              <span class="min-w-0 text-left text-[11px] sm:text-xs font-semibold text-white leading-snug line-clamp-2 drop-shadow-sm">${c.name}</span>
+              <span class="shrink-0 inline-flex h-5 min-w-[1.2rem] items-center justify-center bg-white/95 text-brand-800 text-[10px] font-bold px-1.5">${c.count}</span>
+            </span>
+          </button>`;
+        })
+        .join("");
+    }
+
+    function renderTopProducts() {
+      const top = getTopProducts(5);
+      topGrid.innerHTML = top.map((p) => productCard(p, { compact: true, rank: p.featuredRank })).join("");
+    }
+
+    function renderCategoryOptions() {
+      getCategories().forEach((cat) => {
+        const opt = document.createElement("option");
+        opt.value = cat;
+        opt.textContent = cat;
+        categoryFilter.appendChild(opt);
+      });
+    }
+
+    function renderProducts() {
+      let list = searchProducts(searchQuery, activeCategory);
+      if (greenOnly) list = list.filter((p) => p.green);
+      const countEl = document.getElementById("productCount");
+      if (countEl) {
+        const bits = [`${list.length} product${list.length === 1 ? "" : "s"}`];
+        if (greenOnly) bits.push("green only");
+        if (activeCategory !== "all") bits.push(`in ${activeCategory}`);
+        if (searchQuery.trim()) bits.push(`for “${searchQuery.trim()}”`);
+        countEl.textContent = bits.join(" · ");
+      }
+      catalogEmpty.classList.toggle("hidden", list.length > 0);
+      productGrid.innerHTML = list.map((p) => productCard(p)).join("");
+    }
+
+    function onGridClick(e) {
+      const btn = e.target.closest("button[data-action='add']");
+      if (!btn) return;
+      handleAddToCart(btn.dataset.id);
+    }
+
+    productGrid.addEventListener("click", onGridClick);
+    topGrid.addEventListener("click", onGridClick);
+    greenGrid.addEventListener("click", onGridClick);
+
+    document.getElementById("filterGreenBtn").addEventListener("click", () => {
+      greenOnly = true;
+      if (!/\bgreen\b/i.test(productSearch.value)) {
+        productSearch.value = productSearch.value.trim()
+          ? `${productSearch.value.trim()} green`
+          : "green";
+        searchQuery = productSearch.value;
+      }
+      renderProducts();
+      document.getElementById("products").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    categoryChips.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-cat]");
+      if (!btn) return;
+      const name = btn.getAttribute("data-cat");
+      setCategory(activeCategory === name ? "all" : name);
+      document.getElementById("products").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    document.getElementById("clearCategory").addEventListener("click", () => {
+      clearAllFilters();
+      document.getElementById("products").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    document.getElementById("toggleCategories").addEventListener("click", () => {
+      categoriesExpanded = !categoriesExpanded;
+      renderCategoryChips();
+    });
+
+    document.getElementById("clearFilters").addEventListener("click", clearAllFilters);
+    document.addEventListener("click", (e) => {
+      if (e.target.closest("[data-clear-filters]")) clearAllFilters();
+    });
+
+    categoryFilter.addEventListener("change", () => {
+      greenOnly = false;
+      setCategory(categoryFilter.value);
+    });
+
+    productSearch.addEventListener("input", () => {
+      searchQuery = productSearch.value;
+      greenOnly = /\bgreen\b/i.test(searchQuery);
+      renderProducts();
+    });
+
+    authModal.addEventListener("click", (e) => {
+      if (e.target.closest("[data-close-auth]")) closeAuthModal();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeAuthModal();
+    });
+
+    cartBtn.addEventListener("click", () => {
+      if (!isLoggedIn()) {
+        openAuthModal(null);
+        return;
+      }
+      window.location.href = "rfq.html";
+    });
+
+    renderCategoryOptions();
+    renderCategoryChips();
+    renderTopProducts();
+    renderGreenProducts();
+    renderProducts();
+    updateCartUI();
+    updateAuthUI();
+  </script>
+</body>
+</html>

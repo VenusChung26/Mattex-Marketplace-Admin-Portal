@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PROTOTYPE — Selective RFQ submit</title>
+  <style>
+    :root {
+      --brand: #245a41;
+      --brand-soft: #e8f2ec;
+      --ink: #1a1f1c;
+      --muted: #5c6b63;
+      --line: #d5e0d9;
+      --warn: #8a5a00;
+      --warn-bg: #fff6e5;
+      --danger: #8b2e2e;
+      --bg: #f4f7f5;
+      --card: #fff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Songti TC", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #d9ebe1 0%, transparent 55%),
+        radial-gradient(900px 400px at 100% 0%, #e7efe9 0%, transparent 50%),
+        var(--bg);
+      line-height: 1.45;
+    }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 32px 20px 64px; }
+    .badge {
+      display: inline-block;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--brand);
+      background: var(--brand-soft);
+      border: 1px solid #b7d2c4;
+      padding: 4px 8px;
+      margin-bottom: 12px;
+    }
+    h1 { font-size: 1.75rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+    .lede { color: var(--muted); margin: 0 0 28px; max-width: 68ch; font-size: 1.02rem; }
+    h2 {
+      font-size: 0.78rem;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 12px;
+    }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 18px 18px 14px;
+      margin-bottom: 20px;
+    }
+    .state-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px 18px;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.92rem;
+    }
+    @media (max-width: 720px) { .state-grid { grid-template-columns: 1fr; } }
+    .field label {
+      display: block;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .field .val { color: var(--ink); word-break: break-word; }
+    .delta {
+      grid-column: 1 / -1;
+      background: var(--warn-bg);
+      border: 1px solid #efd7a2;
+      color: var(--warn);
+      padding: 10px 12px;
+      font-size: 0.9rem;
+    }
+    .lines { margin: 0; padding-left: 1.1rem; }
+    .lines li { margin: 2px 0; }
+    .muted { color: var(--muted); }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    button, .tab {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.88rem;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled), .tab:hover { border-color: var(--brand); }
+    button.primary {
+      background: var(--brand);
+      border-color: var(--brand);
+      color: #fff;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.danger { color: var(--danger); border-color: #e2c4c4; }
+    .hint { font-size: 0.85rem; color: var(--muted); margin: 0 0 10px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .tab[aria-selected="true"] {
+      background: var(--brand-soft);
+      border-color: var(--brand);
+      color: var(--brand);
+    }
+    .scenario-desc { margin: 0 0 12px; color: var(--muted); }
+    .step-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .step-num {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.75rem;
+      color: var(--muted);
+      min-width: 4.5rem;
+    }
+    .step-row.done button { opacity: 0.55; }
+    .step-row.current button { outline: 2px solid var(--brand); outline-offset: 1px; }
+    .foot {
+      margin-top: 8px;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="badge">PROTOTYPE · throwaway · in-memory only</div>
+    <h1>Selective RFQ submit</h1>
+    <p class="lede">
+      <strong>Question:</strong> When a buyer ticks only some draft products and submits an RFQ,
+      should the unselected lines stay in the draft for a later RFQ — and should submit be blocked
+      if nothing is selected, or response date / address is missing?
+      Click free-play or walk through a scenario and watch the state panel.
+    </p>
+
+    <section class="panel">
+      <h2>Current state</h2>
+      <div id="state" class="state-grid"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Free play</h2>
+      <p class="hint">Any order. Illegal moves stay disabled or show a blocked message in the delta.</p>
+      <div class="actions" id="freeplay"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Guided walkthroughs</h2>
+      <div class="tabs" id="tabs" role="tablist"></div>
+      <div id="scenario"></div>
+    </section>
+
+    <p class="foot">
+      Working links:
+      <a href="http://localhost:8766/prototype-rfq-logic.html">http://localhost:8766/prototype-rfq-logic.html</a>
+      · or double-click <code>start-prototype.command</code>
+      · or <code>npm run prototype:rfq</code> then open that URL.
+      Pure reducer lives in the script below — no localStorage.
+    </p>
+  </div>
+
+  <script>
+  /* ============================================================
+     PORTABLE MODULE — pure reducer (could lift into src/lib later)
+     ============================================================ */
+  const Catalog = {
+    "precast-01": { id: "precast-01", name: "Hollow-core Precast Slab", price: 390.6 },
+    "steel-01": { id: "steel-01", name: "UB Structural Steel Beam", price: 380 },
+    "insulation-01": { id: "insulation-01", name: "High-R PIR Insulation Board", price: 210 },
+    "waterproof-02": { id: "waterproof-02", name: "Waterproofing roll #2", price: null },
+  };
+
+  function emptyDraft() {
+    return { lines: [], note: "", responseDate: "", address: "", selectedIds: [] };
+  }
+
+  function initialState() {
+    return {
+      user: null,
+      draft: emptyDraft(),
+      rfqs: [],
+      lastDelta: "Ready. Sign in, add products, select lines, then submit.",
+      lastError: null,
+      seq: 1000,
+    };
+  }
+
+  function draftSubtotal(lines) {
+    let priced = 0;
+    let unpriced = 0;
+    for (const line of lines) {
+      const p = Catalog[line.productId];
+      if (!p || p.price == null) unpriced += 1;
+      else priced += p.price * line.qty;
+    }
+    return { priced, unpriced };
+  }
+
+  function selectedLines(draft) {
+    const set = new Set(draft.selectedIds.map(String));
+    return draft.lines.filter((l) => set.has(String(l.productId)));
+  }
+
+  function reduce(state, action) {
+    const next = structuredClone(state);
+    next.lastError = null;
+
+    switch (action.type) {
+      case "RESET":
+        return { ...initialState(), lastDelta: "Reset to empty session." };
+
+      case "LOGIN": {
+        next.user = {
+          email: action.email || "alex@harbor.com",
+          name: action.name || "Alex Chen",
+          companyName: action.companyName || "Harbor Construction Ltd.",
+        };
+        next.lastDelta = `Signed in as ${next.user.name} (${next.user.companyName}).`;
+        return next;
+      }
+
+      case "LOGOUT": {
+        next.user = null;
+        next.draft = emptyDraft();
+        next.lastDelta = "Logged out. Draft cleared for this demo session.";
+        return next;
+      }
+
+      case "ADD_PRODUCT": {
+        if (!next.user) {
+          next.lastError = "Must be signed in to add to draft.";
+          next.lastDelta = "Blocked: add requires login.";
+          return next;
+        }
+        const id = action.productId;
+        if (!Catalog[id]) {
+          next.lastError = "Unknown product.";
+          next.lastDelta = "Blocked: unknown product.";
+          return next;
+        }
+        const existing = next.draft.lines.find((l) => l.productId === id);
+        if (existing) existing.qty += 1;
+        else {
+          next.draft.lines.push({ productId: id, qty: 1 });
+          next.draft.selectedIds.push(id);
+        }
+        next.lastDelta = `Added ${Catalog[id].name} to draft (selected by default).`;
+        return next;
+      }
+
+      case "TOGGLE_SELECT": {
+        const id = String(action.productId);
+        if (!next.draft.lines.some((l) => String(l.productId) === id)) {
+          next.lastError = "Product not in draft.";
+          next.lastDelta = "Blocked: cannot select a line that is not in the draft.";
+          return next;
+        }
+        const i = next.draft.selectedIds.indexOf(id);
+        if (i >= 0) next.draft.selectedIds.splice(i, 1);
+        else next.draft.selectedIds.push(id);
+        next.lastDelta = `Selection: ${next.draft.selectedIds.length} of ${next.draft.lines.length} line(s).`;
+        return next;
+      }
+
+      case "SELECT_ALL": {
+        next.draft.selectedIds = next.draft.lines.map((l) => String(l.productId));
+        next.lastDelta = "All draft lines selected.";
+        return next;
+      }
+
+      case "SELECT_NONE": {
+        next.draft.selectedIds = [];
+        next.lastDelta = "No lines selected.";
+        return next;
+      }
+
+      case "SET_RESPONSE_DATE": {
+        next.draft.responseDate = action.value || "";
+        next.lastDelta = next.draft.responseDate
+          ? `Response date set to ${next.draft.responseDate}.`
+          : "Response date cleared.";
+        return next;
+      }
+
+      case "SET_ADDRESS": {
+        next.draft.address = action.value || "";
+        next.lastDelta = next.draft.address
+          ? `Address set to “${next.draft.address}”.`
+          : "Address cleared.";
+        return next;
+      }
+
+      case "SET_NOTE": {
+        next.draft.note = action.value || "";
+        next.lastDelta = "Order note updated.";
+        return next;
+      }
+
+      case "SUBMIT_RFQ": {
+        if (!next.user) {
+          next.lastError = "not_logged_in";
+          next.lastDelta = "Blocked: must be signed in.";
+          return next;
+        }
+        const picked = selectedLines(next.draft);
+        if (!picked.length) {
+          next.lastError = "none_selected";
+          next.lastDelta = "Blocked: select at least one product.";
+          return next;
+        }
+        if (!String(next.draft.responseDate || "").trim()) {
+          next.lastError = "response_date";
+          next.lastDelta = "Blocked: response date required.";
+          return next;
+        }
+        if (!String(next.draft.address || "").trim()) {
+          next.lastError = "address";
+          next.lastDelta = "Blocked: delivery / site address required.";
+          return next;
+        }
+        const totals = draftSubtotal(picked);
+        next.seq += 1;
+        const rfq = {
+          id: `RFQ-${next.seq}`,
+          status: "submitted",
+          responseDate: next.draft.responseDate,
+          address: next.draft.address,
+          note: next.draft.note,
+          lines: picked.map((l) => ({
+            productId: l.productId,
+            name: Catalog[l.productId].name,
+            qty: l.qty,
+            unitPrice: Catalog[l.productId].price,
+          })),
+          pricedSubtotal: totals.priced,
+          unpricedCount: totals.unpriced,
+        };
+        next.rfqs.unshift(rfq);
+        const keep = new Set(picked.map((l) => String(l.productId)));
+        next.draft.lines = next.draft.lines.filter((l) => !keep.has(String(l.productId)));
+        next.draft.selectedIds = next.draft.lines.map((l) => String(l.productId));
+        // Keep responseDate / address / note for convenience on remaining draft
+        next.lastDelta =
+          `Submitted ${rfq.id} with ${rfq.lines.length} line(s). ` +
+          `${next.draft.lines.length} unselected line(s) remain in draft.`;
+        return next;
+      }
+
+      default:
+        next.lastDelta = `Unknown action: ${action.type}`;
+        return next;
+    }
+  }
+
+  /* ============================================================
+     THROWAWAY PAGE SHELL
+     ============================================================ */
+  let state = initialState();
+  let scenarioId = "partial";
+  let stepIndex = 0;
+
+  const money = (n) =>
+    n == null ? "Price upon request" : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  function renderState() {
+    const d = state.draft;
+    const picked = selectedLines(d);
+    const sub = draftSubtotal(picked);
+    const el = document.getElementById("state");
+    el.innerHTML = `
+      <div class="delta"><strong>Just now:</strong> ${escapeHtml(state.lastDelta)}${
+        state.lastError ? ` <span class="muted">(error: ${escapeHtml(state.lastError)})</span>` : ""
+      }</div>
+      <div class="field"><label>Buyer</label><div class="val">${
+        state.user
+          ? `${escapeHtml(state.user.name)} · ${escapeHtml(state.user.email)}<br/><span class="muted">${escapeHtml(state.user.companyName)}</span>`
+          : "<span class='muted'>Not signed in</span>"
+      }</div></div>
+      <div class="field"><label>Submitted RFQs</label><div class="val">${
+        state.rfqs.length
+          ? `<ul class="lines">${state.rfqs
+              .map(
+                (r) =>
+                  `<li><strong>${escapeHtml(r.id)}</strong> · ${r.lines.length} line(s) · ${money(r.pricedSubtotal)} · by ${escapeHtml(r.responseDate)}</li>`
+              )
+              .join("")}</ul>`
+          : "<span class='muted'>None yet</span>"
+      }</div></div>
+      <div class="field"><label>Draft lines (all)</label><div class="val">${
+        d.lines.length
+          ? `<ul class="lines">${d.lines
+              .map((l) => {
+                const on = d.selectedIds.includes(String(l.productId));
+                return `<li>${on ? "☑" : "☐"} ${escapeHtml(Catalog[l.productId].name)} × ${l.qty} · ${money(Catalog[l.productId].price)}</li>`;
+              })
+              .join("")}</ul>`
+          : "<span class='muted'>Empty</span>"
+      }</div></div>
+      <div class="field"><label>Selected for this RFQ</label><div class="val">${
+        picked.length
+          ? `${picked.length} line(s) · priced subtotal ${money(sub.priced)}${sub.unpriced ? ` · ${sub.unpriced} upon request` : ""}`
+          : "<span class='muted'>None selected</span>"
+      }</div></div>
+      <div class="field"><label>Response date</label><div class="val">${d.responseDate || "<span class='muted'>—</span>"}</div></div>
+      <div class="field"><label>Site address</label><div class="val">${d.address ? escapeHtml(d.address) : "<span class='muted'>—</span>"}</div></div>
+      <div class="field" style="grid-column:1/-1"><label>Order note</label><div class="val">${d.note ? escapeHtml(d.note) : "<span class='muted'>—</span>"}</div></div>
+    `;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function dispatch(action) {
+    state = reduce(state, action);
+    renderState();
+    renderFreeplay();
+    renderScenario();
+  }
+
+  function btn(label, action, opts = {}) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (opts.primary) b.classList.add("primary");
+    if (opts.danger) b.classList.add("danger");
+    b.disabled = !!opts.disabled;
+    b.onclick = () => {
+      if (opts.onClick) opts.onClick();
+      else dispatch(action);
+    };
+    return b;
+  }
+
+  function renderFreeplay() {
+    const box = document.getElementById("freeplay");
+    box.innerHTML = "";
+    const loggedIn = !!state.user;
+    const ids = Object.keys(Catalog);
+
+    box.appendChild(btn("Reset demo", { type: "RESET" }, { danger: true }));
+    box.appendChild(btn("Sign in (buyer)", { type: "LOGIN" }, { primary: !loggedIn }));
+    box.appendChild(btn("Log out", { type: "LOGOUT" }, { disabled: !loggedIn }));
+
+    ids.forEach((id) => {
+      box.appendChild(
+        btn(`Add ${Catalog[id].name.split(" ").slice(0, 3).join(" ")}…`, { type: "ADD_PRODUCT", productId: id }, { disabled: !loggedIn })
+      );
+    });
+
+    state.draft.lines.forEach((l) => {
+      const on = state.draft.selectedIds.includes(String(l.productId));
+      box.appendChild(
+        btn(
+          `${on ? "Unselect" : "Select"} ${Catalog[l.productId].name.split(" ").slice(0, 2).join(" ")}`,
+          { type: "TOGGLE_SELECT", productId: l.productId }
+        )
+      );
+    });
+
+    box.appendChild(btn("Select all", { type: "SELECT_ALL" }, { disabled: !state.draft.lines.length }));
+    box.appendChild(btn("Select none", { type: "SELECT_NONE" }, { disabled: !state.draft.lines.length }));
+    box.appendChild(btn("Set response date (tomorrow)", { type: "SET_RESPONSE_DATE", value: tomorrow() }));
+    box.appendChild(btn("Clear response date", { type: "SET_RESPONSE_DATE", value: "" }));
+    box.appendChild(btn("Set site address", { type: "SET_ADDRESS", value: "12 Quarry Bay Site Gate A" }));
+    box.appendChild(btn("Clear address", { type: "SET_ADDRESS", value: "" }));
+    box.appendChild(btn("Set note", { type: "SET_NOTE", value: "Need crane access window AM." }));
+    box.appendChild(btn("Submit RFQ (selected only)", { type: "SUBMIT_RFQ" }, { primary: true }));
+  }
+
+  function tomorrow() {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  const scenarios = {
+    partial: {
+      title: "Partial submit keeps leftovers",
+      desc: "Add three products, unselect one, fill date + address, submit. Watch: RFQ has 2 lines; draft still has the unselected one.",
+      steps: [
+        { label: "Sign in", action: { type: "LOGIN" } },
+        { label: "Add precast", action: { type: "ADD_PRODUCT", productId: "precast-01" } },
+        { label: "Add steel", action: { type: "ADD_PRODUCT", productId: "steel-01" } },
+        { label: "Add insulation", action: { type: "ADD_PRODUCT", productId: "insulation-01" } },
+        { label: "Unselect steel", action: { type: "TOGGLE_SELECT", productId: "steel-01" } },
+        { label: "Set response date", action: { type: "SET_RESPONSE_DATE", value: tomorrow() } },
+        { label: "Set address", action: { type: "SET_ADDRESS", value: "12 Quarry Bay Site Gate A" } },
+        { label: "Submit RFQ", action: { type: "SUBMIT_RFQ" } },
+      ],
+    },
+    blocked: {
+      title: "Illegal: submit with nothing selected",
+      desc: "Draft has products but selection is cleared. Submit must fail with none_selected; draft unchanged.",
+      steps: [
+        { label: "Sign in", action: { type: "LOGIN" } },
+        { label: "Add precast", action: { type: "ADD_PRODUCT", productId: "precast-01" } },
+        { label: "Add steel", action: { type: "ADD_PRODUCT", productId: "steel-01" } },
+        { label: "Select none", action: { type: "SELECT_NONE" } },
+        { label: "Set response date", action: { type: "SET_RESPONSE_DATE", value: tomorrow() } },
+        { label: "Set address", action: { type: "SET_ADDRESS", value: "Site B" } },
+        { label: "Try submit (should block)", action: { type: "SUBMIT_RFQ" } },
+      ],
+    },
+    missingMeta: {
+      title: "Illegal: missing date or address",
+      desc: "Lines selected but response date or address empty — submit blocked; then fill both and succeed.",
+      steps: [
+        { label: "Sign in", action: { type: "LOGIN" } },
+        { label: "Add precast", action: { type: "ADD_PRODUCT", productId: "precast-01" } },
+        { label: "Try submit (no date/address)", action: { type: "SUBMIT_RFQ" } },
+        { label: "Set response date only", action: { type: "SET_RESPONSE_DATE", value: tomorrow() } },
+        { label: "Try submit (still no address)", action: { type: "SUBMIT_RFQ" } },
+        { label: "Set address", action: { type: "SET_ADDRESS", value: "Site C" } },
+        { label: "Submit RFQ", action: { type: "SUBMIT_RFQ" } },
+      ],
+    },
+    secondRfq: {
+      title: "Second RFQ from leftover draft",
+      desc: "After a partial submit, remaining draft lines can become a second RFQ without re-adding.",
+      steps: [
+        { label: "Sign in", action: { type: "LOGIN" } },
+        { label: "Add precast", action: { type: "ADD_PRODUCT", productId: "precast-01" } },
+        { label: "Add steel", action: { type: "ADD_PRODUCT", productId: "steel-01" } },
+        { label: "Unselect steel", action: { type: "TOGGLE_SELECT", productId: "steel-01" } },
+        { label: "Set date", action: { type: "SET_RESPONSE_DATE", value: tomorrow() } },
+        { label: "Set address", action: { type: "SET_ADDRESS", value: "Gate A" } },
+        { label: "Submit first RFQ", action: { type: "SUBMIT_RFQ" } },
+        { label: "Select leftover steel", action: { type: "SELECT_ALL" } },
+        { label: "Submit second RFQ", action: { type: "SUBMIT_RFQ" } },
+      ],
+    },
+  };
+
+  function renderTabs() {
+    const tabs = document.getElementById("tabs");
+    tabs.innerHTML = "";
+    Object.entries(scenarios).forEach(([id, s]) => {
+      const t = document.createElement("button");
+      t.className = "tab";
+      t.type = "button";
+      t.setAttribute("role", "tab");
+      t.setAttribute("aria-selected", id === scenarioId ? "true" : "false");
+      t.textContent = s.title;
+      t.onclick = () => startScenario(id);
+      tabs.appendChild(t);
+    });
+  }
+
+  function startScenario(id) {
+    scenarioId = id;
+    stepIndex = 0;
+    state = reduce(initialState(), { type: "RESET" });
+    state.lastDelta = `Scenario ready: ${scenarios[id].title}`;
+    renderTabs();
+    renderState();
+    renderFreeplay();
+    renderScenario();
+  }
+
+  function renderScenario() {
+    const s = scenarios[scenarioId];
+    const box = document.getElementById("scenario");
+    box.innerHTML = `<p class="scenario-desc">${escapeHtml(s.desc)}</p>`;
+    s.steps.forEach((step, i) => {
+      const row = document.createElement("div");
+      row.className = "step-row" + (i < stepIndex ? " done" : i === stepIndex ? " current" : "");
+      const num = document.createElement("span");
+      num.className = "step-num";
+      num.textContent = i < stepIndex ? `Step ${i + 1} ✓` : `Step ${i + 1}`;
+      const b = btn(step.label, step.action, {
+        primary: i === stepIndex,
+        disabled: i !== stepIndex,
+        onClick: () => {
+          dispatch(step.action);
+          stepIndex = Math.min(stepIndex + 1, s.steps.length);
+          renderScenario();
+        },
+      });
+      row.appendChild(num);
+      row.appendChild(b);
+      box.appendChild(row);
+    });
+    if (stepIndex >= s.steps.length) {
+      const done = document.createElement("p");
+      done.className = "hint";
+      done.textContent = "Walkthrough complete — check the state panel above.";
+      box.appendChild(done);
+    }
+  }
+
+  startScenario("partial");
+  </script>
+</body>
+</html>

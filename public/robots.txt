@@ -1,0 +1,25 @@
+User-agent: *
+Allow: /
+Disallow: /login
+Disallow: /signup
+Disallow: /rfq
+Disallow: /rfqs
+Disallow: /whatsapp
+Disallow: /whatsapp-chat
+Disallow: /email-sent
+Disallow: /en/login
+Disallow: /zh/login
+Disallow: /en/signup
+Disallow: /zh/signup
+Disallow: /en/rfq
+Disallow: /zh/rfq
+Disallow: /en/rfqs
+Disallow: /zh/rfqs
+Disallow: /en/whatsapp
+Disallow: /zh/whatsapp
+Disallow: /en/whatsapp-chat
+Disallow: /zh/whatsapp-chat
+Disallow: /en/email-sent
+Disallow: /zh/email-sent
+
+Sitemap: https://marketplace.mattex.com.hk/sitemap.xml

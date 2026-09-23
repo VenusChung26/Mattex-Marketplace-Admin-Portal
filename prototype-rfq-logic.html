@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PROTOTYPE — Subbie RFQ 狀態機</title>
+  <style>
+    :root {
+      --brand: #245a41;
+      --brand-soft: #e8f2ec;
+      --ink: #1a1f1c;
+      --muted: #5c6b63;
+      --line: #d5e0d9;
+      --warn: #8a5a00;
+      --warn-bg: #fff6e5;
+      --danger: #8b2e2e;
+      --bg: #f4f7f5;
+      --card: #fff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Songti TC", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #d9ebe1 0%, transparent 55%),
+        radial-gradient(900px 400px at 100% 0%, #e7efe9 0%, transparent 50%),
+        var(--bg);
+      line-height: 1.45;
+    }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 32px 20px 64px; }
+    .badge {
+      display: inline-block;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--brand);
+      background: var(--brand-soft);
+      border: 1px solid #b7d2c4;
+      padding: 4px 8px;
+      margin-bottom: 12px;
+    }
+    h1 { font-size: 1.75rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+    .lede { color: var(--muted); margin: 0 0 28px; max-width: 62ch; font-size: 1.02rem; }
+    h2 {
+      font-size: 0.78rem;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 12px;
+    }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 18px 18px 14px;
+      margin-bottom: 20px;
+    }
+    .state-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px 18px;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.92rem;
+    }
+    @media (max-width: 720px) { .state-grid { grid-template-columns: 1fr; } }
+    .field label {
+      display: block;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .field .val { color: var(--ink); word-break: break-word; }
+    .delta {
+      grid-column: 1 / -1;
+      background: var(--warn-bg);
+      border: 1px solid #efd7a2;
+      color: var(--warn);
+      padding: 10px 12px;
+      font-size: 0.9rem;
+    }
+    .lines { margin: 0; padding-left: 1.1rem; }
+    .lines li { margin: 2px 0; }
+    .muted { color: var(--muted); }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    button, .tab {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.88rem;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled), .tab:hover { border-color: var(--brand); }
+    button.primary {
+      background: var(--brand);
+      border-color: var(--brand);
+      color: #fff;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.danger { color: var(--danger); border-color: #e2c4c4; }
+    .hint { font-size: 0.85rem; color: var(--muted); margin: 0 0 10px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .tab[aria-selected="true"] {
+      background: var(--brand-soft);
+      border-color: var(--brand);
+      color: var(--brand);
+    }
+    .scenario-desc { margin: 0 0 12px; color: var(--muted); }
+    .step-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 0;
+      border-top: 1px solid var(--line);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.9rem;
+    }
+    .step-row:first-of-type { border-top: 0; }
+    .step-num {
+      min-width: 1.6rem;
+      height: 1.6rem;
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: var(--brand);
+      display: grid;
+      place-items: center;
+      font-size: 0.75rem;
+      margin-top: 4px;
+    }
+    .step-row.done .step-num { background: var(--brand); color: #fff; }
+    .step-row .step-body { flex: 1; }
+    .step-row button { margin-top: 6px; }
+    .footnote {
+      margin-top: 28px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="badge">Throwaway prototype · 非正式產品</div>
+    <h1>Subbie — 買家 RFQ 狀態機</h1>
+    <p class="lede">
+      問題：登入 → 購物車（= RFQ draft）→ 送出 → 列表／再訂，加上平行的 WhatsApp「Ask for Price」（可勾選同時入 RFQ），
+      這套狀態模型手感對不對？點按鈕看狀態怎麼變；有「不該發生卻發生了」就記下來。
+    </p>
+
+    <section class="panel">
+      <h2>目前狀態</h2>
+      <div id="state-view" class="state-grid"></div>
+    </section>
+
+    <section class="panel">
+      <h2>自由操作</h2>
+      <p class="hint">任何順序都行。不合法的動作會被擋下，並在上方「剛發生什麼」說明原因。</p>
+      <div class="actions" id="freeplay"></div>
+    </section>
+
+    <section class="panel">
+      <h2>導覽情境</h2>
+      <div class="tabs" id="tabs" role="tablist"></div>
+      <div id="scenario"></div>
+    </section>
+
+    <p class="footnote">
+      純邏輯在頁內 <code>SubbieRfqModel</code> 模組（無 DOM）。殼層可丟；模組可之後搬進正式 store。
+      雙擊本檔即可開，不必開 server。正式店面仍用 <code>start.command</code>。
+    </p>
+  </div>
+
+  <script>
+  /* ============================================================
+   * SubbieRfqModel — liftable pure module (no DOM)
+   * ============================================================ */
+  const SubbieRfqModel = (() => {
+    const PRODUCTS = {
+      "pump-01": { id: "pump-01", name: "Industrial Centrifugal Pump", unitPrice: 2450 },
+      "gearbox-01": { id: "gearbox-01", name: "High-Torque Planetary Gearbox", unitPrice: null },
+      "plc-01": { id: "plc-01", name: "Programmable Logic Controller (PLC)", unitPrice: 899.99 },
+    };
+
+    function emptyDraft() {
+      return { lines: [], note: "" };
+    }
+
+    function initialState() {
+      return {
+        session: {
+          user: null, // { email }
+          pendingAdd: null, // productId
+          whatsappBridge: null, // { productId, addToRfq }
+        },
+        draftByUser: {}, // email -> draft
+        orphanDraft: emptyDraft(), // logged-out browser draft (persists until account binds/clears)
+        rfqsByUser: {}, // email -> RFQ[]
+        seq: 1000,
+        lastEvent: "原型重置：訪客、空車、無 RFQ。",
+      };
+    }
+
+    function draftFor(state) {
+      const email = state.session.user && state.session.user.email;
+      if (!email) return state.orphanDraft;
+      if (!state.draftByUser[email]) state.draftByUser[email] = emptyDraft();
+      return state.draftByUser[email];
+    }
+
+    function rfqsFor(state) {
+      const email = state.session.user && state.session.user.email;
+      if (!email) return [];
+      if (!state.rfqsByUser[email]) state.rfqsByUser[email] = [];
+      return state.rfqsByUser[email];
+    }
+
+    function clone(state) {
+      return JSON.parse(JSON.stringify(state));
+    }
+
+    function lineFromProduct(productId, qty) {
+      const p = PRODUCTS[productId];
+      if (!p) return null;
+      return {
+        productId: p.id,
+        name: p.name,
+        unitPrice: p.unitPrice,
+        qty: qty || 1,
+      };
+    }
+
+    function addLine(draft, productId) {
+      const existing = draft.lines.find((l) => l.productId === productId);
+      if (existing) {
+        existing.qty += 1;
+        return "merged";
+      }
+      const line = lineFromProduct(productId, 1);
+      if (!line) return "missing";
+      draft.lines.push(line);
+      return "added";
+    }
+
+    function pricedSubtotal(draft) {
+      return draft.lines.reduce((sum, l) => {
+        if (l.unitPrice == null) return sum;
+        return sum + l.unitPrice * l.qty;
+      }, 0);
+    }
+
+    function unpricedCount(draft) {
+      return draft.lines.filter((l) => l.unitPrice == null).length;
+    }
+
+    function reduce(state, action) {
+      const s = clone(state);
+      const type = action.type;
+
+      switch (type) {
+        case "RESET": {
+          const next = initialState();
+          next.lastEvent = "已重置。";
+          return next;
+        }
+
+        case "LOGIN": {
+          const email = String(action.email || "").trim().toLowerCase();
+          if (!email) {
+            s.lastEvent = "登入失敗：需要 email。";
+            return s;
+          }
+          const previous = s.session.user && s.session.user.email;
+          if (previous && previous !== email) {
+            // Q18-B: switching account clears the *new* user's incoming confusion —
+            // orphan browser draft is not auto-copied; previous user's draft stays under their key.
+            s.orphanDraft = emptyDraft();
+            s.lastEvent = `已從 ${previous} 切換到 ${email}；瀏覽器暫存 draft 已清空（避免看到別人的車）。`;
+          } else {
+            s.lastEvent = `已登入為 ${email}。`;
+          }
+          s.session.user = { email };
+
+          // Flush pending add from guest gate
+          if (s.session.pendingAdd) {
+            const pid = s.session.pendingAdd;
+            s.session.pendingAdd = null;
+            const draft = draftFor(s);
+            addLine(draft, pid);
+            s.lastEvent += ` Pending 商品已入 RFQ draft，導向檢視。`;
+            s.session.view = "rfq_review";
+          } else if (s.session.whatsappBridge && s.session.whatsappBridge.addToRfq) {
+            const pid = s.session.whatsappBridge.productId;
+            const draft = draftFor(s);
+            addLine(draft, pid);
+            s.session.whatsappBridge = null;
+            s.session.view = "rfq_review";
+            s.lastEvent += ` WhatsApp 勾選項已入 RFQ draft。`;
+          } else {
+            s.session.view = s.session.view || "storefront";
+          }
+          return s;
+        }
+
+        case "LOGOUT": {
+          if (!s.session.user) {
+            s.lastEvent = "本來就是訪客。";
+            return s;
+          }
+          const email = s.session.user.email;
+          // Q15-B: draft persists under that user key in "localStorage" simulation
+          s.session.user = null;
+          s.session.view = "storefront";
+          s.session.pendingAdd = null;
+          s.lastEvent = `已登出（${email}）。其 RFQ draft 仍保留在瀏覽器，下次同帳號登入還在。`;
+          return s;
+        }
+
+        case "ADD_TO_CART": {
+          const pid = action.productId;
+          if (!PRODUCTS[pid]) {
+            s.lastEvent = "加購失敗：找不到商品。";
+            return s;
+          }
+          if (!s.session.user) {
+            s.session.pendingAdd = pid;
+            s.session.view = "auth_gate";
+            s.lastEvent = `未登入：已記住要加「${PRODUCTS[pid].name}」，請建立帳號或登入。`;
+            return s;
+          }
+          const draft = draftFor(s);
+          addLine(draft, pid);
+          s.session.view = "storefront";
+          s.lastEvent = `已將「${PRODUCTS[pid].name}」加入 RFQ draft（購物車）。`;
+          return s;
+        }
+
+        case "OPEN_RFQ_REVIEW": {
+          if (!s.session.user) {
+            s.lastEvent = "未登入不能開 RFQ 檢視。";
+            return s;
+          }
+          s.session.view = "rfq_review";
+          s.lastEvent = "打開 RFQ 檢視（Cart ≡ draft）。";
+          return s;
+        }
+
+        case "SET_QTY": {
+          if (!s.session.user) {
+            s.lastEvent = "未登入，無法改數量。";
+            return s;
+          }
+          const draft = draftFor(s);
+          const line = draft.lines.find((l) => l.productId === action.productId);
+          if (!line) {
+            s.lastEvent = "該行不在 draft 裡。";
+            return s;
+          }
+          const qty = Number(action.qty);
+          if (!Number.isFinite(qty) || qty < 1) {
+            s.lastEvent = "數量至少為 1（要移除請用刪行）。";
+            return s;
+          }
+          line.qty = Math.floor(qty);
+          s.lastEvent = `已將 ${line.name} 數量改為 ${line.qty}。`;
+          return s;
+        }
+
+        case "REMOVE_LINE": {
+          if (!s.session.user) {
+            s.lastEvent = "未登入，無法刪行。";
+            return s;
+          }
+          const draft = draftFor(s);
+          const before = draft.lines.length;
+          draft.lines = draft.lines.filter((l) => l.productId !== action.productId);
+          if (draft.lines.length === before) {
+            s.lastEvent = "沒有這一行。";
+            return s;
+          }
+          s.lastEvent = "已從 RFQ draft 刪除一行。";
+          return s;
+        }
+
+        case "SET_NOTE": {
+          if (!s.session.user) {
+            s.lastEvent = "未登入，無法寫備註。";
+            return s;
+          }
+          draftFor(s).note = String(action.note || "");
+          s.lastEvent = "已更新整單備註。";
+          return s;
+        }
+
+        case "SUBMIT_RFQ": {
+          if (!s.session.user) {
+            s.lastEvent = "未登入，不能送出 RFQ。";
+            return s;
+          }
+          const draft = draftFor(s);
+          if (!draft.lines.length) {
+            s.lastEvent = "送出被拒：RFQ draft 是空的。";
+            return s;
+          }
+          const id = `RFQ-${s.seq++}`;
+          const snapshot = {
+            id,
+            status: "submitted",
+            submittedAt: new Date().toISOString(),
+            note: draft.note,
+            lines: draft.lines.map((l) => ({ ...l })),
+            pricedSubtotal: pricedSubtotal(draft),
+            unpricedCount: unpricedCount(draft),
+          };
+          rfqsFor(s).unshift(snapshot);
+          s.draftByUser[s.session.user.email] = emptyDraft();
+          s.session.view = "rfq_list";
+          s.session.lastSubmittedId = id;
+          s.lastEvent = `已送出 ${id}。Draft 已清空；可在「我的 RFQ」查看。`;
+          return s;
+        }
+
+        case "OPEN_RFQ_LIST": {
+          if (!s.session.user) {
+            s.lastEvent = "未登入，無 RFQ 列表。";
+            return s;
+          }
+          s.session.view = "rfq_list";
+          s.lastEvent = "打開我的 RFQ 列表。";
+          return s;
+        }
+
+        case "REORDER": {
+          if (!s.session.user) {
+            s.lastEvent = "未登入，不能再訂。";
+            return s;
+          }
+          const list = rfqsFor(s);
+          const src = list.find((r) => r.id === action.rfqId);
+          if (!src) {
+            s.lastEvent = "找不到該 RFQ。";
+            return s;
+          }
+          const draft = emptyDraft();
+          draft.note = src.note || "";
+          draft.lines = src.lines.map((l) => ({ ...l }));
+          s.draftByUser[s.session.user.email] = draft;
+          s.session.view = "rfq_review";
+          s.lastEvent = `已從 ${src.id} 複製為新 draft（再訂一次）。`;
+          return s;
+        }
+
+        case "ASK_WHATSAPP": {
+          const pid = action.productId;
+          if (!PRODUCTS[pid]) {
+            s.lastEvent = "Ask 失敗：找不到商品。";
+            return s;
+          }
+          const addToRfq = Boolean(action.addToRfq);
+          if (addToRfq && !s.session.user) {
+            s.session.whatsappBridge = { productId: pid, addToRfq: true };
+            s.session.view = "auth_gate";
+            s.lastEvent = `要同時加入 RFQ 需先登入。純 WhatsApp 仍可免登入——請改勾選或先登入。`;
+            return s;
+          }
+          s.session.whatsappBridge = { productId: pid, addToRfq };
+          s.session.view = "whatsapp_bridge";
+          s.lastEvent = addToRfq
+            ? `WhatsApp 橋接：將詢價「${PRODUCTS[pid].name}」，並已勾選同時加入 RFQ。`
+            : `WhatsApp 橋接：僅詢價「${PRODUCTS[pid].name}」（不進 RFQ）。`;
+          return s;
+        }
+
+        case "COMPLETE_WHATSAPP": {
+          const bridge = s.session.whatsappBridge;
+          if (!bridge) {
+            s.lastEvent = "沒有進行中的 WhatsApp 橋接。";
+            return s;
+          }
+          if (bridge.addToRfq) {
+            if (!s.session.user) {
+              s.lastEvent = "勾選了加入 RFQ 但尚未登入——停在登入門檻。";
+              s.session.view = "auth_gate";
+              return s;
+            }
+            addLine(draftFor(s), bridge.productId);
+            s.session.view = "rfq_review";
+            s.lastEvent = `已開啟 WhatsApp，並將商品加入 RFQ draft。`;
+          } else {
+            s.session.view = "storefront";
+            s.lastEvent = `已開啟 WhatsApp（平行通道，未改 RFQ）。`;
+          }
+          s.session.whatsappBridge = null;
+          return s;
+        }
+
+        case "CANCEL_AUTH_GATE": {
+          s.session.pendingAdd = null;
+          if (s.session.whatsappBridge && s.session.whatsappBridge.addToRfq) {
+            // Downgrade to WhatsApp-only
+            s.session.whatsappBridge.addToRfq = false;
+            s.session.view = "whatsapp_bridge";
+            s.lastEvent = "取消登入：改為只走 WhatsApp，不加入 RFQ。";
+            return s;
+          }
+          s.session.view = "storefront";
+          s.lastEvent = "取消登入門檻，回到店面。";
+          return s;
+        }
+
+        default:
+          s.lastEvent = `未知動作：${type}`;
+          return s;
+      }
+    }
+
+    function project(state) {
+      const user = state.session.user;
+      const draft = user ? (state.draftByUser[user.email] || emptyDraft()) : state.orphanDraft;
+      const rfqs = user ? (state.rfqsByUser[user.email] || []) : [];
+      return {
+        view: state.session.view || "storefront",
+        user: user ? user.email : "（訪客）",
+        pendingAdd: state.session.pendingAdd
+          ? PRODUCTS[state.session.pendingAdd].name
+          : "無",
+        whatsappBridge: state.session.whatsappBridge
+          ? `${PRODUCTS[state.session.whatsappBridge.productId].name} · 同時入 RFQ：${
+              state.session.whatsappBridge.addToRfq ? "是" : "否"
+            }`
+          : "無",
+        draftLines: draft.lines.map((l) => ({
+          label: `${l.name} × ${l.qty}`,
+          price:
+            l.unitPrice == null
+              ? "Price upon request"
+              : `$${(l.unitPrice * l.qty).toFixed(2)}`,
+        })),
+        draftNote: draft.note || "（無）",
+        pricedSubtotal: `$${pricedSubtotal(draft).toFixed(2)}`,
+        unpricedCount: unpricedCount(draft),
+        rfqs: rfqs.map((r) => ({
+          id: r.id,
+          status: r.status,
+          lines: r.lines.length,
+          pricedSubtotal: `$${r.pricedSubtotal.toFixed(2)}`,
+          unpricedCount: r.unpricedCount,
+        })),
+        lastSubmittedId: state.session.lastSubmittedId || "—",
+        lastEvent: state.lastEvent,
+        products: PRODUCTS,
+      };
+    }
+
+    return { initialState, reduce, project, PRODUCTS };
+  })();
+
+  /* ============================================================
+   * Page shell — throwaway
+   * ============================================================ */
+  let state = SubbieRfqModel.initialState();
+  let scenarioId = "happy";
+  let stepIndex = 0;
+
+  const SCENARIOS = [
+    {
+      id: "happy",
+      title: "主路徑",
+      desc: "訪客加購 → 登入 → 自動入 draft 並進檢視 → 送出 → 列表。看 pending 與 Cart≡RFQ。",
+      steps: [
+        { label: "訪客把 Pump 加入購物車", action: { type: "ADD_TO_CART", productId: "pump-01" } },
+        { label: "登入 buyer@acme.com", action: { type: "LOGIN", email: "buyer@acme.com" } },
+        { label: "把 PLC 也加進 draft", action: { type: "ADD_TO_CART", productId: "plc-01" } },
+        { label: "寫整單備註", action: { type: "SET_NOTE", note: "Need quote this week" } },
+        { label: "送出 RFQ", action: { type: "SUBMIT_RFQ" } },
+      ],
+    },
+    {
+      id: "pur",
+      title: "無標價也可進車",
+      desc: "Gearbox（Price Upon Request）與有標價商品同單；合計只加總有價項。",
+      steps: [
+        { label: "登入 buyer@acme.com", action: { type: "LOGIN", email: "buyer@acme.com" } },
+        { label: "加入 Gearbox（無標價）", action: { type: "ADD_TO_CART", productId: "gearbox-01" } },
+        { label: "加入 Pump", action: { type: "ADD_TO_CART", productId: "pump-01" } },
+        { label: "打開 RFQ 檢視", action: { type: "OPEN_RFQ_REVIEW" } },
+        { label: "送出", action: { type: "SUBMIT_RFQ" } },
+      ],
+    },
+    {
+      id: "wa-only",
+      title: "純 WhatsApp",
+      desc: "Ask 不進 RFQ、免登入。確認平行通道不污染 draft。",
+      steps: [
+        { label: "Ask Gearbox（不勾入 RFQ）", action: { type: "ASK_WHATSAPP", productId: "gearbox-01", addToRfq: false } },
+        { label: "完成 WhatsApp 橋接", action: { type: "COMPLETE_WHATSAPP" } },
+      ],
+    },
+    {
+      id: "wa-rfq",
+      title: "Ask + 勾選入 RFQ",
+      desc: "未登入勾選入 RFQ → 被趕去登入 → 登入後入 draft。",
+      steps: [
+        { label: "Ask Pump 且勾選同時入 RFQ", action: { type: "ASK_WHATSAPP", productId: "pump-01", addToRfq: true } },
+        { label: "登入 buyer@acme.com", action: { type: "LOGIN", email: "buyer@acme.com" } },
+        { label: "（若仍在橋接）完成 WhatsApp", action: { type: "COMPLETE_WHATSAPP" } },
+      ],
+    },
+    {
+      id: "switch",
+      title: "換帳號清暫存",
+      desc: "A 加購後登出；B 登入時瀏覽器暫存 draft 應清空，A 的 draft 仍掛在 A 名下。",
+      steps: [
+        { label: "登入 alice@acme.com", action: { type: "LOGIN", email: "alice@acme.com" } },
+        { label: "Alice 加入 PLC", action: { type: "ADD_TO_CART", productId: "plc-01" } },
+        { label: "Alice 登出", action: { type: "LOGOUT" } },
+        { label: "改登入 bob@acme.com", action: { type: "LOGIN", email: "bob@acme.com" } },
+        { label: "看 Bob 的 RFQ 檢視（應為空）", action: { type: "OPEN_RFQ_REVIEW" } },
+        { label: "再登回 Alice，開檢視（PLC 還在）", action: { type: "LOGIN", email: "alice@acme.com" } },
+        { label: "打開 Alice 的 RFQ 檢視", action: { type: "OPEN_RFQ_REVIEW" } },
+      ],
+    },
+    {
+      id: "reorder",
+      title: "再訂一次",
+      desc: "送出後從列表複製成新 draft。",
+      steps: [
+        { label: "登入 buyer@acme.com", action: { type: "LOGIN", email: "buyer@acme.com" } },
+        { label: "加入 Pump", action: { type: "ADD_TO_CART", productId: "pump-01" } },
+        { label: "送出", action: { type: "SUBMIT_RFQ" } },
+        { label: "再訂最近一張（動態）", action: { type: "REORDER", rfqId: "__LAST__" } },
+      ],
+    },
+    {
+      id: "illegal",
+      title: "不該成功的動作",
+      desc: "空單送出、未登入開檢視——應被拒絕並留下說明。",
+      steps: [
+        { label: "未登入就開 RFQ 檢視", action: { type: "OPEN_RFQ_REVIEW" } },
+        { label: "登入 buyer@acme.com", action: { type: "LOGIN", email: "buyer@acme.com" } },
+        { label: "空 draft 送出", action: { type: "SUBMIT_RFQ" } },
+      ],
+    },
+  ];
+
+  function dispatch(action) {
+    let act = action;
+    if (act.type === "REORDER" && act.rfqId === "__LAST__") {
+      const proj = SubbieRfqModel.project(state);
+      const id = proj.rfqs[0] && proj.rfqs[0].id;
+      act = { type: "REORDER", rfqId: id || "RFQ-NONE" };
+    }
+    state = SubbieRfqModel.reduce(state, act);
+    render();
+  }
+
+  function startScenario(id) {
+    scenarioId = id;
+    stepIndex = 0;
+    state = SubbieRfqModel.initialState();
+    state.lastEvent = `情境「${SCENARIOS.find((s) => s.id === id).title}」已就緒，從步驟 1 開始。`;
+    render();
+  }
+
+  function renderState(proj) {
+    const lines =
+      proj.draftLines.length === 0
+        ? `<span class="muted">（空）</span>`
+        : `<ul class="lines">${proj.draftLines
+            .map((l) => `<li>${escapeHtml(l.label)} · ${escapeHtml(l.price)}</li>`)
+            .join("")}</ul>`;
+    const rfqs =
+      proj.rfqs.length === 0
+        ? `<span class="muted">（無）</span>`
+        : `<ul class="lines">${proj.rfqs
+            .map(
+              (r) =>
+                `<li>${escapeHtml(r.id)} · ${escapeHtml(r.status)} · ${r.lines} 行 · 小計 ${escapeHtml(
+                  r.pricedSubtotal
+                )}${r.unpricedCount ? ` · 未報價 ${r.unpricedCount} 項` : ""}</li>`
+            )
+            .join("")}</ul>`;
+
+    document.getElementById("state-view").innerHTML = `
+      <div class="delta"><strong>剛發生什麼：</strong> ${escapeHtml(proj.lastEvent)}</div>
+      <div class="field"><label>畫面</label><div class="val">${escapeHtml(proj.view)}</div></div>
+      <div class="field"><label>登入身分</label><div class="val">${escapeHtml(proj.user)}</div></div>
+      <div class="field"><label>Pending 加購</label><div class="val">${escapeHtml(proj.pendingAdd)}</div></div>
+      <div class="field"><label>WhatsApp 橋接</label><div class="val">${escapeHtml(proj.whatsappBridge)}</div></div>
+      <div class="field"><label>RFQ draft 行項目</label><div class="val">${lines}</div></div>
+      <div class="field"><label>整單備註</label><div class="val">${escapeHtml(proj.draftNote)}</div></div>
+      <div class="field"><label>有標價小計</label><div class="val">${escapeHtml(proj.pricedSubtotal)}</div></div>
+      <div class="field"><label>未報價項數</label><div class="val">${proj.unpricedCount}</div></div>
+      <div class="field"><label>我的 RFQ</label><div class="val">${rfqs}</div></div>
+      <div class="field"><label>最近送出</label><div class="val">${escapeHtml(proj.lastSubmittedId)}</div></div>
+    `;
+  }
+
+  function renderFreeplay(proj) {
+    const loggedIn = proj.user !== "（訪客）";
+    const lastRfq = proj.rfqs[0] && proj.rfqs[0].id;
+    const buttons = [
+      { label: "重置原型", action: { type: "RESET" }, cls: "danger" },
+      { label: "登入 buyer@acme.com", action: { type: "LOGIN", email: "buyer@acme.com" }, cls: "primary" },
+      { label: "登入 alice@acme.com", action: { type: "LOGIN", email: "alice@acme.com" } },
+      { label: "登入 bob@acme.com", action: { type: "LOGIN", email: "bob@acme.com" } },
+      { label: "登出", action: { type: "LOGOUT" }, disabled: !loggedIn },
+      { label: "加購 Pump", action: { type: "ADD_TO_CART", productId: "pump-01" } },
+      { label: "加購 Gearbox（無價）", action: { type: "ADD_TO_CART", productId: "gearbox-01" } },
+      { label: "加購 PLC", action: { type: "ADD_TO_CART", productId: "plc-01" } },
+      { label: "開 RFQ 檢視", action: { type: "OPEN_RFQ_REVIEW" }, disabled: !loggedIn },
+      { label: "Pump 數量 = 3", action: { type: "SET_QTY", productId: "pump-01", qty: 3 }, disabled: !loggedIn },
+      { label: "刪除 Gearbox 行", action: { type: "REMOVE_LINE", productId: "gearbox-01" }, disabled: !loggedIn },
+      { label: "備註：Rush", action: { type: "SET_NOTE", note: "Rush" }, disabled: !loggedIn },
+      { label: "送出 RFQ", action: { type: "SUBMIT_RFQ" }, cls: "primary", disabled: !loggedIn },
+      { label: "我的 RFQ 列表", action: { type: "OPEN_RFQ_LIST" }, disabled: !loggedIn },
+      { label: "再訂最近一張", action: { type: "REORDER", rfqId: lastRfq || "RFQ-NONE" }, disabled: !lastRfq },
+      { label: "Ask WhatsApp（僅詢價）", action: { type: "ASK_WHATSAPP", productId: "gearbox-01", addToRfq: false } },
+      { label: "Ask WhatsApp + 勾入 RFQ", action: { type: "ASK_WHATSAPP", productId: "pump-01", addToRfq: true } },
+      { label: "完成 WhatsApp 橋接", action: { type: "COMPLETE_WHATSAPP" } },
+      { label: "取消登入門檻", action: { type: "CANCEL_AUTH_GATE" } },
+    ];
+
+    document.getElementById("freeplay").innerHTML = buttons
+      .map((b, i) => {
+        const cls = b.cls || "";
+        const dis = b.disabled ? "disabled" : "";
+        return `<button data-fp="${i}" class="${cls}" ${dis}>${escapeHtml(b.label)}</button>`;
+      })
+      .join("");
+
+    document.querySelectorAll("#freeplay button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const b = buttons[Number(btn.getAttribute("data-fp"))];
+        dispatch(b.action);
+      });
+    });
+  }
+
+  function renderScenario() {
+    const tabs = document.getElementById("tabs");
+    tabs.innerHTML = SCENARIOS.map(
+      (s) =>
+        `<button class="tab" role="tab" aria-selected="${s.id === scenarioId}" data-sc="${s.id}">${escapeHtml(
+          s.title
+        )}</button>`
+    ).join("");
+    tabs.querySelectorAll(".tab").forEach((tab) => {
+      tab.addEventListener("click", () => startScenario(tab.getAttribute("data-sc")));
+    });
+
+    const sc = SCENARIOS.find((s) => s.id === scenarioId);
+    const root = document.getElementById("scenario");
+    root.innerHTML = `
+      <p class="scenario-desc">${escapeHtml(sc.desc)}</p>
+      ${sc.steps
+        .map((step, i) => {
+          const done = i < stepIndex;
+          const current = i === stepIndex;
+          const locked = i > stepIndex;
+          return `<div class="step-row ${done ? "done" : ""}">
+            <div class="step-num">${i + 1}</div>
+            <div class="step-body">
+              <div>${escapeHtml(step.label)}</div>
+              ${
+                current
+                  ? `<button class="primary" data-step="go">執行此步</button>`
+                  : done
+                  ? `<span class="muted">已完成</span>`
+                  : locked
+                  ? `<span class="muted">先做上一步</span>`
+                  : ""
+              }
+            </div>
+          </div>`;
+        })
+        .join("")}
+      ${
+        stepIndex >= sc.steps.length
+          ? `<p class="hint">此情境走完了。可換分頁或按「重置原型」再玩自由操作。</p>`
+          : ""
+      }
+    `;
+    const go = root.querySelector('[data-step="go"]');
+    if (go) {
+      go.addEventListener("click", () => {
+        dispatch(sc.steps[stepIndex].action);
+        stepIndex += 1;
+        renderScenario();
+      });
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function render() {
+    const proj = SubbieRfqModel.project(state);
+    renderState(proj);
+    renderFreeplay(proj);
+    renderScenario();
+  }
+
+  startScenario("happy");
+  </script>
+</body>
+</html>

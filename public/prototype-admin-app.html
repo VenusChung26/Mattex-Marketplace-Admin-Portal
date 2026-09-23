@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mattex · Admin Portal prototype</title>
+  <link rel="icon" type="image/png" href="/assets/mattex-favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50:"#F1F7F3",100:"#DCECE2",200:"#B7D6C3",400:"#4F8F6C",500:"#2F6B4F",600:"#245A41",700:"#1B4633",800:"#143528",900:"#0C1F17" },
+            ink: "#121816", mute: "#5A665F", line: "#D6DDD8", paper: "#F6F7F5", charcoal: "#101513",
+          },
+          fontFamily: {
+            sans: ['"IBM Plex Sans"', "Helvetica", "Arial", "sans-serif"],
+            display: ['"IBM Plex Serif"', "Georgia", "serif"],
+          },
+        },
+      },
+    };
+  </script>
+  <!-- Three variants of Mattex admin + buyer Phase 2 RFQ, switchable via ?variant=, standalone HTML (does not patch storefront). -->
+  <style>
+    body { background: #F6F7F5; }
+    .sheet { background: linear-gradient(180deg, rgba(241,247,243,.95) 0%, #F6F7F5 120px); }
+    .table-grid { min-width: 1480px; }
+    .toast-enter { animation: pop .18s ease-out; }
+    @keyframes pop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  </style>
+</head>
+<body class="bg-paper text-ink font-sans antialiased">
+  <div id="app"></div>
+  <script src="/prototype-admin-model.js"></script>
+  <script>
+/**
+ * UI prototype — A Spreadsheet console / B Work queues / C Catalog studio
+ * State machine lives in prototype-admin-model.js (grilled rules).
+ */
+const VARIANTS = [
+  { key: "A", name: "Spreadsheet console" },
+  { key: "B", name: "Work queues" },
+  { key: "C", name: "Catalog studio" },
+];
+
+function variantFromUrl() {
+  const v = (new URLSearchParams(location.search).get("variant") || "A").toUpperCase();
+  return VARIANTS.some((x) => x.key === v) ? v : "A";
+}
+
+let state = SubbieAdminModel.seed();
+let ui = {
+  variant: variantFromUrl(),
+  world: "buyer",
+  page: "catalog",
+  adminPage: "products",
+  q: "",
+  editing: "",
+  reportFor: "",
+  drawer: null,
+  dialog: null,
+  csv: "",
+};
+
+function setVariant(key) {
+  const next = new URLSearchParams(location.search);
+  next.set("variant", key);
+  history.replaceState(null, "", `${location.pathname}?${next}`);
+  ui.variant = key;
+  ui.adminPage = key === "B" ? "rfqs" : "products";
+  render();
+}
+
+function dispatch(action, extra = {}) {
+  state = SubbieAdminModel.reduce(state, action);
+  Object.assign(ui, extra);
+  render();
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function product(id) { return state.products.find((p) => p.id === id); }
+
+function pill(text, kind) {
+  const map = {
+    green: "bg-brand-50 text-brand-700 border-brand-200",
+    hit: "bg-amber-50 text-amber-800 border-amber-200",
+    hold: "bg-amber-50 text-amber-800 border-amber-200",
+    draft: "bg-slate-100 text-slate-600 border-slate-200",
+    del: "bg-red-50 text-red-700 border-red-200",
+    ok: "bg-brand-50 text-brand-700 border-brand-200",
+    mute: "bg-white text-mute border-line",
+  };
+  return `<span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${map[kind] || map.mute}">${esc(text)}</span>`;
+}
+
+function statusPills(p) {
+  const out = [];
+  if (p.deleted) out.push(pill("Soft deleted", "del"));
+  else if (!p.published) out.push(pill("Draft", "draft"));
+  else out.push(pill("Published", "ok"));
+  if (p.held) out.push(pill("Hold", "hold"));
+  if (p.discontinued) out.push(pill("Discontinued", "mute"));
+  if (p.green) out.push(pill("Green", "green"));
+  if (p.hit) out.push(pill("Hit", "hit"));
+  return out.join(" ");
+}
+
+function imgThumb(p, h) {
+  if (p.image && p.imageSource !== "generated") {
+    return `<img src="${esc(p.image)}" alt="" class="h-${h || 16} w-${h || 16} object-cover rounded-lg border border-line bg-brand-50">`;
+  }
+  return `<div class="h-${h || 16} w-${h || 16} rounded-lg border border-dashed border-line bg-brand-50 text-[10px] font-semibold text-mute flex items-center justify-center">GEN</div>`;
+}
+
+function toast() {
+  const ok = state.lastOk;
+  return `<div class="toast-enter pointer-events-none fixed right-4 top-4 z-40 max-w-sm rounded-xl border px-4 py-3 text-sm shadow-lg ${ok ? "border-brand-200 bg-white text-brand-800" : "border-red-200 bg-red-50 text-red-800"}">${esc(state.lastDelta)}</div>`;
+}
+
+function logoMark(light) {
+  return `<img src="/assets/mattex-logo.png" alt="Mattex" class="h-7 ${light ? "brightness-0 invert" : ""}">`;
+}
+
+function switcher() {
+  const meta = VARIANTS.find((v) => v.key === ui.variant);
+  return `
+    <div class="fixed bottom-4 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/15 bg-charcoal px-1.5 py-1.5 text-white shadow-[0_12px_40px_rgba(16,21,19,0.4)]">
+      <button type="button" data-cycle="-1" class="flex h-8 w-8 items-center justify-center rounded-full text-sm hover:bg-white/10" aria-label="Previous variant">←</button>
+      <p class="min-w-[13.5rem] px-2 text-center text-xs font-semibold tracking-wide">${meta.key} — ${meta.name}</p>
+      <button type="button" data-cycle="1" class="flex h-8 w-8 items-center justify-center rounded-full text-sm hover:bg-white/10" aria-label="Next variant">→</button>
+    </div>`;
+}
+
+function worldToggle(theme) {
+  const a = ui.world === "buyer";
+  if (theme === "light") {
+    return `
+    <div class="flex rounded-full border border-line bg-paper p-0.5 text-[11px] font-semibold">
+      <button data-world="buyer" class="rounded-full px-3 py-1 ${a ? "bg-brand-600 text-white" : "text-mute"}">Marketplace</button>
+      <button data-world="admin" class="rounded-full px-3 py-1 ${!a ? "bg-brand-600 text-white" : "text-mute"}">Sales portal</button>
+    </div>`;
+  }
+  return `
+    <div class="flex rounded-full border border-white/15 bg-white/10 p-0.5 text-[11px] font-semibold">
+      <button data-world="buyer" class="rounded-full px-3 py-1 ${a ? "bg-white text-charcoal" : "text-white/80"}">Marketplace</button>
+      <button data-world="admin" class="rounded-full px-3 py-1 ${!a ? "bg-white text-charcoal" : "text-white/80"}">Sales portal</button>
+    </div>`;
+}
+
+function loginCard({ title, hint, emailId, passId, email, btn, note }) {
+  return `
+    <main class="max-w-md mx-auto px-4 py-14">
+      <div class="bg-white border border-line rounded-xl p-6 sm:p-8 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-wide text-brand-600 mb-2">Account</p>
+        <h1 class="font-display text-2xl font-semibold text-brand-800">${esc(title)}</h1>
+        <p class="mt-2 text-sm text-mute">${esc(hint)}</p>
+        <form class="mt-6 space-y-4" data-login="${btn}">
+          <label class="block text-sm font-medium">Email
+            <input id="${emailId}" value="${esc(email)}" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm">
+          </label>
+          <label class="block text-sm font-medium">Password
+            <input id="${passId}" type="password" value="harbour" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm">
+          </label>
+          <button class="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">${esc(btn)}</button>
+        </form>
+        <p class="mt-4 text-xs text-mute">${esc(note)}</p>
+      </div>
+    </main>`;
+}
+
+/* ---------- Buyer surfaces ---------- */
+function buyerHeader() {
+  const user = state.session.role === "buyer" ? state.buyers.find((b) => b.email === state.session.email) : null;
+  const cart = user ? (state.carts[user.email] || []).length : 0;
+  const rfqN = user ? state.rfqs.filter((r) => r.buyerEmail === user.email).length : 0;
+  const dark = ui.variant !== "C";
+  return `
+    <header class="${dark ? "bg-charcoal text-white" : "bg-white/90 border-b border-line text-ink"} sticky top-0 z-30">
+      <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
+        <div class="flex items-center gap-4">
+          ${logoMark(dark)}
+          <span class="text-xs font-semibold uppercase tracking-[0.14em] ${dark ? "text-white/60" : "text-mute"}">Marketplace</span>
+        </div>
+        ${worldToggle(dark ? "dark" : "light")}
+        <nav class="flex items-center gap-2 text-sm">
+          ${user ? `
+            <button data-bpage="catalog" class="rounded-lg px-3 py-1.5 hover:bg-white/10">Catalog</button>
+            <button data-bpage="rfqs" class="rounded-lg px-3 py-1.5 hover:bg-white/10">My RFQs ${rfqN ? `(${rfqN})` : ""}</button>
+            <button data-bpage="profile" class="rounded-lg px-3 py-1.5 hover:bg-white/10">${esc(user.companyName)}</button>
+            <button data-bpage="cart" class="rounded-lg bg-brand-600 px-3 py-1.5 font-semibold text-white">RFQ cart ${cart}</button>
+            <button data-act="logout" class="rounded-lg px-3 py-1.5 ${dark ? "text-white/70" : "text-mute"}">Log out</button>
+          ` : `<span class="text-xs ${dark ? "text-white/50" : "text-mute"}">Sign in to submit an RFQ</span>`}
+        </nav>
+      </div>
+    </header>`;
+}
+
+function renderBuyer() {
+  if (state.session.role !== "buyer") {
+    const passDefault = ui.world === "admin" ? "mattex" : "harbour";
+    return `
+      ${buyerHeader()}
+      ${loginCard({
+        title: "Sign in to request a quote",
+        hint: "Phase 2：登入後先喺 storefront 送 RFQ，Sales 喺 portal 審核。",
+        emailId: "b-email",
+        passId: "b-pass",
+        email: "buyer@harbour.hk",
+        btn: "Sign in",
+        note: "Demo buyer  buyer@harbour.hk / harbour。Sales 電郵不能喺呢度入。",
+      })}`.replace('value="harbour"', `value="${passDefault === "harbour" ? "harbour" : "harbour"}"`);
+  }
+  if (ui.page === "cart") return buyerHeader() + buyerCart();
+  if (ui.page === "rfqs") return buyerHeader() + buyerRfqs();
+  if (ui.page === "profile") return buyerHeader() + buyerProfile();
+  return buyerHeader() + buyerCatalog();
+}
+
+function buyerCatalog() {
+  const list = state.products.filter(SubbieAdminModel.buyerVisible).filter((p) => {
+    if (!ui.q) return true;
+    const blob = [p.name, p.productNo, p.category, p.remark, ...(p.purposes || [])].join(" ").toLowerCase();
+    return blob.includes(ui.q.toLowerCase());
+  });
+  const card = (p) => `
+    <article class="flex flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
+      <div class="h-36 bg-brand-50 flex items-center justify-center overflow-hidden">
+        ${p.image && p.imageSource !== "generated" ? `<img src="${esc(p.image)}" class="h-full w-full object-cover" alt="">` : `<span class="text-xs font-semibold text-mute">Generated preview</span>`}
+      </div>
+      <div class="flex flex-1 flex-col p-4">
+        <p class="text-[11px] font-semibold uppercase tracking-wide text-mute">${esc(p.category)}</p>
+        <h3 class="mt-1 font-display text-lg text-brand-800">${esc(p.name)}</h3>
+        <p class="text-xs text-mute">${esc(p.productNo)}</p>
+        <div class="mt-2">${statusPills(p)}</div>
+        <p class="mt-2 text-sm text-mute">MOQ ${esc(p.moq)} ${esc(p.salesUnit)} · ${esc(p.leadTime)}</p>
+        <div class="mt-2 flex flex-wrap gap-1">${(p.purposes || []).slice(0,5).map((x) => pill(x, "mute")).join("")}</div>
+        <div class="mt-auto flex gap-2 pt-4">
+          ${SubbieAdminModel.canOrder(p)
+            ? `<button data-add="${p.id}" class="flex-1 rounded-lg bg-brand-600 py-2 text-sm font-semibold text-white">Add to RFQ</button>`
+            : `<span class="flex-1 text-sm text-mute">Discontinued</span>`}
+          <button data-report="${p.id}" class="rounded-lg border border-line px-3 py-2 text-sm">Report</button>
+        </div>
+      </div>
+    </article>`;
+  return `
+    <main class="mx-auto max-w-7xl px-4 py-8">
+      <p class="text-xs font-semibold uppercase tracking-wide text-brand-600">Engineering products</p>
+      <h1 class="font-display text-3xl text-brand-900">Ready to quote</h1>
+      <p class="mt-2 max-w-2xl text-sm text-mute">搜 Purposes、SKU 或品名。Hold／草稿唔會出現。停產睇到但不能送 RFQ。</p>
+      <input data-search="buyer" value="${esc(ui.q)}" placeholder="Search vinyl flooring, 膠地板, A142…" class="mt-6 w-full rounded-xl border border-line bg-white px-4 py-3 text-sm">
+      <div class="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">${list.map(card).join("")}</div>
+    </main>
+    ${reportModal()}`;
+}
+
+function buyerCart() {
+  const email = state.session.email;
+  const cart = state.carts[email] || [];
+  return `
+    <main class="mx-auto max-w-3xl px-4 py-10">
+      <h1 class="font-display text-3xl text-brand-900">RFQ cart</h1>
+      <p class="mt-2 text-sm text-mute">送出後 Sales 會喺 portal 見到。Hold 咗嘅貨不能送出。</p>
+      ${cart.length ? `
+        <ul class="mt-6 divide-y divide-line rounded-xl border border-line bg-white">
+          ${cart.map((l) => {
+            const p = product(l.productId);
+            const blocked = !p || !SubbieAdminModel.canOrder(p);
+            return `<li class="flex items-center justify-between gap-4 px-4 py-3">
+              <div>
+                <p class="font-medium">${esc(p ? p.name : l.productId)}</p>
+                <p class="text-xs text-mute">${esc(p && p.productNo)} · qty ${l.qty} ${blocked ? "· cannot submit" : ""}</p>
+              </div>
+              <button data-rm="${l.productId}" class="text-sm text-mute hover:text-ink">Remove</button>
+            </li>`;
+          }).join("")}
+        </ul>
+        <label class="mt-4 block text-sm">Note
+          <input id="rfq-note" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm" placeholder="Project / delivery note">
+        </label>
+        <button data-act="submit-rfq" class="mt-4 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white">Submit RFQ</button>
+      ` : `<p class="mt-8 text-sm text-mute">Cart is empty.</p>`}
+    </main>`;
+}
+
+function buyerRfqs() {
+  const mine = state.rfqs.filter((r) => r.buyerEmail === state.session.email);
+  return `
+    <main class="mx-auto max-w-3xl px-4 py-10">
+      <h1 class="font-display text-3xl text-brand-900">My RFQs</h1>
+      <div class="mt-6 space-y-4">
+        ${mine.map((r) => `
+          <article class="rounded-xl border border-line bg-white p-5">
+            <div class="flex items-center justify-between gap-3">
+              <p class="font-semibold">${esc(r.id)}</p>
+              ${pill(r.status, r.status === "accepted" ? "ok" : r.status === "rejected" ? "del" : "hold")}
+            </div>
+            <p class="mt-2 text-sm text-mute">${r.lines.map((l) => `${esc(l.name)} × ${l.qty}`).join(" · ")}</p>
+            ${r.reason ? `<p class="mt-2 text-sm">Sales: ${esc(r.reason)}</p>` : ""}
+            ${r.tmsRfqId ? `<p class="mt-1 text-xs text-mute">TMS ${esc(r.tmsRfqId)}</p>` : ""}
+            ${r.status === "returned" ? `<button data-resub="${r.id}" class="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white">Resubmit this RFQ</button>` : ""}
+            ${r.status === "rejected" ? `<p class="mt-2 text-xs text-mute">Closed. Open a new RFQ if needed.</p>` : ""}
+            ${r.status === "accepted" ? `<p class="mt-2 text-xs text-mute">Accepted — line items locked.</p>` : ""}
+          </article>`).join("") || `<p class="text-sm text-mute">No RFQs yet.</p>`}
+      </div>
+    </main>`;
+}
+
+function buyerProfile() {
+  const b = state.buyers.find((x) => x.email === state.session.email);
+  return `
+    <main class="mx-auto max-w-lg px-4 py-10">
+      <h1 class="font-display text-3xl text-brand-900">Company profile</h1>
+      <p class="mt-2 text-sm text-mute">只有你可以改呢度。Sales 後台只能停用帳號。</p>
+      <form class="mt-6 space-y-3 rounded-xl border border-line bg-white p-5" data-act="save-profile">
+        <label class="block text-sm">Name <input id="bp-name" value="${esc(b.name)}" class="mt-1 w-full rounded-lg border border-line px-3 py-2"></label>
+        <label class="block text-sm">Company <input id="bp-co" value="${esc(b.companyName)}" class="mt-1 w-full rounded-lg border border-line px-3 py-2"></label>
+        <label class="block text-sm">New password <input id="bp-pass" class="mt-1 w-full rounded-lg border border-line px-3 py-2" placeholder="Leave blank to keep"></label>
+        <button class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white">Save</button>
+      </form>
+    </main>`;
+}
+
+function reportModal() {
+  if (!ui.reportFor) return "";
+  const p = product(ui.reportFor);
+  return `
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/40 px-4">
+      <form data-act="send-report" class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <h2 class="font-display text-xl text-brand-800">Report a live product</h2>
+        <p class="mt-1 text-sm text-mute">${esc(p ? p.name : "")}</p>
+        <label class="mt-4 block text-sm">Type
+          <select id="rep-type" class="mt-1 w-full rounded-lg border border-line px-3 py-2">
+            <option>圖片不對</option><option>資料不對</option><option>其他</option>
+          </select>
+        </label>
+        <label class="mt-3 block text-sm">Details
+          <textarea id="rep-text" class="mt-1 w-full rounded-lg border border-line px-3 py-2 min-h-[88px]">圖同實物唔夾</textarea>
+        </label>
+        <div class="mt-4 flex justify-end gap-2">
+          <button type="button" data-act="close-report" class="rounded-lg border border-line px-3 py-2 text-sm">Cancel</button>
+          <button class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white">Submit</button>
+        </div>
+      </form>
+    </div>`;
+}
+
+/* ---------- Admin shared bits ---------- */
+function adminLogin() {
+  return `
+    <div class="min-h-screen bg-charcoal text-white">
+      <header class="flex items-center justify-between px-6 py-4">
+        ${logoMark(true)}
+        ${worldToggle("dark")}
+      </header>
+      <main class="mx-auto max-w-md px-4 py-16">
+        <p class="text-xs font-semibold uppercase tracking-[0.16em] text-brand-200">Staff only</p>
+        <h1 class="mt-2 font-display text-3xl">Mattex Sales portal</h1>
+        <p class="mt-2 text-sm text-white/60">產品、Excel、買家帳、RFQ 審核、上傳 TMS。</p>
+        <form class="mt-8 space-y-4 rounded-2xl bg-white p-6 text-ink" data-login="sales">
+          <label class="block text-sm font-medium">Email
+            <input id="s-email" value="sales@mattex.com" class="mt-1 w-full rounded-lg border border-line px-3 py-2">
+          </label>
+          <label class="block text-sm font-medium">Password
+            <input id="s-pass" type="password" value="mattex" class="mt-1 w-full rounded-lg border border-line px-3 py-2">
+          </label>
+          <button class="w-full rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white">Enter portal</button>
+          <p class="text-xs text-mute">Demo：sales@mattex.com / mattex · 第二個員工 ops@mattex.com / mattex</p>
+        </form>
+      </main>
+    </div>`;
+}
+
+function navItem(id, label, count) {
+  const on = ui.adminPage === id;
+  return `<button data-apage="${id}" class="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${on ? "bg-brand-600 text-white" : "text-white/80 hover:bg-white/10"}">
+    <span>${label}</span>${count != null ? `<span class="text-xs opacity-80">${count}</span>` : ""}
+  </button>`;
+}
+
+function counts() {
+  return {
+    rfq: state.rfqs.filter((r) => ["received","reviewing","returned"].includes(r.status)).length,
+    rpt: state.reports.filter((r) => r.status === "open" || r.status === "looking").length,
+  };
+}
+
+function productEditor(p) {
+  const editing = !!p;
+  const c = SubbieAdminModel.CATEGORIES.map((cat) =>
+    `<option ${p && p.category === cat ? "selected" : ""}>${esc(cat)}</option>`).join("");
+  return `
+    <div class="space-y-3">
+      <div class="grid gap-3 sm:grid-cols-2">
+        <label class="text-sm">Product name<input id="f-name" value="${esc(p ? p.name : "")}" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"></label>
+        <label class="text-sm">Category<select id="f-cat" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm">${c}</select></label>
+        <label class="text-sm">Official SKU<input id="f-sku" value="${esc(p ? p.productNo : "")}" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"></label>
+        <label class="text-sm">Sales unit<input id="f-unit" value="${esc(p ? p.salesUnit : "sheet")}" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"></label>
+        <label class="text-sm">MOQ<input id="f-moq" value="${esc(p ? p.moq : "1")}" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"></label>
+        <label class="text-sm">Lead time<input id="f-lead" value="${esc(p ? p.leadTime : "7 days")}" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"></label>
+      </div>
+      <label class="text-sm">Size / Description<input id="f-size" value="${esc(p ? p.sizeDesc : "")}" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"></label>
+      <label class="text-sm">Primary spec<input id="f-spec" value="${esc(p ? p.primarySpec : "")}" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"></label>
+      <label class="text-sm">Certifications / reports<input id="f-cert" value="${esc(p ? p.certifications : "")}" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"></label>
+      <label class="text-sm">Purposes<textarea id="f-use" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm min-h-[72px]">${esc((p && p.purposes || []).join("\n"))}</textarea></label>
+      <label class="text-sm">Remark<input id="f-remark" value="${esc(p ? p.remark : "")}" class="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"></label>
+      <div class="flex gap-4 text-sm">
+        <label class="flex items-center gap-2"><input type="checkbox" id="f-green" ${p && p.green ? "checked" : ""}> Green</label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="f-hit" ${p && p.hit ? "checked" : ""}> Hit</label>
+      </div>
+      <div class="flex flex-wrap gap-2 pt-2">
+        <button data-act="save-product" class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white">${editing ? "Save" : "Create draft"}</button>
+        ${editing && !p.deleted && !p.published ? `<button data-act="publish" class="rounded-lg border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-700">Publish</button>` : ""}
+        ${editing && p.published && !p.held && !p.deleted ? `<button data-act="hold" class="rounded-lg border border-amber-300 px-4 py-2 text-sm">Hold</button>` : ""}
+        ${editing && p.held ? `<button data-act="unhold" class="rounded-lg border border-line px-4 py-2 text-sm">Unhold</button>` : ""}
+        ${editing && !p.deleted ? `<button data-act="soft-del" class="rounded-lg border border-red-200 px-4 py-2 text-sm text-red-700">Soft delete</button>` : ""}
+        ${editing ? `<button data-act="gen-img" class="rounded-lg border border-line px-4 py-2 text-sm">Mark image Gen</button>` : ""}
+      </div>
+    </div>`;
+}
+
+function formPayload() {
+  return {
+    name: document.getElementById("f-name").value,
+    category: document.getElementById("f-cat").value,
+    productNo: document.getElementById("f-sku").value,
+    salesUnit: document.getElementById("f-unit").value,
+    moq: document.getElementById("f-moq").value,
+    leadTime: document.getElementById("f-lead").value,
+    sizeDesc: document.getElementById("f-size").value,
+    primarySpec: document.getElementById("f-spec").value,
+    certifications: document.getElementById("f-cert").value,
+    purposes: document.getElementById("f-use").value,
+    remark: document.getElementById("f-remark").value,
+    green: document.getElementById("f-green").checked,
+    hit: document.getElementById("f-hit").checked,
+  };
+}
+
+function productsTable() {
+  const rows = state.products;
+  return `
+    <div class="overflow-auto rounded-xl border border-line bg-white">
+      <table class="table-grid w-full text-left text-[12px]">
+        <thead class="sticky top-0 bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
+          <tr>
+            <th class="px-3 py-2">Provisional</th><th class="px-3 py-2">Official SKU</th><th class="px-3 py-2">Cat.</th>
+            <th class="px-3 py-2">IMG</th><th class="px-3 py-2">Name</th><th class="px-3 py-2">Size</th>
+            <th class="px-3 py-2">Certs</th><th class="px-3 py-2">Spec</th><th class="px-3 py-2">Unit</th>
+            <th class="px-3 py-2">MOQ</th><th class="px-3 py-2">Lead</th><th class="px-3 py-2">Purposes</th>
+            <th class="px-3 py-2">Remark</th><th class="px-3 py-2">Tag</th><th class="px-3 py-2">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((p) => `
+            <tr data-edit="${p.id}" class="cursor-pointer border-t border-line/80 hover:bg-brand-50/60 ${ui.editing === p.id ? "bg-brand-50" : ""}">
+              <td class="px-3 py-2 font-mono text-[11px]">${esc(p.provisionalSku)}</td>
+              <td class="px-3 py-2 font-medium">${esc(p.productNo || "—")}</td>
+              <td class="px-3 py-2">${esc(p.category)}</td>
+              <td class="px-3 py-2">${esc(p.imageSource)}</td>
+              <td class="px-3 py-2 max-w-[180px]">${esc(p.name)}</td>
+              <td class="px-3 py-2 max-w-[120px] text-mute">${esc(p.sizeDesc)}</td>
+              <td class="px-3 py-2 max-w-[120px] text-mute">${esc(p.certifications)}</td>
+              <td class="px-3 py-2 max-w-[120px] text-mute">${esc(p.primarySpec)}</td>
+              <td class="px-3 py-2">${esc(p.salesUnit)}</td>
+              <td class="px-3 py-2">${esc(p.moq)}</td>
+              <td class="px-3 py-2">${esc(p.leadTime)}</td>
+              <td class="px-3 py-2 max-w-[200px]">${(p.purposes || []).slice(0,3).map((x) => pill(x,"mute")).join(" ")}</td>
+              <td class="px-3 py-2 text-mute">${esc(p.remark)}</td>
+              <td class="px-3 py-2">${p.green ? pill("Green","green") : ""} ${p.hit ? pill("Hit","hit") : ""}</td>
+              <td class="px-3 py-2">${statusPills(p)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function excelPanel() {
+  const res = state.lastExcel || [];
+  return `
+    <div class="grid gap-6 lg:grid-cols-2">
+      <div class="rounded-xl border border-line bg-white p-5">
+        <h2 class="font-display text-xl text-brand-800">Import catalog CSV</h2>
+        <p class="mt-2 text-sm text-mute">表頭用範本。缺 Name／Category 或第 18 類 → 該列失敗。空 SKU 派 Provisional。已上架唔會被打回草稿。空圖不覆蓋正式圖。</p>
+        <div class="mt-4 flex gap-2">
+          <button data-act="dl-csv" class="rounded-lg border border-line px-3 py-2 text-sm">Download template</button>
+          <button data-act="sample-csv" class="rounded-lg border border-line px-3 py-2 text-sm">Paste A142 sample</button>
+        </div>
+        <textarea id="xls-csv" class="mt-3 min-h-[180px] w-full rounded-lg border border-line p-3 font-mono text-[11px]">${esc(ui.csv)}</textarea>
+        <button data-act="import-csv" class="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white">Import</button>
+      </div>
+      <div class="rounded-xl border border-line bg-white p-5">
+        <h2 class="font-display text-xl text-brand-800">Row results</h2>
+        ${res.length ? `<ul class="mt-3 space-y-2 text-sm">${res.map((r) => `<li class="${r.ok ? "text-brand-800" : "text-red-700"}">Line ${r.line}: ${esc(r.msg)}</li>`).join("")}</ul>` : `<p class="mt-3 text-sm text-mute">No import yet.</p>`}
+      </div>
+    </div>`;
+}
+
+function rfqCard(r) {
+  return `
+    <article class="rounded-xl border border-line bg-white p-4">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <p class="font-semibold">${esc(r.id)}</p>
+          <p class="text-xs text-mute">${esc(r.buyerEmail)}</p>
+        </div>
+        ${pill(r.status, r.status === "accepted" ? "ok" : r.status === "rejected" ? "del" : "hold")}
+      </div>
+      <ul class="mt-3 space-y-1 text-sm">${r.lines.map((l) => `<li>${esc(l.productNo || l.name)} × ${l.qty} ${esc(l.unit || "")}</li>`).join("")}</ul>
+      ${r.reason ? `<p class="mt-2 text-xs">Reason: ${esc(r.reason)}</p>` : ""}
+      ${r.tmsRfqId ? `<p class="mt-1 text-xs text-brand-700">TMS ${esc(r.tmsRfqId)}</p>` : ""}
+      <div class="mt-3 flex flex-wrap gap-2">
+        ${r.status !== "accepted" && r.status !== "rejected" ? `
+          <button data-rev="${r.id}" class="rounded-lg border border-line px-2 py-1 text-xs">Review</button>
+          <button data-acc="${r.id}" class="rounded-lg bg-brand-600 px-2 py-1 text-xs font-semibold text-white">Accept</button>
+          <button data-ret="${r.id}" class="rounded-lg border border-amber-300 px-2 py-1 text-xs">Return</button>
+          <button data-rej="${r.id}" class="rounded-lg border border-red-200 px-2 py-1 text-xs text-red-700">Reject</button>
+        ` : ""}
+        ${r.status === "accepted" && !r.tmsRfqId ? `
+          <button data-tmsf="${r.id}" class="rounded-lg border border-line px-2 py-1 text-xs">TMS fail</button>
+          <button data-tms="${r.id}" class="rounded-lg bg-charcoal px-2 py-1 text-xs font-semibold text-white">Upload to TMS</button>
+        ` : ""}
+      </div>
+    </article>`;
+}
+
+function reportsList() {
+  return state.reports.map((r) => {
+    const p = product(r.productId);
+    return `<article class="rounded-xl border border-line bg-white p-4">
+      <div class="flex justify-between gap-2"><p class="font-semibold">${esc(r.id)} · ${esc(r.type)}</p>${pill(r.status, r.status === "fixed" ? "ok" : "hold")}</div>
+      <p class="mt-1 text-sm">${esc(p ? p.name : r.productNo)}</p>
+      <p class="text-xs text-mute">From ${esc(r.filerRole)} ${esc(r.filerEmail)}</p>
+      <p class="mt-2 text-sm">${esc(r.text)}</p>
+      ${r.status === "open" || r.status === "looking" ? `
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button data-look="${r.id}" class="rounded-lg border border-line px-2 py-1 text-xs">Looking</button>
+          <button data-dis="${r.id}" class="rounded-lg border border-line px-2 py-1 text-xs">Dismiss</button>
+          <button data-fixh="${r.id}" class="rounded-lg border border-amber-300 px-2 py-1 text-xs">Fix + Hold</button>
+          <button data-fix="${r.id}" class="rounded-lg bg-brand-600 px-2 py-1 text-xs font-semibold text-white">Fix fields</button>
+        </div>` : ""}
+    </article>`;
+  }).join("") || `<p class="text-sm text-mute">No product reports.</p>`;
+}
+
+function accountsPanel() {
+  return `
+    <div class="grid gap-6 lg:grid-cols-2">
+      <section class="rounded-xl border border-line bg-white p-5">
+        <h2 class="font-display text-xl">Sales staff</h2>
+        <ul class="mt-4 divide-y divide-line text-sm">
+          ${state.staff.map((u) => `<li class="flex items-center justify-between py-3">
+            <div><p class="font-medium">${esc(u.name)} ${u.bootstrap ? pill("bootstrap","mute") : ""}</p><p class="text-xs text-mute">${esc(u.email)} · ${u.enabled ? "Active" : "Disabled"}</p></div>
+            ${u.enabled ? `<button data-off="${u.email}" class="text-xs text-red-700">Disable</button>` : ""}
+          </li>`).join("")}
+        </ul>
+        <div class="mt-4 grid grid-cols-2 gap-2">
+          <input id="st-email" placeholder="new@mattex.com" class="rounded-lg border border-line px-3 py-2 text-sm">
+          <input id="st-name" placeholder="Name" class="rounded-lg border border-line px-3 py-2 text-sm">
+        </div>
+        <button data-act="add-staff" class="mt-3 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white">Invite staff</button>
+      </section>
+      <section class="rounded-xl border border-line bg-white p-5">
+        <h2 class="font-display text-xl">Buyers</h2>
+        <p class="mt-1 text-xs text-mute">停用後不能登入／送 RFQ。不能改買家密碼。</p>
+        <ul class="mt-4 divide-y divide-line text-sm">
+          ${state.buyers.map((u) => `<li class="flex items-center justify-between py-3">
+            <div><p class="font-medium">${esc(u.companyName)}</p><p class="text-xs text-mute">${esc(u.email)}</p></div>
+            ${u.enabled
+              ? `<button data-boff="${u.email}" class="text-xs text-red-700">Disable</button>`
+              : `<button data-bon="${u.email}" class="text-xs text-brand-700">Enable</button>`}
+          </li>`).join("")}
+        </ul>
+      </section>
+    </div>`;
+}
+
+function tmsPanel() {
+  if (!state.lastTms) return "";
+  return `<pre class="mt-4 max-h-48 overflow-auto rounded-xl bg-charcoal p-4 text-[11px] text-brand-100">${esc(JSON.stringify(state.lastTms, null, 2))}</pre>`;
+}
+
+function dialogBox() {
+  const d = ui.dialog;
+  if (!d) return "";
+  return `
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/40 px-4">
+      <form data-act="dialog-ok" class="w-full max-w-md rounded-2xl bg-white p-6">
+        <h2 class="font-display text-xl">${esc(d.title)}</h2>
+        <textarea id="dlg-text" class="mt-3 w-full min-h-[90px] rounded-lg border border-line p-3 text-sm">${esc(d.value || "")}</textarea>
+        <div class="mt-4 flex justify-end gap-2">
+          <button type="button" data-act="dialog-cancel" class="rounded-lg border border-line px-3 py-2 text-sm">Cancel</button>
+          <button class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white">Confirm</button>
+        </div>
+      </form>
+    </div>`;
+}
+
+function adminBody() {
+  if (ui.adminPage === "excel") return excelPanel();
+  if (ui.adminPage === "rfqs") return `<div class="grid gap-4 md:grid-cols-2">${state.rfqs.map(rfqCard).join("") || "<p class='text-sm text-mute'>No RFQs. Submit one from Marketplace.</p>"}</div>${tmsPanel()}`;
+  if (ui.adminPage === "reports") return `<div class="grid gap-4 md:grid-cols-2">${reportsList()}</div>`;
+  if (ui.adminPage === "accounts") return accountsPanel();
+  const p = ui.editing ? product(ui.editing) : null;
+  return `
+    <div class="mb-4 flex items-center justify-between">
+      <div>
+        <h1 class="font-display text-2xl text-brand-900">Products</h1>
+        <p class="text-sm text-mute">Draft → official SKU → Publish. Hold hides from buyers. Soft delete can be resurrected by Excel.</p>
+      </div>
+      <button data-act="new-product" class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white">New draft</button>
+    </div>
+    ${productsTable()}
+    <div class="mt-6 rounded-xl border border-line bg-white p-5">
+      <h2 class="font-display text-xl text-brand-800">${p ? "Edit " + esc(p.name) : "New draft"}</h2>
+      <div class="mt-4">${productEditor(p)}</div>
+    </div>`;
+}
+
+/* ---------- Variant layouts ---------- */
+function renderA() {
+  if (ui.world === "buyer") return renderBuyer();
+  if (state.session.role !== "sales") return adminLogin();
+  const c = counts();
+  return `
+    <div class="flex min-h-screen">
+      <aside class="relative w-60 shrink-0 bg-charcoal text-white">
+        <div class="flex items-center gap-2 px-4 py-4">${logoMark(true)}<span class="text-[10px] font-semibold uppercase tracking-widest text-white/50">Sales</span></div>
+        <div class="px-3">${worldToggle("dark")}</div>
+        <nav class="mt-6 space-y-1 px-3">
+          ${navItem("products", "Products")}
+          ${navItem("excel", "Excel import")}
+          ${navItem("rfqs", "RFQ inbox", c.rfq)}
+          ${navItem("reports", "Product reports", c.rpt)}
+          ${navItem("accounts", "Accounts")}
+        </nav>
+        <p class="absolute bottom-16 left-4 w-52 text-[11px] text-white/40">${esc(state.session.email)}</p>
+        <button data-act="logout" class="absolute bottom-6 left-4 text-xs text-white/60">Log out</button>
+      </aside>
+      <div class="min-w-0 flex-1">
+        <header class="border-b border-line bg-white px-6 py-4">
+          <p class="text-xs font-semibold uppercase tracking-wide text-brand-600">Mattex operations</p>
+          <p class="text-sm text-mute">Spreadsheet console · 同 Excel 欄位對齊</p>
+        </header>
+        <div class="p-6">${adminBody()}</div>
+      </div>
+    </div>`;
+}
+
+function renderB() {
+  if (ui.world === "buyer") return renderBuyer();
+  if (state.session.role !== "sales") return adminLogin();
+  const c = counts();
+  const col = (status, title) => `
+    <section class="rounded-2xl bg-brand-50/80 p-3">
+      <h3 class="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-mute">${title}</h3>
+      <div class="space-y-3">${state.rfqs.filter((r) => r.status === status).map(rfqCard).join("") || `<p class="px-1 text-xs text-mute">Empty</p>`}</div>
+    </section>`;
+  const top = `
+    <header class="sticky top-0 z-20 border-b border-line bg-white">
+      <div class="flex items-center justify-between px-5 py-3">
+        <div class="flex items-center gap-3">${logoMark(false)}<span class="font-display text-lg text-brand-800">Today’s queue</span></div>
+        ${worldToggle("light")}
+        <div class="flex items-center gap-2 text-sm">
+          <button data-apage="rfqs" class="rounded-full ${ui.adminPage === "rfqs" || !["products","excel","reports","accounts"].includes(ui.adminPage) ? "bg-brand-600 text-white" : "border border-line"} px-3 py-1">RFQs ${c.rfq}</button>
+          <button data-apage="reports" class="rounded-full ${ui.adminPage === "reports" ? "bg-brand-600 text-white" : "border border-line"} px-3 py-1">Reports ${c.rpt}</button>
+          <button data-apage="products" class="rounded-full ${ui.adminPage === "products" ? "bg-brand-600 text-white" : "border border-line"} px-3 py-1">Find product</button>
+          <button data-apage="excel" class="rounded-full ${ui.adminPage === "excel" ? "bg-brand-600 text-white" : "border border-line"} px-3 py-1">Excel</button>
+          <button data-apage="accounts" class="rounded-full ${ui.adminPage === "accounts" ? "bg-brand-600 text-white" : "border border-line"} px-3 py-1">Accounts</button>
+          <button data-act="logout" class="text-xs text-mute">Log out</button>
+        </div>
+      </div>
+    </header>`;
+  if (ui.adminPage === "products") {
+    return `${top}<main class="mx-auto max-w-3xl px-4 py-8">
+      <h1 class="font-display text-2xl">Find a SKU</h1>
+      <p class="text-sm text-mute">Queue-first：唔用大表，改用搜尋 + 單頁編輯。</p>
+      <input data-search="admin" value="${esc(ui.q)}" class="mt-4 w-full rounded-xl border border-line px-4 py-3" placeholder="SKU / name / purposes">
+      <ul class="mt-4 divide-y divide-line rounded-xl border border-line bg-white">
+        ${state.products.filter((p) => !ui.q || (p.name + p.productNo + (p.purposes||[]).join(" ")).toLowerCase().includes(ui.q.toLowerCase())).map((p) => `
+          <li class="flex items-center justify-between px-4 py-3">
+            <div><p class="font-medium">${esc(p.name)}</p><p class="text-xs text-mute">${esc(p.productNo || p.provisionalSku)} · ${esc(p.category)}</p></div>
+            <button data-edit="${p.id}" class="text-sm text-brand-700">Open</button>
+          </li>`).join("")}
+      </ul>
+      ${ui.editing ? `<div class="mt-6 rounded-xl border border-line bg-white p-5">${productEditor(product(ui.editing))}</div>` : ""}
+    </main>`;
+  }
+  if (ui.adminPage === "excel" || ui.adminPage === "accounts" || ui.adminPage === "reports") {
+    return `${top}<main class="mx-auto max-w-6xl px-4 py-8">${ui.adminPage === "excel" ? excelPanel() : ui.adminPage === "accounts" ? accountsPanel() : `<div class="space-y-3">${reportsList()}</div>`}</main>`;
+  }
+  if (!["rfqs","products","excel","reports","accounts"].includes(ui.adminPage)) ui.adminPage = "rfqs";
+  return `${top}
+    <main class="px-4 py-6">
+      <div class="grid gap-4 lg:grid-cols-4">
+        ${col("received", "Received")}
+        ${col("reviewing", "Reviewing")}
+        ${col("returned", "Returned")}
+        ${col("accepted", "Accepted / TMS")}
+      </div>
+      ${tmsPanel()}
+    </main>`;
+}
+
+function renderC() {
+  if (ui.world === "buyer") return renderBuyer();
+  if (state.session.role !== "sales") return adminLogin();
+  const c = counts();
+  const studioList = state.products.filter((p) => !p.deleted || ui.q);
+  return `
+    <div class="min-h-screen bg-[#101513] text-white">
+      <header class="flex items-center justify-between px-6 py-4">
+        <div class="flex items-center gap-3">${logoMark(true)}<span class="font-display text-xl">Catalog studio</span></div>
+        ${worldToggle("dark")}
+        <div class="flex gap-2 text-xs font-semibold">
+          <button data-apage="products" class="rounded-full px-3 py-1 ${ui.adminPage === "products" ? "bg-white text-charcoal" : "bg-white/10"}">Studio</button>
+          <button data-apage="rfqs" class="rounded-full px-3 py-1 ${ui.adminPage === "rfqs" ? "bg-white text-charcoal" : "bg-white/10"}">Inbox ${c.rfq}</button>
+          <button data-apage="reports" class="rounded-full px-3 py-1 ${ui.adminPage === "reports" ? "bg-white text-charcoal" : "bg-white/10"}">Reports ${c.rpt}</button>
+          <button data-apage="excel" class="rounded-full px-3 py-1 ${ui.adminPage === "excel" ? "bg-white text-charcoal" : "bg-white/10"}">Excel</button>
+          <button data-apage="accounts" class="rounded-full px-3 py-1 ${ui.adminPage === "accounts" ? "bg-white text-charcoal" : "bg-white/10"}">People</button>
+          <button data-act="logout" class="text-white/50">Log out</button>
+        </div>
+      </header>
+      <div class="sheet min-h-[calc(100vh-64px)] rounded-t-[28px] bg-paper px-6 py-8 text-ink">
+        ${ui.adminPage === "excel" ? excelPanel() : ""}
+        ${ui.adminPage === "accounts" ? accountsPanel() : ""}
+        ${ui.adminPage === "rfqs" ? `<div class="grid gap-4 md:grid-cols-2">${state.rfqs.map(rfqCard).join("")}</div>${tmsPanel()}` : ""}
+        ${ui.adminPage === "reports" ? `<div class="grid gap-4 md:grid-cols-2">${reportsList()}</div>` : ""}
+        ${ui.adminPage === "products" || !["excel","accounts","rfqs","reports"].includes(ui.adminPage) ? `
+          <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_420px]">
+            <div class="grid gap-4 sm:grid-cols-2">
+              ${studioList.map((p) => `
+                <button data-edit="${p.id}" class="overflow-hidden rounded-2xl border text-left ${ui.editing === p.id ? "border-brand-600 ring-2 ring-brand-200" : "border-line"} bg-white">
+                  <div class="h-28 bg-brand-50">${p.image && p.imageSource !== "generated" ? `<img src="${esc(p.image)}" class="h-28 w-full object-cover">` : ""}</div>
+                  <div class="p-3">
+                    <p class="text-[11px] uppercase tracking-wide text-mute">${esc(p.category)}</p>
+                    <p class="font-display text-lg text-brand-800">${esc(p.name)}</p>
+                    <div class="mt-1">${statusPills(p)}</div>
+                  </div>
+                </button>`).join("")}
+              <button data-act="new-product" class="flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-line text-sm text-mute">+ New draft</button>
+            </div>
+            <div class="rounded-2xl border border-line bg-white p-5">
+              <h2 class="font-display text-xl">${ui.editing && product(ui.editing) ? esc(product(ui.editing).name) : "Inspector"}</h2>
+              <div class="mt-4">${productEditor(ui.editing ? product(ui.editing) : null)}</div>
+            </div>
+          </div>` : ""}
+      </div>
+    </div>`;
+}
+
+function render() {
+  ui.variant = variantFromUrl();
+  const view = ui.variant === "B" ? renderB() : ui.variant === "C" ? renderC() : renderA();
+  document.getElementById("app").innerHTML = view + toast() + dialogBox() + switcher();
+}
+
+function cycle(d) {
+  const i = VARIANTS.findIndex((v) => v.key === ui.variant);
+  setVariant(VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length].key);
+}
+
+document.body.addEventListener("click", (e) => {
+  const cyc = e.target.closest("[data-cycle]");
+  if (cyc) { cycle(Number(cyc.dataset.cycle)); return; }
+  const world = e.target.closest("[data-world]");
+  if (world) {
+    ui.world = world.dataset.world;
+    if (ui.world === "admin" && state.session.role === "buyer") dispatch({ type: "LOGOUT" }, { world: "admin" });
+    else if (ui.world === "buyer" && state.session.role === "sales") dispatch({ type: "LOGOUT" }, { world: "buyer", page: "catalog" });
+    else render();
+    return;
+  }
+  const ap = e.target.closest("[data-apage]");
+  if (ap) { ui.adminPage = ap.dataset.apage; render(); return; }
+  const bp = e.target.closest("[data-bpage]");
+  if (bp) { ui.page = bp.dataset.bpage; render(); return; }
+  const add = e.target.closest("[data-add]");
+  if (add) { dispatch({ type: "CART_ADD", productId: add.dataset.add, qty: 1 }, { page: "cart" }); return; }
+  const rm = e.target.closest("[data-rm]");
+  if (rm) { dispatch({ type: "CART_REMOVE", productId: rm.dataset.rm }); return; }
+  const edit = e.target.closest("[data-edit]");
+  if (edit) { ui.editing = edit.dataset.edit; ui.adminPage = "products"; render(); return; }
+  const report = e.target.closest("[data-report]");
+  if (report) { ui.reportFor = report.dataset.report; render(); return; }
+  const resub = e.target.closest("[data-resub]");
+  if (resub) { dispatch({ type: "RFQ_RESUBMIT", id: resub.dataset.resub }); return; }
+  if (e.target.closest("[data-act='logout']")) { dispatch({ type: "LOGOUT" }); return; }
+  if (e.target.closest("[data-act='close-report']")) { ui.reportFor = ""; render(); return; }
+  if (e.target.closest("[data-act='submit-rfq']")) {
+    dispatch({ type: "RFQ_SUBMIT", note: (document.getElementById("rfq-note") || {}).value || "" }, { page: "rfqs" });
+    return;
+  }
+  if (e.target.closest("[data-act='new-product']")) { ui.editing = ""; render(); return; }
+  if (e.target.closest("[data-act='save-product']")) {
+    const payload = formPayload();
+    if (ui.editing) dispatch({ type: "PRODUCT_UPDATE", id: ui.editing, ...payload });
+    else dispatch({ type: "PRODUCT_CREATE", ...payload });
+    return;
+  }
+  if (e.target.closest("[data-act='publish']")) { dispatch({ type: "PRODUCT_PUBLISH", id: ui.editing }); return; }
+  if (e.target.closest("[data-act='hold']")) { dispatch({ type: "PRODUCT_HOLD", id: ui.editing }); return; }
+  if (e.target.closest("[data-act='unhold']")) { dispatch({ type: "PRODUCT_UNHOLD", id: ui.editing }); return; }
+  if (e.target.closest("[data-act='soft-del']")) { dispatch({ type: "PRODUCT_SOFT_DELETE", id: ui.editing }); return; }
+  if (e.target.closest("[data-act='gen-img']")) { dispatch({ type: "PRODUCT_SET_IMAGE", id: ui.editing, image: "", imageSource: "generated" }); return; }
+  if (e.target.closest("[data-act='dl-csv']")) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([SubbieAdminModel.excelTemplate()], { type: "text/csv" }));
+    a.download = "mattex-product-template.csv";
+    a.click();
+    return;
+  }
+  if (e.target.closest("[data-act='sample-csv']")) {
+    ui.csv = "Provisional SKU ID,Official SKU,Category,IMG (Gen),Product name,Size / Description,Certifications / Relevant Reports,Primary Spec Description,Sales Unit,MOQ,Lead Time,Purposes (Indicator for Searching),Remark,Tag (Green / Hit)\n,MKT-MESH-A142,Reinforcement Mesh,,A142 — 2.1m×4.8m / Customize,2.1m×4.8m,BS4483:2005,Square mesh,sheet,120,3-7 days,\"Anti-cracking,路面防裂\",excel upsert,Hit\n";
+    render();
+    return;
+  }
+  if (e.target.closest("[data-act='import-csv']")) {
+    ui.csv = document.getElementById("xls-csv").value;
+    dispatch({ type: "EXCEL_IMPORT", csv: ui.csv });
+    return;
+  }
+  if (e.target.closest("[data-act='add-staff']")) {
+    dispatch({ type: "STAFF_CREATE", email: document.getElementById("st-email").value, name: document.getElementById("st-name").value });
+    return;
+  }
+  if (e.target.closest("[data-act='dialog-cancel']")) { ui.dialog = null; render(); return; }
+  const rev = e.target.closest("[data-rev]");
+  if (rev) { dispatch({ type: "RFQ_START_REVIEW", id: rev.dataset.rev }); return; }
+  const acc = e.target.closest("[data-acc]");
+  if (acc) { dispatch({ type: "RFQ_ACCEPT", id: acc.dataset.acc }); return; }
+  const ret = e.target.closest("[data-ret]");
+  if (ret) { ui.dialog = { type: "RFQ_RETURN", id: ret.dataset.ret, title: "Return RFQ — reason required", value: "請補送貨地址" }; render(); return; }
+  const rej = e.target.closest("[data-rej]");
+  if (rej) { ui.dialog = { type: "RFQ_REJECT", id: rej.dataset.rej, title: "Reject RFQ — reason required", value: "規格做唔到" }; render(); return; }
+  const tms = e.target.closest("[data-tms]");
+  if (tms) { dispatch({ type: "RFQ_UPLOAD_TMS", id: tms.dataset.tms }); return; }
+  const tmsf = e.target.closest("[data-tmsf]");
+  if (tmsf) { dispatch({ type: "RFQ_UPLOAD_TMS", id: tmsf.dataset.tmsf, fail: true }); return; }
+  const look = e.target.closest("[data-look]");
+  if (look) { dispatch({ type: "REPORT_START_LOOKING", id: look.dataset.look }); return; }
+  const dis = e.target.closest("[data-dis]");
+  if (dis) { dispatch({ type: "REPORT_DISMISS", id: dis.dataset.dis }); return; }
+  const fixh = e.target.closest("[data-fixh]");
+  if (fixh) { dispatch({ type: "REPORT_FIX", id: fixh.dataset.fixh, hold: true, markChain: true }); return; }
+  const fix = e.target.closest("[data-fix]");
+  if (fix) { dispatch({ type: "REPORT_FIX", id: fix.dataset.fix, patch: { remark: "Corrected by sales" } }); return; }
+  const off = e.target.closest("[data-off]");
+  if (off) { dispatch({ type: "STAFF_DISABLE", email: off.dataset.off }); return; }
+  const boff = e.target.closest("[data-boff]");
+  if (boff) { dispatch({ type: "BUYER_SET_ENABLED", email: boff.dataset.boff, enabled: false }); return; }
+  const bon = e.target.closest("[data-bon]");
+  if (bon) { dispatch({ type: "BUYER_SET_ENABLED", email: bon.dataset.bon, enabled: true }); return; }
+});
+
+document.body.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const login = e.target.getAttribute("data-login");
+  if (login === "Sign in" || login === "sales") {
+    if (login === "sales") {
+      dispatch({ type: "LOGIN_SALES", email: document.getElementById("s-email").value, password: document.getElementById("s-pass").value }, { world: "admin" });
+    } else {
+      dispatch({ type: "LOGIN_BUYER", email: document.getElementById("b-email").value, password: document.getElementById("b-pass").value }, { world: "buyer", page: "catalog" });
+    }
+    return;
+  }
+  if (e.target.getAttribute("data-act") === "save-profile") {
+    dispatch({
+      type: "BUYER_UPDATE_PROFILE",
+      name: document.getElementById("bp-name").value,
+      companyName: document.getElementById("bp-co").value,
+      password: document.getElementById("bp-pass").value,
+    });
+    return;
+  }
+  if (e.target.getAttribute("data-act") === "send-report") {
+    dispatch({
+      type: "REPORT_CREATE",
+      productId: ui.reportFor,
+      reportType: document.getElementById("rep-type").value,
+      text: document.getElementById("rep-text").value,
+    });
+    ui.reportFor = "";
+    render();
+    return;
+  }
+  if (e.target.getAttribute("data-act") === "dialog-ok") {
+    const d = ui.dialog;
+    const reason = document.getElementById("dlg-text").value;
+    ui.dialog = null;
+    dispatch({ type: d.type, id: d.id, reason });
+  }
+});
+
+document.body.addEventListener("input", (e) => {
+  if (e.target.dataset.search === "buyer") ui.q = e.target.value;
+  if (e.target.dataset.search === "admin") ui.q = e.target.value;
+});
+document.body.addEventListener("change", (e) => {
+  if (e.target.dataset.search) render();
+});
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+  e.preventDefault();
+  cycle(e.key === "ArrowRight" ? 1 : -1);
+});
+
+render();
+  </script>
+</body>
+</html>
