@@ -1,3 +1,5 @@
+import { postTmsSubmit } from "./remote.js";
+
 async function blobToBase64(blob) {
   if (!blob) return "";
   const buffer = await blob.arrayBuffer();
@@ -25,31 +27,27 @@ function tmsLines(rows) {
 
 export async function submitRfqToTms({ kind, rfq, project, pdfBlob, pdfFilename, tmsEmail, tmsPassword, staffEmail }) {
   const pdfBase64 = await blobToBase64(pdfBlob);
-  const res = await fetch("/api/tms-submit", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      kind: kind === "buy" ? "buy" : "quote",
-      tmsEmail: tmsEmail || "",
-      tmsPassword: tmsPassword || "",
-      staffEmail: staffEmail || "",
-      rfq: {
-        id: rfq?.id || "",
-        project: project || rfq?.project || "",
-        note: rfq?.note || "",
-        responseDate: rfq?.responseDate || "",
-        deliveryDate: rfq?.deliveryDate || "",
-        address: rfq?.address || "",
-        buyerEmail: rfq?.buyerEmail || "",
-        buyerName: rfq?.buyerName || "",
-      },
-      lines: tmsLines(rfq?.lines),
-      pdfBase64,
-      pdfFilename,
-    }),
+  const res = await postTmsSubmit({
+    kind: kind === "buy" ? "buy" : "quote",
+    tmsEmail: tmsEmail || "",
+    tmsPassword: tmsPassword || "",
+    staffEmail: staffEmail || "",
+    rfq: {
+      id: rfq?.id || "",
+      project: project || rfq?.project || "",
+      note: rfq?.note || "",
+      responseDate: rfq?.responseDate || "",
+      deliveryDate: rfq?.deliveryDate || "",
+      address: rfq?.address || "",
+      buyerEmail: rfq?.buyerEmail || "",
+      buyerName: rfq?.buyerName || "",
+    },
+    lines: tmsLines(rfq?.lines),
+    pdfBase64,
+    pdfFilename,
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data?.ok) {
+  const data = res.data || {};
+  if (!res.res.ok || !data?.ok) {
     throw new Error(data?.error || "TMS submit failed");
   }
   return data;

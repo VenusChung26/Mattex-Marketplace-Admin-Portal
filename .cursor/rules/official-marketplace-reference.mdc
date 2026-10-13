@@ -1,0 +1,53 @@
+---
+description: Official Mattex Marketplace zip is reference only; do not connect its API
+alwaysApply: true
+---
+
+# Official marketplace reference (read-only)
+
+Source: `mattex-marketplace-develop.zip` (GitLab `genghis-js/mattex-marketplace`, develop). Do not edit that repo, do not push to it, and do not copy that app over this worktree.
+
+This worktree stays the Vite prototype (marketplace `5182`, portal `5183`). Do not replace it with their TanStack Router SSR app, pnpm-only toolchain, or generated `src/services/api/`.
+
+## Do not connect
+
+Their dev API is `http://localhost:8081` (`VITE_API_URL`). Do not set that here. Do not add a Vite or Express proxy to it. Do not put an absolute URL in `src/lib/remote.js`. `send()` must reject any path that is not a same-origin relative path (`/…`, never `//` or `http`).
+
+Browser calls for this prototype stay on its own `/api/*` through `src/lib/remote.js`. Pages do not call `fetch` for those routes. `src/lib/filePreview.js` may fetch an already-uploaded file URL; that is not an API client.
+
+## Checked against this prototype
+
+Same thing, so this code follows their field or rule:
+
+- Selling price on a product card is their `unit_price` only. Missing or `<= 0` shows `價格待定` in Chinese and `Price Upon Request` in English. Custom / tailor-made lines with no quoted unit price use the same label. A positive `unit_price` stays `$1,234.00`. Our catalog `price` and `refPrice` are not that field.
+- Minimum order: their `min_order_qty`, our `moq`.
+- Tailor-made: their `is_tailor_made`, our `tailorMade`.
+- Lead time text: their `lead_time`, our `leadTimeLabel` / `leadTime`.
+- Picture: their `files[0]` (`thumbnail_file_path`, then `sign_url`, then `file_path`), otherwise our `image`.
+- SKU: their display rule (keep or add an `MKT-` prefix). Our `productNo` already carries that prefix.
+- One browser fetch helper: `src/lib/remote.js`. Relative path only. `FormData` is sent as the body, not JSON. The session is the `mm_buyer` / `mm_staff` cookie (`credentials: "same-origin"`).
+
+Not the same thing, so it stays unwired:
+
+- `POST /login` plus localStorage `mm_auth` is their bearer token. Our login is `POST /api/auth` and a cookie. Do not store `mm_auth` or send `Authorization`.
+- `GET /public/products` is their product list. Our catalog is `GET /api/catalog`. Do not switch the URL.
+- `GET /web/carts` is their server cart. Our cart is the local draft. Do not call `/web/carts`.
+- Their RFQ status numbers (1, 10, 15, 20, 30, 99) are their buyer list. Our `reviewStatus` includes sales quote, WhatsApp, and versions. Do not replace it.
+- Their HTTP 401s mean a buyer token expired and should open LoginModal. Our HTTP 401s are staff gates (`/api/promo`, catalog commit, product image). Do not open the buyer login from those.
+
+## Their paths (reference, unwired)
+
+`config/openapi/api.json` in the zip is their Sales API (22 paths). It does not drive this prototype's catalog, cart, or RFQ store.
+
+- `GET /public/products`, `GET /public/products/{uuid}`, `GET /public/categories`
+- `GET,POST /web/carts`, `PUT,DELETE /web/carts/{id}`
+- `POST /public/request-for-quotes`, `GET /web/request-for-quotes`, `POST /web/request-for-quotes/cancel/{uuid}`
+- `POST /login`, `POST /authorize`, `GET,PUT /web/users`, `POST /user-registration`
+- `POST /public/attachments`, `POST /api/v1/files/upload`
+- email verification under `/email-verifications` and `/api/v1/email-verifications`
+
+In their app the browser uses a relative path and a proxy. Here there is no such proxy.
+
+## Leave in place
+
+Spec match, TMS iRFQ, guest WhatsApp quotes, quote versions, product status, and product category stay on the locked rules. Their RFQ status numbers (1, 10, 15, 20, 30, 99) stay on their backend. Do not replace this prototype's `reviewStatus` with those numbers.

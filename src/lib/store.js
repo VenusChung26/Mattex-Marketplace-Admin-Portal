@@ -1,9 +1,12 @@
 import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappUrls, publishCustomLineMedia, uploadRfqPdf } from "./rfqBlob.js";
 import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
-import { fetchCatalogState, fetchQuoteSnapshot, fetchRemoteKv, fetchRemoteRfqs, fetchRfqStamp, fetchSessionState, isSupabaseConfigured, persistCatalogTables, persistKv, persistKvNow, probeRemoteData, shouldUseLocalSharedStore } from "./supabasePersist.js";
+import { fetchQuoteSnapshot, fetchRemoteKv, fetchRemoteRfqs, fetchRfqStamp, fetchSessionState, isSupabaseConfigured, persistCatalogTables, persistKv, persistKvNow, probeRemoteData, shouldUseLocalSharedStore } from "./supabasePersist.js";
+import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedStore, postAuth, postEmail, postSharedStore } from "./remote.js";
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
 import { activeOfferPrice } from "./offer.js";
+import { adoptGuestSpecMatch } from "./specMatchSession.js";
 import { foldHan } from "./han.js";
+import { displaySku, isTailorMade, orderMinimum, productImageUrl, sellingAmount } from "./productFields.js";
 import { contactFormFromAccount, normalizeRoles } from "./phone.js";
 import {
   accountCreatedEmailHtml,
@@ -392,9 +395,9 @@ function isQuoteActive(quote) {
 }
 
 function getEffectivePrice(product) {
-  if (!product || product.priceUponRequest) return { displayPrice: null, status: "none", quote: null };
-  const amount = Number(product.price);
-  if (!Number.isFinite(amount) || amount <= 0) return { displayPrice: null, status: "none", quote: null };
+  if (!product) return { displayPrice: null, status: "none", quote: null };
+  const amount = sellingAmount(product);
+  if (amount == null || amount <= 0) return { displayPrice: null, status: "none", quote: null };
   return { displayPrice: amount, status: "list", quote: null };
 }
 
@@ -1202,14 +1205,44 @@ function getCatalogSyncError(id) {
   return catalogSyncErrors[String(id)] || "";
 }
 
+function catalogBodyStorageKey() {
+  return isPortalSurface() ? "mm_catalog_body_v1:staff" : "mm_catalog_body_v1:shop";
+}
+
+function readCachedCatalog() {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const data = JSON.parse(sessionStorage.getItem(catalogBodyStorageKey()) || "null");
+    if (!data?.etag || data.etag === "seed" || !Array.isArray(data.products) || !data.products.length) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedCatalog(data) {
+  if (typeof sessionStorage === "undefined" || !data?.etag) return;
+  try {
+    sessionStorage.setItem(catalogBodyStorageKey(), JSON.stringify(data));
+  } catch {
+    try { sessionStorage.removeItem(catalogBodyStorageKey()); } catch { /* quota */ }
+  }
+}
+
 async function fetchSharedCatalog() {
   if (typeof window === "undefined" || typeof fetch !== "function") return null;
   try {
-    const res = await fetch("/api/catalog", { cache: "no-store" });
+    const cached = readCachedCatalog();
+    const res = await getCatalog(cached?.etag || "");
+    if (res.status === 304 && cached) {
+      catalogEtag = cached.etag;
+      return cached;
+    }
     if (!res.ok) return null;
-    const data = await res.json();
+    const data = res.data;
     if (!Array.isArray(data?.products) || !data.products.length) return null;
     catalogEtag = data.etag || "seed";
+    writeCachedCatalog(data);
     return data;
   } catch {
     return null;
@@ -1224,14 +1257,9 @@ async function commitCatalogProducts(changedIds, removedIds) {
   if (!products.length && !removed.length) return { ok: true };
   const categories = getCategoryDefs().map((category) => ({ name: category.name, image: category.image || "" }));
   const run = catalogCommitChain.then(async () => {
-    const res = await fetch("/api/catalog/commit", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ products, categories, removed }),
-    });
-    const data = await res.json().catch(() => ({}));
-    const failed = !res.ok || data?.ok === false;
+    const res = await commitCatalog({ products, categories, removed });
+    const data = res.data || {};
+    const failed = !res.res.ok || data?.ok === false;
     const mark = failed ? (data?.error === "quota" ? "quota" : "save") : "";
     for (const id of ids) {
       if (mark) catalogSyncErrors[id] = mark;
@@ -1248,9 +1276,7 @@ async function commitCatalogProducts(changedIds, removedIds) {
 async function fetchHostCatalog() {
   if (typeof window === "undefined" || typeof fetch !== "function") return null;
   try {
-    const res = await fetch("/catalog.json", { cache: "no-store" });
-    if (!res.ok) return null;
-    const data = await res.json();
+    const data = await getHostCatalog();
     if (!Array.isArray(data?.products) || !data.products.length) return null;
     return data;
   } catch {
@@ -1406,68 +1432,12 @@ async function hydrateStore() {
       return true;
     }
 
-    const remote = await fetchCatalogState(CATALOG_KV_KEYS, { withPrivate: hasLocalSession() });
-    if (!remote) {
-      catalogLoading = false;
-      catalogReady = true;
-      catalogBootReady = true;
-      bumpCatalog();
-      emitStoreChange();
-      return false;
-    }
-
-    await yieldToBrowser();
-    const list = Array.isArray(remote.products) ? remote.products : [];
-    PRODUCTS.splice(0, PRODUCTS.length);
-    const CHUNK = 64;
-    let releasedBoot = false;
-    const releaseBoot = () => {
-      if (releasedBoot) return;
-      releasedBoot = true;
-      applySavedProductPatches();
-      catalogBootReady = true;
-      bumpCatalog();
-      emitStoreChange();
-    };
-    for (let i = 0; i < list.length; i += CHUNK) {
-      const slice = list.slice(i, i + CHUNK);
-      for (const row of slice) {
-        PRODUCTS.push(
-          normalizeProductRecord({
-            ...row,
-            imageUrl: row.imageUrl || row.image_url || "",
-          })
-        );
-      }
-      if (i === 0) releaseBoot();
-      else {
-        bumpCatalog();
-        emitStoreChange();
-      }
-      if (i + CHUNK < list.length) await yieldToBrowser();
-    }
-    if (!releasedBoot) releaseBoot();
-    supplierMetricsBySlug.clear();
-    Object.entries(remote.metrics || {}).forEach(([slug, metrics]) => {
-      supplierMetricsBySlug.set(slug, metrics);
-    });
-    applyCatalogKv(remote.kv);
-    applySavedProductPatches();
     catalogLoading = false;
     catalogReady = true;
     catalogBootReady = true;
     bumpCatalog();
     emitStoreChange();
-
-    if (isPortalSurface()) {
-      const [stamp, session] = await Promise.all([
-        fetchRfqStamp(),
-        fetchSessionState({ includeRfqs: false }),
-      ]);
-      if (session) rfqStamp = stamp;
-      if (applySessionState(session)) emitStoreChange();
-    }
-    return true;
+    return false;
   } catch (error) {
     console.warn("supabase hydrate", error?.message || error);
     catalogLoading = false;
@@ -1698,6 +1668,8 @@ function formatPrice(price) {
 }
 
 function displayLeadTime(product) {
+  const official = String(product?.lead_time || "").trim();
+  if (official) return official;
   const label = String(product?.leadTimeLabel || "").trim();
   if (label) return label;
   const lead = product?.leadTime;
@@ -2000,10 +1972,7 @@ async function fetchProductLive(id) {
   const key = String(id || "");
   if (!key) return false;
   try {
-    const res = await fetch(`/api/catalog-snapshot?part=status&id=${encodeURIComponent(key)}`, { cache: "no-store" });
-    if (!res.ok) return true;
-    const data = await res.json();
-    return data?.live !== false;
+    return await getCatalogLive(key);
   } catch {
     return true;
   }
@@ -2236,8 +2205,87 @@ function catalogTokens(text) {
     .filter((word) => word.length >= 2 && !stop.has(word));
 }
 
+function specQueryTokens(name, spec) {
+  const text = `${name || ""} ${spec || ""}`;
+  const words = catalogTokens(text).filter((word) => !/^\d+$/.test(word) || /^(201|270|275|304|316|355|500)$/.test(word));
+  const extra = [];
+  if (/角[钢鋼]|\bangle\b/i.test(text)) extra.push("angle");
+  if (/sheet\s*pile|板[樁桩]|lsp\s*\d/i.test(text)) extra.push("sheet", "piles");
+  if (/\bchs\b|circular hollow/i.test(text)) extra.push("circular", "hollow", "sections");
+  if (/螺絲|螺栓|光砵|絲母|介子/.test(text)) extra.push("fasteners");
+  if (/不銹鋼|不锈钢|stainless/i.test(text)) extra.push("stainless");
+  if (/316/.test(text)) extra.push("316");
+  if (/304/.test(text)) extra.push("304");
+  if (/熱浸|热浸|鍍鋅|镀锌|\bhdg\b/i.test(text)) extra.push("hdg");
+  if (/s\s*275/i.test(text)) extra.push("s275j0");
+  return [...new Set([...words, ...extra])];
+}
+
+function specTokenHit(word, hayTokens, hayText) {
+  if (/[\u4e00-\u9fff]/.test(word)) return hayText.includes(word);
+  if (hayTokens.has(word)) return true;
+  if (word.length < 4) return false;
+  for (const token of hayTokens) {
+    if (token.startsWith(word)) return true;
+  }
+  return false;
+}
+
+function specFamilyScore(text, productName) {
+  const name = productName || "";
+  let score = 0;
+  const hotDip = /熱浸|热浸|鍍鋅|镀锌|\bhdg\b/i.test(text);
+  const stainless = /不銹|不锈钢|stainless|\b316\b|\b304\b/i.test(text);
+  if (/角[钢鋼]|\bangle\b/i.test(text)) {
+    if (/angle/i.test(name)) score += 3;
+    if (hotDip && !stainless && /stainless/i.test(name)) score -= 4;
+    if (stainless && /stainless/i.test(name)) score += 3;
+    if (/manhole|mesh|pipe/i.test(name)) score -= 3;
+  }
+  if (/U槽|槽[钢鋼鐵铁]|channel|waling|waler/i.test(text)) {
+    if (/custom profile/i.test(name)) score += 3;
+    if (/manhole|cable|tile|瓷磚|瓷砖/i.test(name)) score -= 4;
+  }
+  if (/sheet\s*pile|板[樁桩]|lsp/i.test(text)) {
+    if (/sheet pile/i.test(name)) score += 4;
+    if (/mesh/i.test(name)) score -= 3;
+  }
+  if (/\bchs\b/i.test(text)) {
+    if (/circular hollow/i.test(name)) score += 4;
+    if (/pipe & fittings|concrete pipe|copper|upvc|hdpe/i.test(name)) score -= 3;
+  }
+  if (/螺絲|螺栓|光砵|絲母|介子/.test(text)) {
+    if (/fastener|\bbolt\b/i.test(name)) score += 3;
+    if (/manhole/i.test(name)) score -= 4;
+  }
+  return score;
+}
+
+function catalogSpecLine(product) {
+  const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const texts = [product?.sizeDesc, product?.description, product?.primarySpec].map(clean).filter(Boolean);
+  const plain = texts.find((text) => !/^grading\s*\/\s*option/i.test(text));
+  if (plain) return plain.slice(0, 160);
+  const grade = texts.map((text) => text.replace(/^grading\s*\/\s*option:\s*/i, "")).find(Boolean);
+  return grade ? grade.slice(0, 160) : "";
+}
+
+function specLineForMatch(product) {
+  const own = catalogSpecLine(product);
+  if (own) return own;
+  const token = String(product?.variant || product?.parentProduct || "").trim();
+  if (token.length < 2) return "";
+  const sibling = PRODUCTS.find((item) => {
+    if (!item || item.id === product.id) return false;
+    if (!String(item.name || "").includes(token)) return false;
+    return Boolean(catalogSpecLine(item));
+  });
+  return sibling ? catalogSpecLine(sibling) : "";
+}
+
 function matchSpecToCatalog(name, spec) {
-  const words = catalogTokens(`${name || ""} ${spec || ""}`);
+  const text = `${name || ""} ${spec || ""}`;
+  const words = specQueryTokens(name, spec);
   if (!words.length) return [];
   const ranked = PRODUCTS.filter(
     (product) => product?.id && product.deleted !== true && product.published !== false && isOrderable(product) && !isDiscontinued(product)
@@ -2246,8 +2294,8 @@ function matchSpecToCatalog(name, spec) {
       const hayTokens = new Set(
         catalogTokens(`${product.name || ""} ${product.productNo || ""} ${product.category || ""} ${product.primarySpec || ""} ${product.sizeDesc || ""}`)
       );
-      const hayCjk = `${product.name || ""} ${product.primarySpec || ""} ${product.sizeDesc || ""}`;
-      const hits = words.filter((word) => (/[\u4e00-\u9fff]/.test(word) ? hayCjk.includes(word) : hayTokens.has(word))).length;
+      const hayText = `${product.name || ""} ${product.primarySpec || ""} ${product.sizeDesc || ""}`;
+      const hits = words.filter((word) => specTokenHit(word, hayTokens, hayText)).length + specFamilyScore(text, product.name);
       return { product, hits };
     })
     .filter((row) => row.hits > 0)
@@ -2256,15 +2304,17 @@ function matchSpecToCatalog(name, spec) {
   if (!ranked.length) return [];
   const top = ranked[0].hits;
   const second = ranked[1]?.hits || 0;
-  const confident = top >= 2 && top > second;
+  const namedFamily = /角[钢鋼]|U槽|槽[钢鋼鐵铁]|channel|waling|waler|sheet\s*pile|板[樁桩]|\bchs\b|光砵|絲母|介子|螺絲|螺栓/i.test(text);
+  const lead = ranked[0].product.name || "";
+  const confident = top >= 2 && top > second && (!namedFamily || (specFamilyScore(text, lead) > 0 && !/custom profile|fasteners/i.test(lead)));
   return ranked.map((row, index) => ({
     productId: row.product.id,
     name: row.product.name,
-    spec: String(row.product.primarySpec || row.product.sizeDesc || "").slice(0, 120),
+    spec: specLineForMatch(row.product),
     unit: String(row.product.salesUnit || row.product.unit || ""),
-    moq: Math.max(1, Number(row.product.moq) || 1),
-    image: String(row.product.image || ""),
-    tailorMade: Boolean(row.product.tailorMade),
+    moq: Math.max(1, Number(orderMinimum(row.product)) || 1),
+    image: productImageUrl(row.product),
+    tailorMade: isTailorMade(row.product),
     productNo: String(row.product.productNo || row.product.provisionalSku || "").trim(),
     hits: row.hits,
     confident: index === 0 && confident,
@@ -2932,14 +2982,7 @@ function accountsWithoutSecrets(map) {
 
 async function authApi(action, payload = {}) {
   try {
-    const res = await fetch("/api/auth", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action, ...payload }),
-    });
-    const data = await res.json().catch(() => ({}));
-    return data && typeof data === "object" ? data : { ok: false, error: "server" };
+    return await postAuth({ action, ...payload });
   } catch {
     return { ok: false, error: "network" };
   }
@@ -3045,6 +3088,7 @@ function setSessionUser(user) {
   }
 
   localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+  if (!prevEmail && nextEmail) adoptGuestSpecMatch(nextEmail);
   emitStoreChange();
 }
 
@@ -4891,13 +4935,9 @@ async function postResendEmail({ to, subject, innerHtml }) {
   if (!isDeliverableEmail(to)) return { ok: false, error: "email" };
   const html = wrapEmailSend({ subject, innerHtml, fontBase: marketplaceOrigin() });
   try {
-    const res = await fetch("/api/send-email", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ to: normalizeEmail(to), subject, html }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data?.ok === false) return { ok: false, error: data?.error || "send" };
+    const res = await postEmail({ to: normalizeEmail(to), subject, html });
+    const data = res.data || {};
+    if (!res.res.ok || data?.ok === false) return { ok: false, error: data?.error || "send" };
     return { ok: true, skipped: Boolean(data?.skipped) };
   } catch {
     return { ok: false, error: "network" };
@@ -6955,7 +6995,7 @@ async function updateAdminProductNow(id, fields) {
 }
 
 function productSkuId(product) {
-  return String(product?.productNo || product?.provisionalSku || "").trim();
+  return displaySku(product);
 }
 
 function productOfficialSku(product) {
@@ -7369,12 +7409,8 @@ function enqueueSharedPost(body) {
   if (typeof fetch === "undefined" || !shouldUseLocalSharedStore()) return Promise.resolve();
   sharedPostChain = sharedPostChain
     .then(() =>
-      fetch("/api/shared-store", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      })
-        .then((res) => (res.ok ? res.json() : null))
+      postSharedStore(body)
+        .then((res) => (res.res.ok ? res.data : null))
         .then((data) => {
           if (data?.rev != null) sharedStoreRev = Number(data.rev) || sharedStoreRev;
         })
@@ -7589,21 +7625,19 @@ async function pullSupabaseSharedStore() {
 }
 
 async function pullSharedStore({ bootstrap = false } = {}) {
+  let ok = true;
   try {
     if (shouldUseLocalSharedStore()) {
-      const res = await fetch("/api/shared-store");
-      if (res.ok) {
-        const data = await res.json();
+      const res = await getSharedStore();
+      if (!res.res.ok) ok = false;
+      else {
+        const data = res.data || {};
         const rev = Number(data?.rev) || 0;
         if (bootstrap) {
           if (data?.kv && Object.keys(data.kv).length) applySharedStore(data.kv);
           const localKv = dumpLocalSharedKv();
           if (Object.keys(localKv).length) {
-            await fetch("/api/shared-store", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ kv: localKv, bootstrap: true }),
-            });
+            await postSharedStore({ kv: localKv, bootstrap: true });
           }
           sharedStoreRev = rev;
         } else if (rev !== sharedStoreRev) {
@@ -7613,9 +7647,16 @@ async function pullSharedStore({ bootstrap = false } = {}) {
       }
     }
   } catch {
-    /* ignore */
+    ok = false;
   }
-  if (!shouldUseLocalSharedStore()) await pullSupabaseSharedStore();
+  if (!shouldUseLocalSharedStore()) {
+    try {
+      await pullSupabaseSharedStore();
+    } catch {
+      ok = false;
+    }
+  }
+  return ok;
 }
 
 const CATALOG_KV_KEYS = [
@@ -7689,8 +7730,31 @@ function ensureBuyerSession() {
 }
 
 function beginLocalSharedSync() {
-  pullSharedStore({ bootstrap: true });
-  sharedStoreTimer = window.setInterval(() => pullSharedStore(), 1000);
+  window.clearInterval(sharedStoreTimer);
+  window.clearTimeout(sharedStoreTimer);
+  let delay = 15000;
+  const schedule = (ms) => {
+    window.clearTimeout(sharedStoreTimer);
+    sharedStoreTimer = window.setTimeout(tick, ms);
+  };
+  const tick = async () => {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      schedule(15000);
+      return;
+    }
+    const ok = await pullSharedStore();
+    delay = ok ? 15000 : Math.min(120000, delay * 2);
+    schedule(delay);
+  };
+  pullSharedStore({ bootstrap: true }).finally(() => schedule(15000));
+  if (!beginLocalSharedSync.listening && typeof document !== "undefined") {
+    beginLocalSharedSync.listening = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      delay = 15000;
+      pullSharedStore().finally(() => schedule(delay));
+    });
+  }
 }
 
 function startSharedStoreSync() {

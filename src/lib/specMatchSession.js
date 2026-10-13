@@ -1,8 +1,52 @@
-const KEY = "mm_spec_match_v1";
+const LEGACY_KEY = "mm_spec_match_v1";
 const CONFIRM_KEY = "mm_spec_confirm";
 const QUOTE_KEY = "mm_spec_quote_draft";
+const AUTH_KEY = "subbie_auth";
+export const SAMPLE_SPEC_NAME = "sample-specification";
 
 let pendingFile = null;
+
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function ownerEmail() {
+  try {
+    const user = JSON.parse(localStorage.getItem(AUTH_KEY) || "null");
+    return normalizeEmail(user?.email);
+  } catch {
+    return "";
+  }
+}
+
+function storageKey(email = ownerEmail()) {
+  return email ? `${LEGACY_KEY}:user:${email}` : `${LEGACY_KEY}:guest`;
+}
+
+function parseRecord(raw) {
+  try {
+    const data = JSON.parse(raw || "null");
+    if (!data || data.fileName === SAMPLE_SPEC_NAME || data.sample) return null;
+    if (!Array.isArray(data.rows) || !data.rows.length) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function previewUrl(url) {
+  const value = String(url || "");
+  return /^https?:\/\//i.test(value) ? value : "";
+}
+
+function migrateLegacy() {
+  const raw = localStorage.getItem(LEGACY_KEY);
+  if (raw == null) return;
+  localStorage.removeItem(LEGACY_KEY);
+  const data = parseRecord(raw);
+  const key = storageKey();
+  if (data && !localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ ...data, specUrl: previewUrl(data.specUrl) }));
+}
 
 export function setPendingSpecFile(file) {
   pendingFile = file || null;
@@ -15,17 +59,26 @@ export function takePendingSpecFile() {
 }
 
 export function loadSpecMatch() {
-  try {
-    const data = JSON.parse(localStorage.getItem(KEY) || "null");
-    if (!data || !Array.isArray(data.rows) || !data.rows.length) return null;
-    return data;
-  } catch {
-    return null;
-  }
+  migrateLegacy();
+  return parseRecord(localStorage.getItem(storageKey()));
 }
 
 export function saveSpecMatch(data) {
-  localStorage.setItem(KEY, JSON.stringify(data));
+  if (!data || data.fileName === SAMPLE_SPEC_NAME || !Array.isArray(data.rows) || !data.rows.length) return;
+  localStorage.setItem(
+    storageKey(),
+    JSON.stringify({
+      fileName: data.fileName || "",
+      specUrl: previewUrl(data.specUrl),
+      sources: (Array.isArray(data.sources) ? data.sources : []).map((source) => ({
+        id: source.id || "",
+        name: source.name || "",
+        kind: source.kind || "",
+        url: previewUrl(source.url),
+      })),
+      rows: data.rows,
+    })
+  );
 }
 
 export function hasSpecMatch() {
@@ -33,8 +86,19 @@ export function hasSpecMatch() {
 }
 
 export function clearSpecMatch() {
-  localStorage.removeItem(KEY);
+  localStorage.removeItem(storageKey());
   sessionStorage.removeItem(CONFIRM_KEY);
+}
+
+export function adoptGuestSpecMatch(email) {
+  const owner = normalizeEmail(email);
+  if (!owner) return;
+  const guestKey = storageKey("");
+  const guest = parseRecord(localStorage.getItem(guestKey)) || parseRecord(localStorage.getItem(LEGACY_KEY));
+  localStorage.removeItem(LEGACY_KEY);
+  if (!guest) return;
+  localStorage.setItem(storageKey(owner), JSON.stringify({ ...guest, specUrl: previewUrl(guest.specUrl) }));
+  localStorage.removeItem(guestKey);
 }
 
 export function clearSpecMatchIfSubmitted(ids) {

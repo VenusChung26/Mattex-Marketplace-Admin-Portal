@@ -96,12 +96,21 @@ function jsonPlugin() {
         }
         if (path === "/api/catalog" && req.method === "GET") {
           const request = new Request(`http://${req.headers.host || "localhost"}${req.url || ""}`, {
-            headers: { cookie: String(req.headers.cookie || "") },
+            headers: {
+              cookie: String(req.headers.cookie || ""),
+              "if-none-match": String(req.headers["if-none-match"] || ""),
+            },
           });
           const result = await handleCatalogRequest(request);
           res.statusCode = result.status;
+          const etag = result.headers.get("etag");
+          if (etag) res.setHeader("ETag", etag);
+          res.setHeader("Cache-Control", result.headers.get("cache-control") || "no-store");
+          if (result.status === 304) {
+            res.end();
+            return;
+          }
           res.setHeader("Content-Type", "application/json");
-          res.setHeader("Cache-Control", "no-store");
           res.end(await result.text());
           return;
         }
@@ -260,14 +269,15 @@ function jsonPlugin() {
             res.end(JSON.stringify(json));
             return;
           }
-          const json = isTmsLogin ? await handleTmsLogin(body) : await handleTmsSubmit(body);
+          const request = localRequest(req, path);
+          const json = isTmsLogin ? await handleTmsLogin(body, request) : await handleTmsSubmit(body, request);
           res.statusCode = 200;
           res.setHeader("Content-Type", "application/json");
           res.end(JSON.stringify(json));
         } catch (error) {
-          res.statusCode = 400;
+          res.statusCode = Number(error?.status) || 400;
           res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ error: error?.message || "request failed" }));
+          res.end(JSON.stringify({ ok: false, error: error?.message || "request failed" }));
         }
       });
     },
@@ -343,8 +353,8 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), jsonPlugin(), marketplaceGaHtmlPlugin(), publicSsrHtmlPlugin()],
     define: {
-      "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(supabaseUrl),
-      "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify(supabaseAnon),
+      "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(""),
+      "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify(""),
       "import.meta.env.VITE_SURFACE": JSON.stringify("marketplace"),
       "import.meta.env.VITE_MARKETPLACE_ORIGIN": JSON.stringify(marketplaceOrigin),
       "import.meta.env.VITE_ADMIN_ORIGIN": JSON.stringify(adminOrigin),

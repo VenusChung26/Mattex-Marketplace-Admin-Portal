@@ -1,41 +1,60 @@
 const MODEL_TYPE = "inbound_request_for_quotes";
 
-function env(name, fallback = "") {
+const REQUIRED_ENV = [
+  "TMS_BOT_EMAIL",
+  "TMS_BOT_PASSWORD",
+  "TMS_API_URL",
+  "TMS_BASE_URL",
+  "TMS_DEFAULT_SOURCE_ID",
+  "TMS_DEFAULT_BUYER_PROFILE_ID",
+  "TMS_DEFAULT_BUYER_CONTACT_ID",
+  "TMS_DEFAULT_PROJECT_ID",
+  "TMS_DEFAULT_PROJECT_ADDRESS_ID",
+  "TMS_DEFAULT_SUPPLIER_CATEGORY_ID",
+  "TMS_DEFAULT_UNIT_ID",
+  "TMS_DEFAULT_UNIT",
+  "TMS_DEFAULT_CATEGORY_ID",
+  "TMS_DEFAULT_PURPOSE",
+  "TMS_FILE_TYPE_ID",
+];
+
+function env(name) {
   const value = process.env[name];
-  return value == null || value === "" ? fallback : String(value);
+  return value == null || value === "" ? "" : String(value);
 }
 
-function numEnv(name, fallback) {
-  const n = Number(env(name, String(fallback)));
-  return Number.isFinite(n) ? n : fallback;
+function requiredEnv(name) {
+  const value = env(name);
+  if (!value) throw new Error(`${name} is not configured on the server`);
+  return value;
+}
+
+function requiredNum(name) {
+  const n = Number(requiredEnv(name));
+  if (!Number.isFinite(n)) throw new Error(`${name} is not configured on the server`);
+  return n;
 }
 
 export function tmsServerConfigured() {
-  return Boolean(env("TMS_BOT_EMAIL") && env("TMS_BOT_PASSWORD"));
+  return REQUIRED_ENV.every((name) => env(name));
 }
 
 function config() {
-  const email = env("TMS_BOT_EMAIL");
-  const password = env("TMS_BOT_PASSWORD");
-  if (!email || !password) {
-    throw new Error("TMS credentials are not configured on the server");
-  }
   return {
-    apiUrl: env("TMS_API_URL", "https://api.uat-tms.mattex.com.hk").replace(/\/$/, ""),
-    webUrl: env("TMS_BASE_URL", "https://uat-tms-v2.mattex.com.hk").replace(/\/$/, ""),
-    email,
-    password,
-    sourceId: numEnv("TMS_DEFAULT_SOURCE_ID", 2),
-    buyerProfileId: numEnv("TMS_DEFAULT_BUYER_PROFILE_ID", 366),
-    buyerContactId: numEnv("TMS_DEFAULT_BUYER_CONTACT_ID", 845),
-    projectId: numEnv("TMS_DEFAULT_PROJECT_ID", 355),
-    projectAddressId: numEnv("TMS_DEFAULT_PROJECT_ADDRESS_ID", 285),
-    supplierCategoryId: numEnv("TMS_DEFAULT_SUPPLIER_CATEGORY_ID", 452),
-    unitId: numEnv("TMS_DEFAULT_UNIT_ID", 189),
-    unit: env("TMS_DEFAULT_UNIT", "PC"),
-    categoryId: numEnv("TMS_DEFAULT_CATEGORY_ID", 276),
-    purpose: numEnv("TMS_DEFAULT_PURPOSE", 2),
-    fileTypeId: numEnv("TMS_FILE_TYPE_ID", 170),
+    apiUrl: requiredEnv("TMS_API_URL").replace(/\/+$/, ""),
+    webUrl: requiredEnv("TMS_BASE_URL").replace(/\/+$/, ""),
+    email: requiredEnv("TMS_BOT_EMAIL"),
+    sourceId: requiredNum("TMS_DEFAULT_SOURCE_ID"),
+    buyerProfileId: requiredNum("TMS_DEFAULT_BUYER_PROFILE_ID"),
+    buyerContactId: requiredNum("TMS_DEFAULT_BUYER_CONTACT_ID"),
+    projectId: requiredNum("TMS_DEFAULT_PROJECT_ID"),
+    projectAddressId: requiredNum("TMS_DEFAULT_PROJECT_ADDRESS_ID"),
+    supplierCategoryId: requiredNum("TMS_DEFAULT_SUPPLIER_CATEGORY_ID"),
+    unitId: requiredNum("TMS_DEFAULT_UNIT_ID"),
+    unit: requiredEnv("TMS_DEFAULT_UNIT"),
+    categoryId: requiredNum("TMS_DEFAULT_CATEGORY_ID"),
+    purpose: requiredNum("TMS_DEFAULT_PURPOSE"),
+    fileTypeId: requiredNum("TMS_FILE_TYPE_ID"),
   };
 }
 
@@ -99,8 +118,9 @@ async function tmsFetch(cfg, token, method, path, { json, form } = {}) {
 }
 
 async function login(cfg) {
+  const password = requiredEnv("TMS_BOT_PASSWORD");
   const data = await tmsFetch(cfg, "", "POST", "/login", {
-    json: { email: cfg.email, password: cfg.password },
+    json: { email: cfg.email, password },
   });
   const token = data?.data?.access_token;
   const uid = data?.data?.uid;

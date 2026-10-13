@@ -1,8 +1,15 @@
+import { execFile } from "node:child_process";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+import { inflateSync } from "node:zlib";
 import * as XLSX from "xlsx";
 import { readSession } from "./auth.js";
+import { parseBuyerDocument } from "./buyer-spec.js";
+
+const execFileAsync = promisify(execFile);
 
 const COOKIE = "mm_spec_uses";
 const DAILY_LIMIT = 3;
@@ -99,6 +106,81 @@ function sheetText(base64) {
 function roughText(base64) {
   const raw = Buffer.from(base64, "base64").toString("utf8");
   const pieces = raw.match(/[ -~\u4e00-\u9fff]{4,}/g) || [];
+  return pieces.filter((line) => !isPdfSyntax(line)).join("\n").slice(0, 20000);
+}
+
+function unescapePdf(value) {
+  return String(value || "")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, " ")
+    .replace(/\\t/g, " ")
+    .replace(/\\([()\\])/g, "$1")
+    .replace(/\\(\d{1,3})/g, (_, oct) => String.fromCharCode(Number.parseInt(oct, 8)));
+}
+
+function isPdfSyntax(line) {
+  const text = String(line || "").trim();
+  if (!text || text.startsWith("/")) return true;
+  if (/\b(FlateDecode|ASCII85Decode|DCTDecode|JPXDecode|CCITTFaxDecode|endobj|endstream|startxref)\b/.test(text)) return true;
+  if (/^\/?(?:Length|Filter|Type|Subtype)\b/i.test(text)) return true;
+  return false;
+}
+
+function humanLine(text) {
+  const clean = String(text || "").trim();
+  if (/[<>\\^`~$@]/.test(clean)) return false;
+  const words = clean.match(/[a-z\u4e00-\u9fff]{2,}/gi) || [];
+  const letters = words.join("").length;
+  return words.length >= 2 && letters / Math.max(clean.length, 1) >= 0.45;
+}
+
+function stringsFromPdfContent(content) {
+  const lines = [];
+  const re = /\((?:\\.|[^\\)]){2,400}\)/g;
+  let match = re.exec(content);
+  while (match) {
+    const after = content.slice(match.index + match[0].length, match.index + match[0].length + 80);
+    const close = after.indexOf("]");
+    const arrayGap = close >= 0 ? after.slice(0, close) : "";
+    const shown = /^\s*(?:Tj|'|")/.test(after) || (close >= 0 && /^[\s\d.+\-()\\]*$/.test(arrayGap) && /^\s*TJ/.test(after.slice(close + 1)));
+    if (!shown) {
+      match = re.exec(content);
+      continue;
+    }
+    const text = unescapePdf(match[0].slice(1, -1)).replace(/[^\t\n\r\x20-\x7e\u4e00-\u9fff]/g, " ").replace(/\s+/g, " ").trim();
+    if (humanLine(text) && !isPdfSyntax(text)) lines.push(text);
+    match = re.exec(content);
+  }
+  return lines;
+}
+
+function pdfPlainText(base64) {
+  const buffer = Buffer.from(base64, "base64");
+  const raw = buffer.toString("latin1");
+  const pieces = [];
+  const marker = /stream\r?\n/g;
+  let found = marker.exec(raw);
+  while (found) {
+    const start = found.index + found[0].length;
+    const end = raw.indexOf("endstream", start);
+    if (end < 0) break;
+    const dict = raw.slice(Math.max(0, found.index - 500), found.index);
+    let data = Buffer.from(raw.slice(start, end), "latin1");
+    if (data[0] === 0x0a || data[0] === 0x0d) data = data.subarray(1);
+    if (/FlateDecode/.test(dict)) {
+      try {
+        data = inflateSync(data);
+      } catch {
+        marker.lastIndex = end + 9;
+        found = marker.exec(raw);
+        continue;
+      }
+    }
+    pieces.push(...stringsFromPdfContent(data.toString("latin1")));
+    marker.lastIndex = end + 9;
+    found = marker.exec(raw);
+  }
+  if (!pieces.length) pieces.push(...stringsFromPdfContent(raw));
   return pieces.join("\n").slice(0, 20000);
 }
 
@@ -111,7 +193,7 @@ function tokens(value) {
   return String(value || "")
     .toLowerCase()
     .split(/[^a-z0-9\u4e00-\u9fff]+/)
-    .filter((word) => word.length >= 2 && !STOP_WORDS.has(word));
+    .filter((word) => word.length >= 2 && !STOP_WORDS.has(word) && !/^\d+$/.test(word));
 }
 
 function readableEnough(text) {
@@ -121,8 +203,9 @@ function readableEnough(text) {
 
 function pushBuyerLine(items, name, spec, qty) {
   const title = String(name || "").trim().slice(0, 180);
-  if (title.length < 3 || !/[a-z\u4e00-\u9fff]/i.test(title)) return;
-  const amount = Math.max(1, Math.floor(Number(qty)) || 1);
+  if (title.length < 3 || !/[a-z\u4e00-\u9fff]/i.test(title) || isPdfSyntax(title)) return;
+  const parsed = Math.floor(Number(qty));
+  const amount = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   const key = `${title.toLowerCase()}|${amount}`;
   if (items.some((row) => `${row.name.toLowerCase()}|${row.qty}` === key)) return;
   items.push({ name: title, spec: String(spec || "").trim().slice(0, 240), qty: amount });
@@ -175,7 +258,7 @@ function extractBuyerLines(text) {
     const qty = marked ? Number(marked[2] || marked[3]) : null;
     const name = (marked ? marked[1] : line).trim();
     const words = tokens(name);
-    if (qty || words.length >= 2) pushBuyerLine(items, name, "", qty || 1);
+    if (qty || words.length >= 2) pushBuyerLine(items, name, "", qty);
     if (items.length >= 30) break;
   }
   return items;
@@ -235,7 +318,14 @@ function rowsFromBuyerLines(items, index) {
   }));
 }
 
-function localRows(body, index) {
+function buyerItems(text, pictured) {
+  const structured = parseBuyerDocument(text);
+  if (structured.length) return structured;
+  if (pictured) return [];
+  return extractBuyerLines(text);
+}
+
+function localRows(body, index, text, pictured) {
   const mime = String(body?.mime || "").toLowerCase();
   const name = String(body?.name || "").toLowerCase();
   const base64 = String(body?.base64 || "");
@@ -243,11 +333,61 @@ function localRows(body, index) {
     const items = sheetItems(base64);
     return { unreadable: items.length === 0, rows: rowsFromBuyerLines(items, index) };
   }
-  const text = sourceText(body);
   if (!text) return { unreadable: true, rows: [] };
-  if (!readableEnough(text)) return { unreadable: true, rows: [] };
-  const items = extractBuyerLines(text);
+  if (!pictured && !readableEnough(text) && !parseBuyerDocument(text).length) return { unreadable: true, rows: [] };
+  const items = buyerItems(text, pictured);
   return { unreadable: items.length === 0, rows: rowsFromBuyerLines(items, index) };
+}
+
+function isPicture(body) {
+  const mime = String(body?.mime || "").toLowerCase();
+  const name = String(body?.name || "").toLowerCase();
+  return mime.startsWith("image/") || mime.includes("pdf") || name.endsWith(".pdf") || /\.(png|jpe?g|webp|gif)$/.test(name);
+}
+
+async function visionBinary() {
+  const bin = path.join(tmpdir(), "mattex-vision-ocr");
+  try {
+    await access(bin);
+    return bin;
+  } catch {
+    /* compile once on this machine */
+  }
+  if (process.platform !== "darwin") return "";
+  const source = path.join(process.cwd(), "scripts", "vision-ocr.swift");
+  await execFileAsync("swiftc", ["-O", "-o", bin, source], { timeout: 120000 });
+  return bin;
+}
+
+async function visionText(body) {
+  const base64 = String(body?.base64 || "");
+  if (!base64 || process.platform !== "darwin") return "";
+  const name = String(body?.name || "").toLowerCase();
+  const ext = name.endsWith(".pdf") ? ".pdf" : name.endsWith(".png") ? ".png" : name.endsWith(".webp") ? ".webp" : name.endsWith(".gif") ? ".gif" : ".jpg";
+  let dir = "";
+  try {
+    const bin = await visionBinary();
+    if (!bin) return "";
+    dir = await mkdtemp(path.join(tmpdir(), "spec-ocr-"));
+    const file = path.join(dir, `upload${ext}`);
+    await writeFile(file, Buffer.from(base64, "base64"));
+    const { stdout } = await execFileAsync(bin, [file], { timeout: 30000, maxBuffer: 2_000_000 });
+    return String(stdout || "").slice(0, 20000);
+  } catch {
+    return "";
+  } finally {
+    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function readDocument(body) {
+  const plain = sourceText(body);
+  if (parseBuyerDocument(plain).length) return { text: plain, pictured: false };
+  if (!isPicture(body)) return { text: plain, pictured: false };
+  const ocr = await visionText(body);
+  if (parseBuyerDocument(ocr).length) return { text: ocr, pictured: true };
+  if (plain && extractBuyerLines(plain).length) return { text: plain, pictured: false };
+  return { text: "", pictured: true };
 }
 
 function sourceText(body) {
@@ -258,6 +398,7 @@ function sourceText(body) {
     return sheetText(base64) || String(body?.text || "");
   }
   if (body?.text) return String(body.text).slice(0, 20000);
+  if (base64 && (name.endsWith(".pdf") || mime.includes("pdf"))) return pdfPlainText(base64);
   if (base64 && !mime.startsWith("image/")) return roughText(base64);
   return "";
 }
@@ -414,10 +555,11 @@ export async function handleSpecMatch(body, request) {
   }
   const mime = String(body?.mime || "");
   const imageDataUrl = mime.startsWith("image/") && String(body?.dataUrl || "").startsWith("data:image/") ? String(body.dataUrl).slice(0, 2_000_000) : "";
-  const text = sourceText(body);
-  if (!text && !imageDataUrl) return { status: 400, body: { ok: false, error: "file" } };
+  const document = await readDocument(body);
+  const text = document.text;
+  if (!text && !imageDataUrl && !String(body?.base64 || "")) return { status: 400, body: { ok: false, error: "file" } };
   const index = await catalogIndex();
-  let parsed = localRows(body, index);
+  let parsed = localRows(body, index, text, document.pictured);
   if (matchKey()) {
     const raw = await askModel({ text, imageDataUrl, index });
     const modeled = rowsFromModel(raw, index);

@@ -1,18 +1,25 @@
+import { getTmsStatus, postTmsLogin } from "./remote.js";
+
 const KEY = "subbie-admin-tms";
 
-export function readTmsSession() {
+function readRaw() {
   try {
     const raw = sessionStorage.getItem(KEY);
-    const data = raw ? JSON.parse(raw) : null;
-    if (data?.email && data?.password) return { email: String(data.email), password: String(data.password) };
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    /* ignore */
+    return null;
   }
-  return null;
 }
 
-export function writeTmsSession({ email, password }) {
-  sessionStorage.setItem(KEY, JSON.stringify({ email: String(email || "").trim(), password: String(password || "") }));
+export function readTmsSession() {
+  const data = readRaw();
+  if (!data?.email) return null;
+  if (data.password) writeTmsSession({ email: data.email });
+  return { email: String(data.email) };
+}
+
+export function writeTmsSession({ email }) {
+  sessionStorage.setItem(KEY, JSON.stringify({ email: String(email || "").trim() }));
 }
 
 export function clearTmsSession() {
@@ -20,21 +27,15 @@ export function clearTmsSession() {
 }
 
 export async function fetchTmsStatus() {
-  const res = await fetch("/api/tms-status");
-  const data = await res.json().catch(() => ({}));
-  return Boolean(data?.configured);
+  return getTmsStatus();
 }
 
 export async function connectTmsSession({ email, password }) {
-  const res = await fetch("/api/tms-login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tmsEmail: email, tmsPassword: password }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data?.ok) {
+  const res = await postTmsLogin({ tmsEmail: email, tmsPassword: password });
+  const data = res.data || {};
+  if (!res.res.ok || !data?.ok) {
     throw new Error(data?.error || "TMS login failed");
   }
-  writeTmsSession({ email: data.email || email, password });
+  writeTmsSession({ email: data.email || email });
   return { email: data.email || email };
 }
