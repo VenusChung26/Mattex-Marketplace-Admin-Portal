@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readSession } from "./auth.js";
 import { MARKETPLACE_LOGO_URL } from "../src/lib/mailTemplate.js";
+import { routeMail } from "../server/mail-env.js";
 
 const FROM = process.env.RESEND_FROM || "Mattex Marketplace <noreply@marketplace.mattex.com.hk>";
 const INTERNAL_RECIPIENTS = new Set(["sales@mattex.com.hk", "resend@mattex.com.hk"]);
@@ -33,7 +34,11 @@ function withInlineLogo(html) {
 export async function sendResendEmail({ to, subject, html }) {
   const key = String(process.env.RESEND_API_KEY || "").trim();
   if (!key) return { ok: false, error: "not_configured" };
-  const prepared = withInlineLogo(html);
+  // Outside production every mail goes to the test inbox. See server/mail-env.js.
+  const routed = routeMail({ to, subject, html });
+  to = routed.to;
+  subject = routed.subject;
+  const prepared = withInlineLogo(routed.html);
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {

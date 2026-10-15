@@ -3,13 +3,13 @@
  */
 import { Link, useSearchParams } from "react-router-dom";
 import { useStore } from "../hooks/useStore";
-import { buildSupplierBankInfo, formatPrice, getProduct, inboxStatus, requestRfqCancel, requestRfqReverse, canBuyerRequestCancel, canBuyerReverse, resubmitRfq, rfqDiscussEmailHref, rfqDiscussWhatsappText, openWhatsappChat, rfqProjectName, createBuyerPurchaseOrder, quoteVersionList, quoteEffectiveVersionNo, getEffectiveQuoteVersion, rfqActivityLog, rfqLastActivity, rfqActivityLabel, formatQuoteVersionStamp, hydrateRfqDecisionActivity, updateBuyerRfqDetails, rfqRequestVersionList, rfqRequestEffectiveVersionNo, applyRfqRequestVersion, ensureBuyerSession } from "../lib/store";
+import { buildSupplierBankInfo, formatPrice, getProduct, inboxStatus, requestRfqCancelRemote, requestRfqReverseRemote, canBuyerRequestCancel, canBuyerReverse, resubmitRfq, rfqDiscussEmailHref, rfqDiscussWhatsappText, openWhatsappChat, rfqProjectName, createBuyerPurchaseOrderRemote, quoteVersionList, quoteEffectiveVersionNo, getEffectiveQuoteVersion, rfqActivityLog, rfqLastActivity, rfqActivityLabel, formatQuoteVersionStamp, hydrateRfqDecisionActivity, updateBuyerRfqDetails, rfqRequestVersionList, rfqRequestEffectiveVersionNo, applyRfqRequestVersion, ensureBuyerSession } from "../lib/store";
 import { useEffect, useMemo, useRef, useState } from "react";
 import SiteHeader from "../components/SiteHeader";
 import Seo from "../components/Seo";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
-import { SHOW_RFQ_QUOTES } from "../lib/flags";
+import { SHOW_BUYER_QUOTES } from "../lib/flags";
 import AttachmentLinks, { linePhotoSrc, PreviewThumb } from "../components/AttachmentLinks";
 import { DEMO_QUOTED_RFQ, buildPrototypeQuotes, buildSalesQuote } from "./rfqs-prototype/quoteMocks";
 import QuoteVariant from "./rfqs-prototype/QuoteCompareVariantA";
@@ -17,6 +17,7 @@ import RfqStepBar, { RFQ_PHASE_STEPS } from "./rfqs-prototype/RfqStepBar";
 import QuoteVersionSelect, { RfqRequestVersionSelect } from "../components/QuoteVersionSelect";
 import CustomProductForm from "../components/CustomProductForm";
 import RfqActivityLog from "../components/RfqActivityLog";
+import MyPurchaseOrders from "../components/MyPurchaseOrders";
 
 function isCodPaymentTerm(value) {
   const raw = String(value || "").toLowerCase();
@@ -311,8 +312,8 @@ function rfqDocStatusLabel(status, t) {
   if (status === "reverse_requested") return t("rfqReverseRequested");
   if (status === "revising") return t("rfqRevising");
   if (status === "cancelled") return t("rfqCancelled");
-  if (status === "quoted") return SHOW_RFQ_QUOTES ? t("docFilterQuoted") : t("rfqStatusInReview");
-  if (status === "accepted") return SHOW_RFQ_QUOTES ? t("docFilterAccepted") : t("rfqStatusInReview");
+  if (status === "quoted") return SHOW_BUYER_QUOTES ? t("docFilterQuoted") : t("rfqStatusInReview");
+  if (status === "accepted") return SHOW_BUYER_QUOTES ? t("docFilterAccepted") : t("rfqStatusInReview");
   if (status === "submitted") return t("docFilterSubmitted");
   if (status === "rejected") return t("rfqStatusRejected");
   return status;
@@ -422,19 +423,19 @@ function RfqDocSwitcher({ list, selectedId, onSelect, onViewQuote, acceptedByRfq
   function pick(id) {
     const rfq = list.find((row) => row.id === id);
     onSelect(id);
-    if (SHOW_RFQ_QUOTES && rfq && rfqDocStatus(rfq, acceptedByRfq) === "quoted") onViewQuote?.(id);
+    if (SHOW_BUYER_QUOTES && rfq && rfqDocStatus(rfq, acceptedByRfq) === "quoted") onViewQuote?.(id);
     setQuery("");
     setListOpen(false);
   }
 
   if (!list.length || !selected) return null;
 
-  const quotedRows = SHOW_RFQ_QUOTES ? list.filter((rfq) => rfqDocStatus(rfq, acceptedByRfq) === "quoted") : [];
+  const quotedRows = SHOW_BUYER_QUOTES ? list.filter((rfq) => rfqDocStatus(rfq, acceptedByRfq) === "quoted") : [];
   const filters = [
     { id: "all", label: t("docFilterAll"), count: counts.all },
-    ...(SHOW_RFQ_QUOTES ? [{ id: "quoted", label: t("docFilterQuoted"), count: counts.quoted }] : []),
+    ...(SHOW_BUYER_QUOTES ? [{ id: "quoted", label: t("docFilterQuoted"), count: counts.quoted }] : []),
     { id: "submitted", label: t("docFilterSubmitted"), count: counts.submitted },
-    { id: "accepted", label: SHOW_RFQ_QUOTES ? t("docFilterAccepted") : t("rfqStatusInReview"), count: counts.accepted },
+    { id: "accepted", label: SHOW_BUYER_QUOTES ? t("docFilterAccepted") : t("rfqStatusInReview"), count: counts.accepted },
   ];
   const selectedStatus = rfqDocStatus(selected, acceptedByRfq);
   return (
@@ -650,7 +651,7 @@ export default function RfqsPage() {
   }, [selectedId, list, usingDemo]);
 
   const quotes = useMemo(() => {
-    if (!SHOW_RFQ_QUOTES || !selected) return [];
+    if (!SHOW_BUYER_QUOTES || !selected) return [];
     if (selected.id === DEMO_QUOTED_RFQ.id) return buildPrototypeQuotes(selected);
     const versions = quoteVersionList(selected);
     if (versions.length) {
@@ -703,7 +704,7 @@ export default function RfqsPage() {
   const deliveryUnlocked = false;
   const deliveryDone = Boolean(delivery?.buyerAccepted);
 
-  const progressIdRaw = !SHOW_RFQ_QUOTES
+  const progressIdRaw = !SHOW_BUYER_QUOTES
     ? "submitted"
     : poCreated
     ? "purchaseOrder"
@@ -715,7 +716,7 @@ export default function RfqsPage() {
   const inbox = selected ? inboxStatus(selected) : "";
   const awaitingSales = Boolean(selected?.reviewStatus && ["received", "reviewing"].includes(selected.reviewStatus));
   const rawActive = (selected && stepByRfq[selected.id]) || (awaitingSales ? "submitted" : inbox === "quoted" ? "quotes" : "quotes");
-  const activeStep = !SHOW_RFQ_QUOTES
+  const activeStep = !SHOW_BUYER_QUOTES
     ? "submitted"
     : rawActive === "purchaseOrder" || rawActive === "quotes" || rawActive === "submitted"
       ? rawActive
@@ -729,9 +730,9 @@ export default function RfqsPage() {
         ? t("rfqReverseRequested")
         : inbox === "revising"
           ? t("rfqRevising")
-      : !SHOW_RFQ_QUOTES && inbox === "accepted"
+      : !SHOW_BUYER_QUOTES && inbox === "accepted"
         ? t("rfqStatusInReview")
-        : !SHOW_RFQ_QUOTES && awaitingSales
+        : !SHOW_BUYER_QUOTES && awaitingSales
           ? t("rfqAwaitingSalesSlice")
           : poCreated
         ? t("poCreated")
@@ -842,6 +843,8 @@ export default function RfqsPage() {
           <p className="mt-1 text-sm text-mute">Prototype demo RFQ loaded (no history yet). Compare supplier quotes below.</p>
         ) : null}
       </div>
+
+      <MyPurchaseOrders signedIn={Boolean(user?.email)} />
 
       {!list.length ? (
         <section className="bg-white border border-line rounded-xl px-6 py-16 sm:py-20 text-center">
@@ -999,9 +1002,9 @@ export default function RfqsPage() {
                         <button
                           type="button"
                           className="rounded-lg bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white"
-                          onClick={() => {
-                            const result = requestRfqReverse(selected.id);
+                          onClick={async () => {
                             setConfirmReverse(false);
+                            const result = await requestRfqReverseRemote(selected.id);
                             if (result?.ok && result.rfq?.reviewStatus === "revising") setCancelFlash(t("rfqReverseCopied"));
                             else if (result?.ok) setCancelFlash(t("rfqReverseNotified"));
                           }}
@@ -1021,9 +1024,9 @@ export default function RfqsPage() {
                         <button
                           type="button"
                           className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-semibold text-white"
-                          onClick={() => {
-                            const result = requestRfqCancel(selected.id);
+                          onClick={async () => {
                             setConfirmCancel(false);
+                            const result = await requestRfqCancelRemote(selected.id);
                             if (result?.ok && result.rfq?.reviewStatus === "cancelled") setCancelFlash(t("rfqCancelled"));
                             else if (result?.ok) setCancelFlash(t("rfqCancelNotified"));
                           }}
@@ -1056,7 +1059,7 @@ export default function RfqsPage() {
                 </div>
               ) : null}
               {inboxStatus(selected) === "accepted" ? (
-                <p className="mt-2 text-xs text-mute">{SHOW_RFQ_QUOTES ? t("rfqAcceptedLocked") : t("rfqInReviewHint")}</p>
+                <p className="mt-2 text-xs text-mute">{SHOW_BUYER_QUOTES ? t("rfqAcceptedLocked") : t("rfqInReviewHint")}</p>
               ) : null}
               {cancelFlash ? (
                 <p className="mt-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-900">{cancelFlash}</p>
@@ -1105,7 +1108,7 @@ export default function RfqsPage() {
                 onPatch={(patch) => updateBuyerRfqDetails(selected.id, patch)}
               />
 
-              {SHOW_RFQ_QUOTES ? (
+              {SHOW_BUYER_QUOTES ? (
               <div className="mt-4">
                 <RfqStepBar
                   steps={RFQ_PHASE_STEPS}
@@ -1117,7 +1120,7 @@ export default function RfqsPage() {
               ) : null}
 
               <div className="mt-4">
-                {activeStep === "submitted" || !SHOW_RFQ_QUOTES ? (
+                {activeStep === "submitted" || !SHOW_BUYER_QUOTES ? (
                   <SubmittedStep
                     rfq={displayRfq || selected}
                     t={t}
@@ -1128,7 +1131,7 @@ export default function RfqsPage() {
                   />
                 ) : null}
 
-                {SHOW_RFQ_QUOTES && activeStep === "quotes" ? (
+                {SHOW_BUYER_QUOTES && activeStep === "quotes" ? (
                   <>
                     {selectedVersions.length ? (
                       <div className="mb-4 flex flex-wrap items-end justify-between gap-3 rounded-xl border border-line bg-paper/50 px-3 py-2.5">
@@ -1205,7 +1208,7 @@ export default function RfqsPage() {
                   </>
                 ) : null}
 
-                {SHOW_RFQ_QUOTES && activeStep === "purchaseOrder" ? (
+                {SHOW_BUYER_QUOTES && activeStep === "purchaseOrder" ? (
                   <PurchaseOrderStep
                     rfq={selected}
                     acceptance={acceptance}
@@ -1384,6 +1387,7 @@ function DocStatus({ steps }) {
 }
 
 function PurchaseOrderStep({ rfq, acceptance, po, t, onCreated, onBack }) {
+  const [creating, setCreating] = useState(false);
   const created = Boolean(po?.id || po?.status === "created" || po?.confirmedAt);
   const lines = created && po?.lines?.length ? po.lines : acceptance?.lines || [];
   const total = created ? po?.total : acceptance?.total;
@@ -1401,7 +1405,8 @@ function PurchaseOrderStep({ rfq, acceptance, po, t, onCreated, onBack }) {
     );
   }
 
-  function createPo() {
+  async function createPo() {
+    if (creating) return;
     const poLines = (acceptance?.lines || []).map((line) => ({
       productId: line.productId,
       name: line.offer?.name || line.requestName,
@@ -1421,12 +1426,17 @@ function PurchaseOrderStep({ rfq, acceptance, po, t, onCreated, onBack }) {
       });
       return;
     }
-    const result = createBuyerPurchaseOrder(rfq.id, {
-      lines: poLines,
-      total: acceptance?.total || 0,
-      label: acceptance?.label || "",
-    });
-    if (result?.ok) onCreated?.(result.rfq.buyerPo);
+    setCreating(true);
+    try {
+      const result = await createBuyerPurchaseOrderRemote(rfq.id, {
+        lines: poLines,
+        total: acceptance?.total || 0,
+        label: acceptance?.label || "",
+      });
+      if (result?.ok) onCreated?.(result.rfq.buyerPo);
+    } finally {
+      setCreating(false);
+    }
   }
 
   return (
@@ -1487,7 +1497,7 @@ function PurchaseOrderStep({ rfq, acceptance, po, t, onCreated, onBack }) {
           {t("goToQuotes")}
         </button>
         {!created ? (
-          <button type="button" className="btn-primary !px-5 !py-2.5" onClick={createPo}>
+          <button type="button" className="btn-primary !px-5 !py-2.5" disabled={creating} onClick={createPo}>
             {t("confirmCreatePo")}
           </button>
         ) : null}

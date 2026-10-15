@@ -25,7 +25,7 @@ Same thing, so this code follows their field or rule:
 - Lead time text: their `lead_time`, our `leadTimeLabel` / `leadTime`.
 - Picture: their `files[0]` (`thumbnail_file_path`, then `sign_url`, then `file_path`), otherwise our `image`.
 - SKU: their display rule (keep or add an `MKT-` prefix). Our `productNo` already carries that prefix.
-- One browser fetch helper: `src/lib/remote.js`. Relative path only. `FormData` is sent as the body, not JSON. The session is the `mm_buyer` / `mm_staff` cookie (`credentials: "same-origin"`).
+- One browser fetch helper: `src/lib/remote.js`. Relative path only. `FormData` is sent as the body, not JSON. The session is the `marketplace_buyer` / `admin_portal_staff` cookie (`credentials: "same-origin"`). The server still reads the old `mm_buyer` / `mm_staff` names for 14 days after the rename, writes the new names, and clears the old ones, so signed-in users stay signed in.
 
 Not the same thing, so it stays unwired:
 

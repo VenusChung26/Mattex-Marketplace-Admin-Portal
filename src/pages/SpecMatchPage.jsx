@@ -31,8 +31,9 @@ import {
   takePendingSpecFile,
 } from "../lib/specMatchSession";
 
-const ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.webp,image/png,image/jpeg,image/webp,image/gif";
+const ACCEPT = ".pdf,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.doc,.docx,.xls,.xlsx,image/*,application/pdf";
 const FILE_CAP = 8;
+
 const SAMPLE_FILE_NAME = SAMPLE_SPEC_NAME;
 const SAMPLE_LINES = [
   { buyerName: "Gypsum block", buyerSpec: "500 x 250 x 150 mm", qty: 20 },
@@ -71,6 +72,40 @@ function readFile(file) {
   });
 }
 
+function shrinkSpecImage(file) {
+  const name = String(file?.name || "");
+  const type = String(file?.type || "");
+  if (!(type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(name))) return Promise.resolve("");
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const longest = Math.max(img.width, img.height, 1);
+      const scale = Math.min(1, 1600 / longest);
+      if (scale === 1 && file.size < 900_000) {
+        resolve("");
+        return;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve("");
+        return;
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.86));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve("");
+    };
+    img.src = url;
+  });
+}
+
 function shownMatch(row) {
   const matches = Array.isArray(row?.matches) ? row.matches : [];
   if (!matches.length) return null;
@@ -95,6 +130,7 @@ function normalizeChoice(choice, match) {
   if (value === "catalog" && !match) return "";
   if (value === "tailor" && !match?.tailorMade) return "";
   if (value === "no") return "file";
+  if (value === "skip") return "skip";
   if (value === "catalog" || value === "tailor" || value === "file") return value;
   return "";
 }
@@ -129,8 +165,20 @@ function withLiveCatalog(rows) {
     const matches = matchSpecToCatalog(row.buyerName, row.buyerSpec);
     const shownId = matches.some((match) => match.productId === row.shownId) ? row.shownId : matches[0]?.productId || "";
     const match = matches.find((item) => item.productId === shownId) || null;
-    const choice = normalizeChoice(row.choice, match);
-    const next = { ...row, matches, shownId, choice };
+    let choice = normalizeChoice(row.choice, match);
+    let qty = row.qty;
+    let auto = row.auto === true;
+    if (!choice && match?.confident) {
+      choice = "catalog";
+      auto = true;
+      const moq = match.moq || 1;
+      if (qty == null || qty === "" || Number(qty) < moq) qty = Math.max(Number(qty) || 0, moq);
+    } else if (row.auto == null && (choice === "catalog" || choice === "mm") && match?.confident && !row.switched) {
+      auto = true;
+    } else if (choice !== "catalog" && choice !== "mm") {
+      auto = false;
+    }
+    const next = { ...row, matches, shownId, choice, qty, auto };
     if (row.choice === "no" && choice === "file" && !String(row.editName || "").trim()) {
       return {
         ...next,
@@ -252,6 +300,9 @@ export default function SpecMatchPage() {
   const specFilesRef = useRef(new Map());
   const previewBlobRef = useRef("");
   const pickModeRef = useRef("start");
+  const extractEpochRef = useRef(0);
+  const dropModeRef = useRef("");
+  const pendingRef = useRef(null);
   const [status, setStatus] = useState(null);
   const [fileName, setFileName] = useState("");
   const [specUrl, setSpecUrl] = useState("");
@@ -259,6 +310,8 @@ export default function SpecMatchPage() {
   const [rows, setRows] = useState([]);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState(null);
+  const [dropMode, setDropMode] = useState("");
   const [error, setError] = useState("");
   const [failedNames, setFailedNames] = useState([]);
   const [dragOver, setDragOver] = useState(false);
@@ -266,7 +319,7 @@ export default function SpecMatchPage() {
   const [preview, setPreview] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [headTop, setHeadTop] = useState(65);
-  const [openKeys, setOpenKeys] = useState(null);
+  const [openKeys, setOpenKeys] = useState(() => new Set());
   const [jumpKey, setJumpKey] = useState("");
   const [scrolled, setScrolled] = useState(false);
   const [fileEpoch, setFileEpoch] = useState(0);
@@ -358,7 +411,7 @@ export default function SpecMatchPage() {
       const same = next.every((row, index) => {
         const before = (prev[index]?.matches || []).map((match) => `${match.productId}:${match.moq}:${match.hits}:${match.spec || ""}:${match.confident ? 1 : 0}`).join(",");
         const after = (row.matches || []).map((match) => `${match.productId}:${match.moq}:${match.hits}:${match.spec || ""}:${match.confident ? 1 : 0}`).join(",");
-        return before === after && row.shownId === prev[index]?.shownId && row.choice === prev[index]?.choice;
+        return before === after && row.shownId === prev[index]?.shownId && row.choice === prev[index]?.choice && row.auto === prev[index]?.auto;
       });
       return same ? prev : next;
     });
@@ -397,6 +450,10 @@ export default function SpecMatchPage() {
     if (!preview && !dialog) return undefined;
     function onKey(event) {
       if (event.key !== "Escape") return;
+      if (job || dialog?.type === "files") {
+        cancelExtract();
+        return;
+      }
       if (dialog?.type === "custom") cancelCustom();
       else {
         closePreview();
@@ -405,50 +462,100 @@ export default function SpecMatchPage() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [preview, dialog]);
+  }, [preview, dialog, job]);
 
   const closed = status != null && status.open === false;
   const limited = status?.member !== true && Number(status?.remaining) === 0;
   const decidedRows = rows.filter((row) => ["catalog", "mm", "tailor", "file"].includes(row.choice));
   const decided = decidedRows.length > 0;
+  const autoCount = rows.filter((row) => row.auto && usingCatalog(row)).length;
 
-  async function matchOne(file) {
-    const dataUrl = await readFile(file);
-    const base64 = dataUrl.split(",")[1] || "";
-    const res = await postSpecMatch({ name: file.name, mime: file.type, dataUrl, base64 });
+  async function matchOne(file, onPhase) {
+    const payload = { name: file.name, mime: file.type || "" };
+    const shrunk = await shrinkSpecImage(file);
+    if (shrunk) {
+      payload.base64 = shrunk.split(",")[1] || "";
+      payload.mime = "image/jpeg";
+    } else if (file.size > 3_200_000) {
+      onPhase?.("upload");
+      payload.url = await uploadSpecFile(file);
+    } else {
+      onPhase?.("read");
+      const dataUrl = await readFile(file);
+      payload.base64 = dataUrl.split(",")[1] || "";
+    }
+    onPhase?.("extract");
+    const res = await postSpecMatch(payload);
     const data = res.data || {};
     if (data?.remaining != null) setStatus((prev) => ({ ...prev, remaining: data.remaining }));
     if (!data?.ok) return { ok: false, error: data?.error || "file" };
     if (data.unreadable || !Array.isArray(data.rows) || !data.rows.length) return { ok: true, unreadable: true };
-    let url = "";
-    try {
-      url = await uploadSpecFile(file);
-    } catch {
-      url = "";
+    return { ok: true, rows: data.rows };
+  }
+
+  function cancelExtract() {
+    extractEpochRef.current += 1;
+    dropModeRef.current = "";
+    pendingRef.current = null;
+    setDropMode("");
+    setJob(null);
+    setBusy(false);
+    setDialog((current) => (current?.type === "files" ? null : current));
+  }
+
+  function storeHeldFiles(held) {
+    held.files.forEach((file, id) => {
+      specFilesRef.current.set(id, file);
+      saveSpecFile(owner, id, file).catch(() => {});
+      uploadSpecFile(file).then((url) => {
+        if (!url) return;
+        setSources((prev) => prev.map((item) => (item.id === id ? { ...item, url } : item)));
+      }).catch(() => {});
+    });
+  }
+
+  function applyHeld(mode, held) {
+    if (mode === "replace" || mode === "start") {
+      specFilesRef.current = new Map();
+      clearSpecFiles(owner).catch(() => {});
+      storeHeldFiles(held);
+      setSources(held.sources);
+      setRows(withLiveCatalog(held.rows));
+      setOpenKeys(new Set());
+    } else {
+      storeHeldFiles(held);
+      setSources((prev) => [...prev, ...held.sources]);
+      setRows((prev) => withLiveCatalog([...prev, ...held.rows]));
     }
-    return { ok: true, rows: data.rows, url };
+    setFileName(mode === "replace" || mode === "start" ? held.sources[0]?.name || "" : (current) => current || held.sources[0]?.name || "");
+    setSpecUrl("");
+    setFailedNames(held.failed);
+    if (held.skipped) setError(t("specMatchFileCap"));
+    setReady(true);
+    dropModeRef.current = "";
+    pendingRef.current = null;
+    setDropMode("");
+    setJob(null);
+    setBusy(false);
+    setDialog(null);
   }
 
   async function runFiles(fileList, mode) {
     const incoming = Array.from(fileList || []).filter(Boolean);
     if (!incoming.length || closed || limited) return;
-    const replacing = mode === "replace" || mode === "start" || !rows.length;
-    const keptSources = replacing ? [] : sources.slice();
-    const keptRows = replacing ? [] : rows.slice();
-    const room = FILE_CAP - keptSources.length;
+    const epoch = extractEpochRef.current + 1;
+    extractEpochRef.current = epoch;
+    const alive = () => extractEpochRef.current === epoch;
+    const replacing = mode === "replace" || mode === "start";
+    const keptSources = mode === "hold" || replacing ? [] : sources.slice();
+    const keptRows = mode === "hold" || replacing ? [] : rows.slice();
+    const room = FILE_CAP - (mode === "hold" ? sources.length : keptSources.length);
     const batch = incoming.slice(0, Math.max(0, room));
     const skipped = incoming.length - batch.length;
     if (!batch.length) {
       setError(t("specMatchFileCap"));
+      setDialog((current) => (current?.type === "files" ? null : current));
       return;
-    }
-    if (replacing) {
-      specFilesRef.current = new Map();
-      try {
-        await clearSpecFiles(owner);
-      } catch {
-        /* the new files still preview in this tab */
-      }
     }
     setBusy(true);
     setError("");
@@ -456,10 +563,18 @@ export default function SpecMatchPage() {
     const failed = [];
     const nextSources = keptSources.slice();
     const nextRows = keptRows.slice();
+    const heldFiles = new Map();
     try {
-      for (const file of batch) {
+      for (let index = 0; index < batch.length; index += 1) {
+        if (!alive()) return;
+        const file = batch[index];
+        const report = (phase) => {
+          if (alive()) setJob({ index, total: batch.length, name: file.name, phase, large: file.size > 3_200_000 });
+        };
+        report(file.size > 3_200_000 ? "upload" : "read");
         try {
-          const result = await matchOne(file);
+          const result = await matchOne(file, report);
+          if (!alive()) return;
           if (!result.ok) {
             setError(result.error === "limit" ? t("specMatchLimit") : result.error === "closed" ? t("specMatchClosed") : t("specMatchUnreadable"));
             break;
@@ -468,28 +583,41 @@ export default function SpecMatchPage() {
             failed.push(file.name);
             continue;
           }
-          const source = { id: `src-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: file.name, kind: sourceKind(file), url: result.url || "" };
-          specFilesRef.current.set(source.id, file);
-          try {
-            await saveSpecFile(owner, source.id, file);
-          } catch {
-            /* this tab can still preview the file */
-          }
+          const source = { id: `src-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: file.name, kind: sourceKind(file), url: "" };
+          heldFiles.set(source.id, file);
           nextSources.push(source);
           nextRows.push(...toRows(result.rows, source));
         } catch {
           failed.push(file.name);
         }
       }
-      setSources(nextSources);
-      setRows(withLiveCatalog(nextRows));
-      setFileName(nextSources[0]?.name || "");
-      setSpecUrl(nextSources[0]?.url || "");
-      setFailedNames(failed);
-      if (skipped) setError(t("specMatchFileCap"));
-      setReady(true);
+      if (!alive()) return;
+      const addedSources = nextSources.slice(keptSources.length);
+      const addedRows = nextRows.slice(keptRows.length);
+      const held = {
+        sources: mode === "append" || mode === "hold" ? addedSources : nextSources,
+        rows: mode === "append" || mode === "hold" ? addedRows : nextRows,
+        failed,
+        skipped,
+        files: heldFiles,
+      };
+      if (!addedRows.length) {
+        setFailedNames(failed);
+        if (skipped) setError(t("specMatchFileCap"));
+        setDialog((current) => (current?.type === "files" ? null : current));
+        return;
+      }
+      if (mode === "hold" && !dropModeRef.current) {
+        pendingRef.current = held;
+        setJob({ index: Math.max(0, batch.length - 1), total: batch.length, name: batch[batch.length - 1]?.name || "", phase: "ready", readyCount: addedRows.length });
+        return;
+      }
+      applyHeld(mode === "hold" ? dropModeRef.current : mode, held);
     } finally {
-      setBusy(false);
+      if (alive() && !(mode === "hold" && pendingRef.current)) {
+        setJob(null);
+        setBusy(false);
+      }
     }
   }
 
@@ -510,10 +638,22 @@ export default function SpecMatchPage() {
     if (!files.length || closed || limited || busy) return;
     if (rows.length && fileName !== SAMPLE_FILE_NAME) {
       setPreview(null);
+      dropModeRef.current = "";
+      pendingRef.current = null;
+      setDropMode("");
       setDialog({ type: "files", files });
+      runFiles(files, "hold");
       return;
     }
     runFiles(files, "start");
+  }
+
+  function chooseDropped(mode) {
+    dropModeRef.current = mode;
+    setDropMode(mode);
+    const held = pendingRef.current;
+    if (!held) return;
+    applyHeld(mode, held);
   }
 
   function trySample() {
@@ -554,9 +694,9 @@ export default function SpecMatchPage() {
         const match = shownMatch(row);
         if (choice === "catalog") {
           if (!match) return row;
-          return { ...row, choice, qty: Math.max(row.qty, match.moq || 1) };
+          return { ...row, choice, auto: false, qty: Math.max(row.qty, match.moq || 1) };
         }
-        return { ...row, choice: "" };
+        return { ...row, choice: "skip", auto: false };
       })
     );
   }
@@ -652,7 +792,7 @@ export default function SpecMatchPage() {
         if (i !== index) return row;
         const match = shownMatch(row);
         if (!match) return { ...row, choice: "" };
-        return { ...row, choice: "catalog", qty: Math.max(Number(row.qty) || 0, match.moq || 1) };
+        return { ...row, choice: "catalog", auto: false, qty: Math.max(Number(row.qty) || 0, match.moq || 1) };
       })
     );
   }
@@ -682,6 +822,7 @@ export default function SpecMatchPage() {
           ...row,
           shownId: productId,
           switched: true,
+          auto: false,
           choice: "catalog",
           qty: Math.max(Number(row.qty) || 0, match.moq || 1),
         };
@@ -871,129 +1012,137 @@ export default function SpecMatchPage() {
             }}
           />
         </div>
-        {busy ? <p className="mt-4 text-sm text-ink">{t("specMatchWorking")}</p> : null}
         {error ? <p className="mt-4 text-sm text-[#8a2b2b]">{error}</p> : null}
         {failedNames.length ? <p className="mt-4 text-sm font-semibold text-ink">{t("specMatchFailed", { name: failedNames.join("、") })}</p> : null}
         {rows.length ? (
           <div className="mt-8">
-              <div className="mb-3 flex justify-end gap-2">
+            <div className={`mb-3 flex flex-col gap-3 sm:flex-row sm:items-center ${autoCount ? "sm:justify-between" : "sm:justify-end"}`}>
+              {autoCount ? <p className="min-w-0 text-sm leading-6 text-ink">{t("specMatchAutoReview", { n: autoCount })}</p> : null}
+              <div className="flex shrink-0 justify-end gap-2">
                 <button type="button" className={decisionButton(openKeys != null && openKeys.size === 0)} onClick={collapseAll}>
+                  <ChevronIcon up />
                   {t("specMatchCollapseAll")}
                 </button>
                 <button type="button" className={decisionButton(openKeys == null)} onClick={expandAll}>
+                  <ChevronIcon />
                   {t("specMatchExpandAll")}
                 </button>
               </div>
-              <div className="border border-line bg-white">
-                <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left text-sm">
-                  <thead>
-                    <tr className="text-xs font-semibold text-mute">
-                      <th className="spec-match-head sticky z-20 w-12 border-b border-line bg-white px-3 py-2 font-semibold" style={{ top: headTop }}>#</th>
-                      <th className="spec-match-head sticky z-20 border-b border-line bg-white px-3 py-2 font-semibold" style={{ top: headTop }}>{t("specMatchColItem")}</th>
-                      <th className="spec-match-head sticky z-20 border-b border-line bg-white px-3 py-2 font-semibold" style={{ top: headTop }}>{t("specMatchColProduct")}</th>
-                      <th className="spec-match-head sticky z-20 w-20 border-b border-line bg-white px-3 py-2 font-semibold" style={{ top: headTop }}>{t("specMatchQty")}</th>
-                      <th className="spec-match-head sticky z-20 w-52 border-b border-line bg-white px-3 py-2 font-semibold" style={{ top: headTop }}>{t("specMatchColPrice")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, index) => {
-                      const open = rowDetailsOpen(row.key);
-                      const rule = index < rows.length - 1 ? "border-b border-line" : "";
-                      const source = sourceForRow(row);
-                      const sourceFile = source && fileEpoch >= 0 ? specFilesRef.current.get(source.id) || null : null;
-                      const canPreview = Boolean(sourceFile || source?.url);
-                      return (
-                        <Fragment key={row.key}>
-                          <tr
-                            id={`spec-row-${row.key}`}
-                            className="cursor-pointer bg-white"
-                            onClick={() => toggleRow(row.key)}
-                          >
-                            <td className={`${open ? "" : rule} px-3 py-3 align-top font-semibold tabular-nums text-brand-700`}>#{index + 1}</td>
-                            <td className={`${open ? "" : rule} max-w-[16rem] px-3 py-3 align-top`}>
-                              <span className="block truncate font-semibold text-ink">{row.buyerName}</span>
-                              {row.buyerSpec ? <span className="mt-0.5 block truncate text-xs leading-5 text-mute">{row.buyerSpec}</span> : null}
-                              {row.sourceName ? (
-                                canPreview ? (
-                                  <button
-                                    type="button"
-                                    className="mt-0.5 block max-w-full truncate text-left text-xs font-semibold leading-5 text-brand-700 underline"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      openSpecPreview({ name: source.name, url: source.url, file: sourceFile });
-                                    }}
-                                  >
-                                    {sourceLabel(row.sourceName, row.sourceKind, t)}
-                                  </button>
-                                ) : (
-                                  <span className="mt-0.5 block truncate text-xs leading-5 text-mute">{sourceLabel(row.sourceName, row.sourceKind, t)}</span>
-                                )
-                              ) : null}
-                            </td>
-                            <td className={`${open ? "" : rule} max-w-[16rem] px-3 py-3 align-top text-ink`}>
-                              <span className="inline-flex max-w-full flex-wrap items-center gap-1.5">
-                                <span className="truncate">{listSubject(row, t)}</span>
-                                <StatusTag row={row} t={t} />
-                                {usingCatalog(row) ? (
-                                  <button
-                                    type="button"
-                                    className="text-xs font-semibold text-brand-700"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      setChoice(index, "");
-                                    }}
-                                  >
-                                    {t("specMatchClearChoice")}
-                                  </button>
-                                ) : null}
-                              </span>
-                              {listSpec(row) ? <span className="mt-0.5 block truncate text-xs leading-5 text-mute">{listSpec(row)}</span> : null}
-                            </td>
-                            <td className={`${open ? "" : rule} px-3 py-3 align-top tabular-nums text-ink`}>{row.qty || "—"}</td>
-                            <td className={`${open ? "" : rule} px-3 py-3 align-top text-ink`}>
-                              <div className="flex items-start justify-between gap-2">
-                                <span>{listPrice(row, promo, lang)}</span>
+            </div>
+            <div className="min-w-0 border border-line bg-white">
+              <table className="spec-table w-full border-separate border-spacing-0 text-left text-sm">
+                <thead>
+                  <tr className="text-xs font-semibold text-mute">
+                    <th className="spec-match-head sticky z-20 w-12 border-b border-line bg-white px-3 py-2 font-semibold" style={{ top: headTop }}>#</th>
+                    <th className="spec-match-head sticky z-20 w-[24%] border-b border-line bg-white px-3 py-2 font-semibold" style={{ top: headTop }}>{t("specMatchColItem")}</th>
+                    <th className="spec-match-head sticky z-20 border-b border-line bg-white px-3 py-2 font-semibold" style={{ top: headTop }}>{t("specMatchColProduct")}</th>
+                    <th className="spec-match-head sticky z-20 w-20 border-b border-line bg-white px-3 py-2 font-semibold" style={{ top: headTop }}>{t("specMatchQty")}</th>
+                    <th className="spec-match-head sticky z-20 w-52 border-b border-line bg-white px-3 py-2 font-semibold" style={{ top: headTop }}>{t("specMatchColPrice")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, index) => {
+                    const open = rowDetailsOpen(row.key);
+                    const rule = index < rows.length - 1 ? "border-b border-line" : "";
+                    const source = sourceForRow(row);
+                    const sourceFile = source && fileEpoch >= 0 ? specFilesRef.current.get(source.id) || null : null;
+                    const canPreview = Boolean(sourceFile || source?.url);
+                    return (
+                      <Fragment key={row.key}>
+                        <tr
+                          id={`spec-row-${row.key}`}
+                          className="cursor-pointer bg-white"
+                          onClick={() => toggleRow(row.key)}
+                        >
+                          <td className={`${open ? "" : rule} px-3 py-3 align-top font-semibold tabular-nums text-brand-700`}>#{index + 1}</td>
+                          <td className={`${open ? "" : rule} max-w-[16rem] px-3 py-3 align-top`}>
+                            <span className="block truncate font-semibold text-ink">{row.buyerName}</span>
+                            {row.buyerSpec ? <span className="mt-0.5 block truncate text-xs leading-5 text-mute">{row.buyerSpec}</span> : null}
+                            {row.sourceName ? (
+                              canPreview ? (
                                 <button
                                   type="button"
-                                  className="shrink-0 rounded-none border border-[#E7C1C1] bg-[#F8E8E8] px-2 py-1 text-xs font-semibold text-[#8a2b2b]"
+                                  className="mt-0.5 block max-w-full truncate text-left text-xs font-semibold leading-5 text-brand-700 underline"
                                   onClick={(event) => {
                                     event.stopPropagation();
-                                    requestDeleteRow(index);
+                                    openSpecPreview({ name: source.name, url: source.url, file: sourceFile });
                                   }}
                                 >
-                                  {t("specMatchDeleteCustom")}
+                                  {sourceLabel(row.sourceName, row.sourceKind, t)}
                                 </button>
-                              </div>
-                            </td>
-                          </tr>
-                          {open ? (
-                          <tr className="bg-white">
-                            <td className={rule} />
-                            <td className={rule} />
-                            <td colSpan={3} className={`${rule} px-3 pb-3 align-top`}>
-                              <SpecRowEditor
-                                row={row}
-                                index={index}
-                                t={t}
-                                promo={promo}
-                                lang={lang}
-                                setChoice={setChoice}
-                                openDetail={openDetail}
-                                changeQty={changeQty}
-                                chooseSuggestion={chooseSuggestion}
-                                openCustom={openCustom}
-                                returnToCatalog={returnToCatalog}
-                                deleteCustom={requestDeleteRow}
-                              />
-                            </td>
-                          </tr>
-                          ) : null}
-                        </Fragment>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                              ) : (
+                                <span className="mt-0.5 block truncate text-xs leading-5 text-mute">{sourceLabel(row.sourceName, row.sourceKind, t)}</span>
+                              )
+                            ) : null}
+                          </td>
+                          <td className={`${open ? "" : rule} max-w-[16rem] px-3 py-3 align-top text-ink`}>
+                            <span className="inline-flex max-w-full flex-wrap items-center gap-1.5">
+                              <span className="truncate">{listSubject(row, t)}</span>
+                              <StatusTag row={row} t={t} />
+                              {usingCatalog(row) ? (
+                                <button
+                                  type="button"
+                                  className="text-xs font-semibold text-brand-700"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setChoice(index, "");
+                                  }}
+                                >
+                                  {t("specMatchClearChoice")}
+                                </button>
+                              ) : null}
+                            </span>
+                            {listSpec(row) ? <span className="mt-0.5 block truncate text-xs leading-5 text-mute">{listSpec(row)}</span> : null}
+                          </td>
+                          <td className={`${open ? "" : rule} px-3 py-3 align-top tabular-nums text-ink`}>
+                            {row.qty ? row.qty : shownMatch(row)?.moq ? (
+                              <span className="text-mute" title={t("specMatchQtyLater")}>{t("specMatchQtyMin", { n: shownMatch(row).moq })}</span>
+                            ) : "—"}
+                          </td>
+                          <td className={`${open ? "" : rule} px-3 py-3 align-top text-ink`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <span>{listPrice(row, promo, lang)}</span>
+                              <button
+                                type="button"
+                                className="shrink-0 rounded-none border border-[#E7C1C1] bg-[#F8E8E8] px-2 py-1 text-xs font-semibold text-[#8a2b2b]"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  requestDeleteRow(index);
+                                }}
+                              >
+                                {t("specMatchDeleteCustom")}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {open ? (
+                        <tr className="bg-white">
+                          <td className={rule} />
+                          <td className={rule} />
+                          <td colSpan={3} className={`${rule} px-3 pb-3 align-top`}>
+                            <SpecRowEditor
+                              row={row}
+                              index={index}
+                              t={t}
+                              promo={promo}
+                              lang={lang}
+                              setChoice={setChoice}
+                              openDetail={openDetail}
+                              changeQty={changeQty}
+                              chooseSuggestion={chooseSuggestion}
+                              openCustom={openCustom}
+                              returnToCatalog={returnToCatalog}
+                              deleteCustom={requestDeleteRow}
+                            />
+                          </td>
+                        </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : null}
       </main>
@@ -1038,6 +1187,26 @@ export default function SpecMatchPage() {
           </div>
         </div>
       </div>
+      {job || dialog?.type === "files" ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" role="presentation">
+          <button type="button" className="absolute inset-0 bg-charcoal/50" aria-label={t("specMatchClose")} onClick={cancelExtract} />
+          <div className="relative w-full max-w-md rounded-2xl bg-white px-8 py-8 text-center shadow-xl sm:px-10" role="dialog" aria-modal="true" aria-labelledby="spec-extract-title">
+            {job?.phase === "ready" ? (
+              <h2 id="spec-extract-title" className="font-display text-xl font-semibold leading-snug text-brand-800">{t("specMatchExtractReady", { n: job.readyCount || 0 })}</h2>
+            ) : job ? (
+              <SpecWait job={job} t={t} />
+            ) : (
+              <h2 id="spec-extract-title" className="font-display text-xl font-semibold leading-snug text-brand-800">{t("specMatchDropAsk")}</h2>
+            )}
+            {dialog?.type === "files" ? (
+              <div className="mt-6 flex flex-wrap justify-center gap-2">
+                <button type="button" className="btn-primary !px-4 !py-2" onClick={() => chooseDropped("append")}>{t("specMatchAddFile")}</button>
+                <button type="button" className={decisionButton(dropMode === "replace")} onClick={() => chooseDropped("replace")}>{t("specMatchChangeFile")}</button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {dialog?.type === "delete-row" ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" role="presentation">
           <button type="button" className="absolute inset-0 bg-charcoal/50" aria-label={t("specMatchClose")} onClick={() => setDialog(null)} />
@@ -1047,18 +1216,6 @@ export default function SpecMatchPage() {
             <div className="mt-4 flex flex-wrap gap-2">
               <button type="button" className="rounded-none border border-[#E7C1C1] bg-[#F8E8E8] px-4 py-2 text-sm font-semibold text-[#8a2b2b]" onClick={() => confirmDeleteRow(dialog.key)}>{t("specMatchDeleteCustom")}</button>
               <button type="button" className="btn-soft !px-4 !py-2" onClick={() => setDialog(null)}>{t("cancel")}</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {dialog?.type === "files" ? (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" role="presentation">
-          <button type="button" className="absolute inset-0 bg-charcoal/50" aria-label={t("specMatchClose")} onClick={() => setDialog(null)} />
-          <div className="relative w-full max-w-md bg-white p-5 shadow-xl" role="dialog" aria-modal="true">
-            <p className="text-sm leading-6 text-ink">{t("specMatchDropAsk")}</p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" className="btn-primary !px-4 !py-2" onClick={() => { const files = dialog.files; setDialog(null); runFiles(files, "append"); }}>{t("specMatchAddFile")}</button>
-              <button type="button" className="btn-soft !px-4 !py-2" onClick={() => { const files = dialog.files; setDialog(null); runFiles(files, "replace"); }}>{t("specMatchChangeFile")}</button>
             </div>
           </div>
         </div>
@@ -1137,8 +1294,78 @@ export default function SpecMatchPage() {
   );
 }
 
+const SLOW_AFTER = 12;
+
+function waitSteps(job) {
+  const first = job.large ? "upload" : "read";
+  const order = [first, "extract"];
+  const current = order.includes(job.phase) ? job.phase : "extract";
+  const at = order.indexOf(current);
+  const label = { read: "specMatchStepRead", upload: "specMatchStepUpload", extract: "specMatchStepExtract" };
+  return order.map((id, index) => ({
+    id,
+    label: label[id],
+    state: index < at ? "is-done" : index === at ? "is-now" : "is-wait",
+  }));
+}
+
+function SpecWait({ job, t }) {
+  const total = Math.max(1, job.total || 1);
+  const steps = waitSteps(job);
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    setSeconds(0);
+    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [job.index, job.name]);
+  return (
+    <div role="status" aria-live="polite" className="text-left">
+      <div className="flex items-center justify-between gap-4 border-b border-[#eceeed] pb-4">
+        <h2 id="spec-extract-title" className="text-lg font-semibold text-ink">{t("specMatchExtractTitle")}</h2>
+        <span className="spec-elapsed">{t("specMatchElapsed", { n: seconds })}</span>
+      </div>
+      {total > 1 ? <p className="mt-1 text-sm tabular-nums text-[#8d948f]">{t("specMatchPhaseCount", { n: job.index + 1, total })}</p> : null}
+      <ol className="spec-steps mt-6">
+        {steps.map((step) => (
+          <li key={step.id} className={`spec-step ${step.state}`}>
+            <span className="spec-step-dot" aria-hidden="true">
+              {step.state === "is-done" ? (
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3.5 8.5l3 3 6-7" />
+                </svg>
+              ) : null}
+            </span>
+            <span className="min-w-0">
+              <span className="spec-step-label">{t(step.label)}</span>
+              {step.state === "is-now" ? (
+                <span className="spec-step-file" title={job.name}>
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M4 1.75h5l3 3v9.5H4z" />
+                    <path d="M9 1.75v3h3" />
+                  </svg>
+                  <span className="truncate">{job.name}</span>
+                </span>
+              ) : null}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {seconds >= SLOW_AFTER ? <p className="mt-6 rounded-lg bg-[#f6f7f6] px-3 py-2 text-sm leading-5 text-[#5c6760]">{t("specMatchSlow")}</p> : null}
+    </div>
+  );
+}
+
 function decisionButton(on) {
-  return `border px-3 py-1.5 text-sm font-semibold ${on ? "border-brand-600 bg-white text-brand-800" : "border-line bg-white text-ink"}`;
+  return `inline-flex items-center gap-1 border px-3 py-1.5 text-sm font-semibold ${on ? "border-brand-600 bg-white text-brand-800" : "border-line bg-white text-ink"}`;
+}
+
+function ChevronIcon({ up = false }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+      <path d={up ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 function CustomThumb({ row, t }) {

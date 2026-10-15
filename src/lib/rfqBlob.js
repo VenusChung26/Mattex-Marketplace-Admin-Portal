@@ -1,7 +1,7 @@
 import { upload } from "@vercel/blob/client";
 import { absUrl, publicOrigin } from "./locale.js";
 
-import { BLOB_UPLOAD_PATH } from "./remote.js";
+import { BLOB_UPLOAD_PATH, getUploadTicket } from "./remote.js";
 
 const HANDLE_URL = BLOB_UPLOAD_PATH;
 export const WA_TEXT_MAX = 1400;
@@ -36,13 +36,14 @@ async function uploadRfqFile(pathname, file) {
     access: "public",
     handleUploadUrl: HANDLE_URL,
     multipart: true,
+    clientPayload: pathname.startsWith("rfq/") ? await getUploadTicket() : undefined,
   });
   return blob.url;
 }
 
 export async function uploadSpecFile(file) {
   const name = file?.name || "spec";
-  return uploadRfqFile(`specs/${safeSegment(name)}/${Date.now()}-${safeSegment(name)}`, file);
+  return uploadRfqFile(`rfq/specs/${safeSegment(name)}/${Date.now()}-${safeSegment(name)}`, file);
 }
 
 export async function uploadProductImage(dataUrl, productKey) {

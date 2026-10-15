@@ -32,7 +32,6 @@ import {
   openAuthModal,
   isLoggedIn,
   ensureBuyerSession,
-  isAuthInviteHidden,
   setPendingCartWhatsappSubmit,
   completeCartWhatsappSubmit,
   takeLastCartWhatsappResult,
@@ -480,12 +479,12 @@ export default function RfqPage() {
       acceptSubstitutes,
     });
     if (viaWhatsapp) {
-      if (!isLoggedIn() && !isAuthInviteHidden()) {
+      if (!isLoggedIn()) {
         setPendingCartWhatsappSubmit({ kind, ids });
         openAuthModal("invite");
         return;
       }
-      const result = completeCartWhatsappSubmit({ kind, ids });
+      const result = await completeCartWhatsappSubmit({ kind, ids });
       if (!result.ok) {
         setFormErrorKind(kind);
         setFormErrorField(result.error || "");
@@ -508,7 +507,7 @@ export default function RfqPage() {
       return;
     }
     const quotingSpec = Boolean(specQuoteRef.current);
-    const result = submitRfq(ids, quotingSpec ? { kind, channel: "rfq", draft: specQuoteRef.current } : { kind, channel: "rfq" });
+    const result = await submitRfq(ids, quotingSpec ? { kind, channel: "rfq", draft: specQuoteRef.current } : { kind, channel: "rfq" });
     if (!result.ok) {
       setFormErrorKind(kind);
       setFormErrorField(result.error || "");

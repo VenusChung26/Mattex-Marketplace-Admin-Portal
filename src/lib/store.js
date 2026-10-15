@@ -1,9 +1,11 @@
 import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappUrls, publishCustomLineMedia, uploadRfqPdf } from "./rfqBlob.js";
 import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
 import { fetchQuoteSnapshot, fetchRemoteKv, fetchRemoteRfqs, fetchRfqStamp, fetchSessionState, isSupabaseConfigured, persistCatalogTables, persistKv, persistKvNow, probeRemoteData, shouldUseLocalSharedStore } from "./supabasePersist.js";
-import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedStore, postAuth, postEmail, postSharedStore } from "./remote.js";
+import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedStore, postAuth, postEmail, postSharedStore, registerRfq, createPurchaseOrderRemote, decideRfqOnServer, assignRfqOnServer, submitQuoteOnServer, freezeWhatsappQuoteOnServer, markWhatsappSentOnServer, syncRfqsFromServer, pushBuyerContent, saveQuoteDraft, saveBuyerPhone, createPoFromQuote } from "./remote.js";
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
+import { SHOW_TMS_LINK } from "./flags.js";
 import { activeOfferPrice } from "./offer.js";
+import { activityDedupeKey, applyDecision, applyDeliveredQuoteVersion, buildDeliveredQuoteVersion, freezeQuoteLines, nextQuoteVersionNo, planQuoteSubmit, quoteVersionList, snapshotLineImage, canBuyerRequestCancel, canBuyerReverse, inboxStatus, planAssign, planCancelReverse, planDecision, mergeOwned, draftPricesOf, deliveredLinePrices, salesLine, planPoFromQuote, rfqBuyerKind, pushRfqActivity, rfqNeedsSalesReverse } from "./rfqRules.js";
 import { adoptGuestSpecMatch } from "./specMatchSession.js";
 import { foldHan } from "./han.js";
 import { displaySku, isTailorMade, orderMinimum, productImageUrl, sellingAmount } from "./productFields.js";
@@ -1401,7 +1403,7 @@ function applyCatalogKv(kv, { overlays = true } = {}) {
     writeLocalOnly(ACCOUNTS_KEY, accountsWithoutSecrets(stripDeletedBuyers({ ...readJson(ACCOUNTS_KEY, {}), ...kv[ACCOUNTS_KEY] })));
   }
   if (kv[QUOTE_SNAPSHOTS_KEY]) {
-    writeLocalOnly(QUOTE_SNAPSHOTS_KEY, mergeQuoteSnapshots(kv[QUOTE_SNAPSHOTS_KEY], readJson(QUOTE_SNAPSHOTS_KEY, {})));
+    writeLocalOnly(QUOTE_SNAPSHOTS_KEY, withoutHeldSnapshots(mergeQuoteSnapshots(kv[QUOTE_SNAPSHOTS_KEY], readJson(QUOTE_SNAPSHOTS_KEY, {}))));
   }
 }
 
@@ -1480,8 +1482,8 @@ function applySessionState(session) {
   }
   const remoteRfqs = mergeRfqMaps(session.rfqs || {}, session.kv?.[RFQS_KEY] || {});
   if (Object.keys(remoteRfqs).length) {
-    const merged = mergeRfqMaps(readJson(RFQS_KEY, {}), remoteRfqs);
-    if (JSON.stringify(merged) !== JSON.stringify(readJson(RFQS_KEY, {}))) {
+    const merged = withoutHeldRfqs(mergeRfqMaps(readPersistedRfqs(), remoteRfqs));
+    if (JSON.stringify(merged) !== JSON.stringify(readPersistedRfqs())) {
       writeLocalOnly(RFQS_KEY, merged);
       changed = true;
     }
@@ -1625,6 +1627,12 @@ const ACCOUNTS_KEY = "subbie_accounts";
 const DELETED_BUYERS_KEY = "subbie_deleted_buyers";
 const DRAFTS_KEY = "subbie_drafts_by_user";
 const RFQS_KEY = "subbie_rfqs_by_user";
+/* RFQs the server holds live in this tab's memory only. They are never written to localStorage, the shared store or the KV copy. */
+const serverHeldIds = new Set();
+let memoryRfqMap = {};
+let memoryAlerts = [];
+let alertBaseline = null;
+const alertedKeys = new Set();
 const QUOTE_SNAPSHOTS_KEY = "subbie_guest_quote_snapshots";
 const GUEST_KEY = "__guest__";
 const SEQ_KEY = "subbie_rfq_seq";
@@ -1838,12 +1846,61 @@ function setDraftsMap(map) {
   writeJson(DRAFTS_KEY, map);
 }
 
+function isHeldRfq(id) {
+  return serverHeldIds.has(id);
+}
+
+/** Split an RFQ map into what may be stored in the browser and what lives only in memory (the server holds it). */
+function splitRfqMap(map) {
+  const persisted = {};
+  const memory = {};
+  Object.entries(map && typeof map === "object" ? map : {}).forEach(([key, list]) => {
+    (Array.isArray(list) ? list : []).forEach((rfq) => {
+      const into = isHeldRfq(rfq?.id) ? memory : persisted;
+      (into[key] ||= []).push(rfq);
+    });
+    if (!persisted[key]) persisted[key] = [];
+  });
+  return { persisted, memory };
+}
+
+/** Frozen quote copies of a server-held RFQ live on the server (served at /zh/quote/:token); none are kept in the browser. */
+function withoutHeldSnapshots(map) {
+  const out = {};
+  Object.entries(map && typeof map === "object" ? map : {}).forEach(([token, snap]) => {
+    if (!isHeldRfq(snap?.rfqId)) out[token] = snap;
+  });
+  return out;
+}
+
+/** Drop browser traces (quote copies, mail log lines) left from before an RFQ moved to the server. */
+function purgeHeldLocalTraces() {
+  const snaps = readJson(QUOTE_SNAPSHOTS_KEY, {});
+  const keptSnaps = withoutHeldSnapshots(snaps);
+  if (Object.keys(keptSnaps).length !== Object.keys(snaps || {}).length) writeLocalOnly(QUOTE_SNAPSHOTS_KEY, keptSnaps);
+  const log = readJson("subbie_buyer_mail_log", []);
+  if (Array.isArray(log)) {
+    const kept = log.filter((row) => ![...serverHeldIds].some((id) => String(row?.subject || "").includes(id)));
+    if (kept.length !== log.length) writeLocalOnly("subbie_buyer_mail_log", kept);
+  }
+}
+
+function withoutHeldRfqs(map) {
+  return splitRfqMap(map).persisted;
+}
+
+function readPersistedRfqs() {
+  return withoutHeldRfqs(readJson(RFQS_KEY, {}));
+}
+
 function getRfqsMap() {
-  return readJson(RFQS_KEY, {});
+  return mergeRfqMaps(readPersistedRfqs(), memoryRfqMap);
 }
 
 function setRfqsMap(map) {
-  writeJson(RFQS_KEY, map);
+  const { persisted, memory } = splitRfqMap(map);
+  memoryRfqMap = memory;
+  writeJson(RFQS_KEY, persisted);
 }
 
 function currentEmail() {
@@ -2212,7 +2269,9 @@ function specQueryTokens(name, spec) {
   if (/角[钢鋼]|\bangle\b/i.test(text)) extra.push("angle");
   if (/sheet\s*pile|板[樁桩]|lsp\s*\d/i.test(text)) extra.push("sheet", "piles");
   if (/\bchs\b|circular hollow/i.test(text)) extra.push("circular", "hollow", "sections");
-  if (/螺絲|螺栓|光砵|絲母|介子/.test(text)) extra.push("fasteners");
+  if (/螺絲|螺栓|光砵|絲母|介子|鉛水|水平爆/.test(text)) extra.push("fasteners");
+  if (/防火板|fire\s*board|h-?\s*tec/i.test(text)) extra.push("fire", "gypsum", "board");
+  if (/stainless\s*steel\s*plate|不銹鋼板|不锈钢板/i.test(text)) extra.push("stainless", "plate");
   if (/不銹鋼|不锈钢|stainless/i.test(text)) extra.push("stainless");
   if (/316/.test(text)) extra.push("316");
   if (/304/.test(text)) extra.push("304");
@@ -2254,10 +2313,15 @@ function specFamilyScore(text, productName) {
     if (/circular hollow/i.test(name)) score += 4;
     if (/pipe & fittings|concrete pipe|copper|upvc|hdpe/i.test(name)) score -= 3;
   }
-  if (/螺絲|螺栓|光砵|絲母|介子/.test(text)) {
-    if (/fastener|\bbolt\b/i.test(name)) score += 3;
-    if (/manhole/i.test(name)) score -= 4;
+  if (/螺絲|螺栓|光砵|絲母|介子|鉛水|水平爆/.test(text)) {
+    if (/fastener/i.test(name)) score += 4;
+    if (/\bbolt\b/i.test(name)) score += 2;
+    if (/manhole|railing|barrier/i.test(name)) score -= 4;
   }
+  if (/防火板|fire\s*board|h-?\s*tec/i.test(text)) {
+    if (/fire-resistant|gypsum board|partition board/i.test(name)) score += 4;
+  }
+  if (/stainless\s*steel\s*plate|不銹鋼板|不锈钢板/i.test(text) && /stainless steel plate/i.test(name)) score += 5;
   return score;
 }
 
@@ -2306,7 +2370,10 @@ function matchSpecToCatalog(name, spec) {
   const second = ranked[1]?.hits || 0;
   const namedFamily = /角[钢鋼]|U槽|槽[钢鋼鐵铁]|channel|waling|waler|sheet\s*pile|板[樁桩]|\bchs\b|光砵|絲母|介子|螺絲|螺栓/i.test(text);
   const lead = ranked[0].product.name || "";
-  const confident = top >= 2 && top > second && (!namedFamily || (specFamilyScore(text, lead) > 0 && !/custom profile|fasteners/i.test(lead)));
+  const leadScore = specFamilyScore(text, lead);
+  const secondName = ranked[1]?.product.name || "";
+  const sameFamilyTie = Boolean(ranked[1]) && top === second && leadScore > 0 && leadScore === specFamilyScore(text, secondName);
+  const confident = top >= 2 && (top > second || sameFamilyTie) && (!namedFamily || (leadScore > 0 && !/custom profile|fasteners/i.test(lead)));
   return ranked.map((row, index) => ({
     productId: row.product.id,
     name: row.product.name,
@@ -2687,10 +2754,39 @@ async function publishStoredRfqMedia(email, rfq) {
   emitStoreChange();
 }
 
-function submitRfq(productIds, options = {}) {
+/** The server issues the number, time and owner. `legacy` means this deployment has no RFQ store yet. */
+async function issueRfqNumber(rfq) {
+  const issued = await registerRfq({
+    kind: "rfq",
+    channel: rfq.channel,
+    askKind: rfq.askKind,
+    project: rfq.project || "",
+    buyer: { email: rfq.buyerEmail, name: rfq.buyerName, phone: rfq.buyerPhone },
+    lines: (rfq.lines || []).map((line) => ({
+      productId: line.productId,
+      sku: line.productNo,
+      name: line.name || line.productNo || String(line.productId || "Item"),
+      spec: line.description,
+      qty: line.qty,
+      unit: line.unit,
+      note: line.remark,
+    })),
+    snapshot: leanSharedRfq(rfq),
+  });
+  if (issued.ok) {
+    serverHeldIds.add(issued.id);
+    return { id: issued.id, at: issued.createdAt, mailed: Boolean(issued.mailed) };
+  }
+  if (issued.legacy) return { id: nextRfqId(), at: "", mailed: false };
+  return null;
+}
+
+async function submitRfq(productIds, options = {}) {
   const user = getUser();
   const allowGuest = Boolean(options.allowGuest);
+  const guest = !user?.email ? readGuestContact(options.guest) : null;
   if (!user?.email && !allowGuest) return { ok: false, error: "not_logged_in" };
+  if (!user?.email && !guest) return { ok: false, error: "email" };
   const email = accountKey();
   let draft = options.draft || getDraft();
   if (!draft.lines.length) return { ok: false, error: "empty" };
@@ -2730,12 +2826,12 @@ function submitRfq(productIds, options = {}) {
   const channel =
     options.channel === "whatsapp" ? "whatsapp" : options.channel === "email" ? "email" : "rfq";
   restoreSessionBuyerAccount();
-  const buyerEmail = user?.email || "guest@subbie.store";
+  const buyerEmail = user?.email || guest.email;
   const buyerKind = user?.email ? "member" : "guest";
   const memberAccount = buyerKind === "member" ? { ...(getAccount(buyerEmail) || {}), ...(user || {}) } : null;
   const slotOn = (value) => (value === "1" || value === "2" ? value : "");
   const rfq = {
-    id: nextRfqId(),
+    id: "",
     status: channel === "whatsapp" ? "whatsapp_sent" : channel === "email" ? "email_sent" : "submitted",
     reviewStatus: "received",
     channel,
@@ -2778,15 +2874,28 @@ function submitRfq(productIds, options = {}) {
     pricedSubtotal: totals.pricedSubtotal,
     unpricedCount: totals.unpricedCount,
     buyerEmail,
-    buyerName: user?.name || "Guest",
-    buyerPhone: buyerKind === "member" ? buyerContactPhone(user, user?.email) : "",
-    buyerOtherPhone: String(memberAccount?.otherPhone || "").trim(),
-    buyerWhatsappOn: slotOn(memberAccount?.whatsappOn),
-    buyerWechatOn: slotOn(memberAccount?.wechatOn),
-    buyerPhoneWhatsapp: Boolean(slotOn(memberAccount?.whatsappOn) || memberAccount?.phoneWhatsapp),
+    buyerName: user?.name || guest?.name || (buyerKind === "guest" ? "" : "Guest"),
+    buyerPhone: buyerKind === "member" ? buyerContactPhone(user, user?.email) : guest?.phone || guest?.otherPhone || "",
+    buyerOtherPhone: buyerKind === "member" ? String(memberAccount?.otherPhone || "").trim() : guest?.otherPhone || "",
+    buyerWhatsappOn: buyerKind === "member" ? slotOn(memberAccount?.whatsappOn) : slotOn(guest?.whatsappOn),
+    buyerWechatOn: buyerKind === "member" ? slotOn(memberAccount?.wechatOn) : slotOn(guest?.wechatOn),
+    buyerPhoneWhatsapp: buyerKind === "member" ? Boolean(slotOn(memberAccount?.whatsappOn) || memberAccount?.phoneWhatsapp) : Boolean(guest?.whatsappOn),
     buyerKind,
     specFile: draft.specFile?.url ? draft.specFile : null,
   };
+  const issued = await issueRfqNumber(rfq);
+  if (!issued) return { ok: false, error: "server" };
+  rfq.id = issued.id;
+  if (issued.at) rfq.submittedAt = issued.at;
+  if (buyerKind === "guest") {
+    rfq.buyerEmail = "";
+    rfq.buyerName = "";
+    rfq.buyerPhone = "";
+    rfq.buyerOtherPhone = "";
+    rfq.buyerWhatsappOn = "";
+    rfq.buyerWechatOn = "";
+    rfq.buyerPhoneWhatsapp = false;
+  }
   const v1 = snapshotRfqRequest(rfq, { version: 1, createdAt: rfq.submittedAt });
   rfq.requestVersions = [v1];
   rfq.requestEffectiveVersion = 1;
@@ -2805,17 +2914,27 @@ function submitRfq(productIds, options = {}) {
   setRfqsMap(map);
   persistSharedRfq(email, rfq);
   void publishStoredRfqMedia(email, rfq);
-  notifyAdmins({
+  if (!isHeldRfq(rfq.id)) notifyAdmins({
     kind: "rfq",
     title: `New RFQ ${rfq.id}`,
     body: `${rfq.buyerName || rfq.buyerEmail || "Buyer"} submitted ${(rfq.lines || []).length} line(s) from Mattex Marketplace.`,
     href: `${adminOrigin()}/?rfq=${encodeURIComponent(rfq.id)}`,
   });
-  if (channel !== "whatsapp") {
+  // The server mails buyer and Sales itself (every channel). Only the legacy path mails from the browser.
+  if (!issued.mailed && channel !== "whatsapp") {
     deliverRfqSubmittedEmail(rfq);
     deliverRfqToSalesEmail(rfq);
   }
-  return { ok: true, rfq };
+  return {
+    ok: true,
+    rfq,
+    buyer: {
+      email: buyerEmail,
+      name: user?.name || guest?.name || "",
+      phone: buyerKind === "member" ? buyerContactPhone(user, user?.email) : guest?.phone || guest?.otherPhone || "",
+      otherPhone: buyerKind === "member" ? String(memberAccount?.otherPhone || "").trim() : guest?.otherPhone || "",
+    },
+  };
 }
 
 function takeLastCartWhatsappResult() {
@@ -2825,19 +2944,20 @@ function takeLastCartWhatsappResult() {
   return value;
 }
 
-function completeCartWhatsappSubmit(spec = {}, { announce = false } = {}) {
+async function completeCartWhatsappSubmit(spec = {}, { announce = false } = {}) {
   const kind = spec.kind === "buy" ? "buy" : "quote";
   const ids = (Array.isArray(spec.ids) ? spec.ids : []).map(String).filter(Boolean);
   const details = draftLogisticsForWhatsapp();
-  const submitted = submitRfq(ids, {
+  const submitted = await submitRfq(ids, {
     kind,
     channel: "whatsapp",
     skipLogistics: true,
     allowGuest: !isLoggedIn(),
+    guest: spec.guest,
   });
   if (!submitted.ok) return submitted;
   const lines = getDraft().lines.filter((line) => ids.includes(String(line.productId)));
-  openWhatsappDraft(lines, kind, { refNo: submitted.rfq.id, details });
+  openWhatsappDraft(lines, kind, { refNo: submitted.rfq.id, details, buyer: submitted.buyer });
   removeLines(ids);
   if (announce) {
     lastCartWhatsappResult = { rfq: submitted.rfq, kind };
@@ -3349,9 +3469,19 @@ async function verifyBuyerSession() {
   return false;
 }
 
+/** Signing out drops the server-held RFQs this tab was showing. */
+function clearServerRfqCache() {
+  memoryRfqMap = {};
+  memoryAlerts = [];
+  alertBaseline = null;
+  alertedKeys.clear();
+  serverHeldIds.clear();
+}
+
 function logoutUser() {
   authApi("logout", { kind: "buyer" });
   localStorage.removeItem(AUTH_KEY);
+  clearServerRfqCache();
   sessionStorage.removeItem(PENDING_CUSTOM_KEY);
   emitStoreChange();
 }
@@ -3479,7 +3609,6 @@ function maybeShowCartAuthInvite() {
 }
 
 function openAuthModal(mode = "required") {
-  if (mode === "invite" && isAuthInviteHidden()) return;
   authModalMode = mode === "cart-invite" || mode === "invite" ? mode : "required";
   authModalOpen = true;
   if (typeof window === "undefined") {
@@ -3513,7 +3642,7 @@ function requireBuyerAuth(pending = {}) {
 
 function addFromStorefront(productId, intent = "quote", qty, lang) {
   if (intent === "quote-now" || intent === "buy-now") {
-    if (!isLoggedIn() && !isAuthInviteHidden()) {
+    if (!isLoggedIn()) {
       setPendingCart(productId, intent, qty);
       openAuthModal("invite");
       return { ok: false, error: "auth_invite" };
@@ -3525,15 +3654,42 @@ function addFromStorefront(productId, intent = "quote", qty, lang) {
   return { ok: true };
 }
 
-function consumePendingInviteContinue() {
+function readGuestContact(contact) {
+  const email = String(contact?.email || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return null;
+  const slot = (value) => (value === "1" || value === "2" ? value : "");
+  return {
+    email,
+    name: String(contact?.name || "").trim().slice(0, 120),
+    phone: String(contact?.phone || "").trim().slice(0, 40),
+    otherPhone: String(contact?.otherPhone || "").trim().slice(0, 40),
+    whatsappOn: slot(contact?.whatsappOn),
+    wechatOn: slot(contact?.wechatOn),
+  };
+}
+
+function cancelPendingWhatsappInvite() {
+  clearPendingCartWhatsappSubmit();
+  try {
+    const raw = sessionStorage.getItem(PENDING_CART_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed?.intent === "quote-now" || parsed?.intent === "buy-now") sessionStorage.removeItem(PENDING_CART_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function consumePendingInviteContinue(contact) {
+  const guest = readGuestContact(contact);
   const pendingWaSubmit = readPendingCartWhatsappSubmit();
   if (pendingWaSubmit) {
+    if (!guest && !isLoggedIn()) return;
     clearPendingCartWhatsappSubmit();
-    completeCartWhatsappSubmit(pendingWaSubmit, { announce: true });
+    completeCartWhatsappSubmit({ ...pendingWaSubmit, guest }, { announce: true });
     return;
   }
   const pendingCart = sessionStorage.getItem(PENDING_CART_KEY);
-  sessionStorage.removeItem(PENDING_CART_KEY);
   if (!pendingCart) return;
   let productId = "";
   let intent = "";
@@ -3544,13 +3700,17 @@ function consumePendingInviteContinue() {
     intent = parsed?.intent || "";
     qty = parsed?.qty;
   } catch {
+    sessionStorage.removeItem(PENDING_CART_KEY);
     return;
   }
+  if ((intent === "quote-now" || intent === "buy-now") && productId && !guest && !isLoggedIn()) return;
+  sessionStorage.removeItem(PENDING_CART_KEY);
   if ((intent === "quote-now" || intent === "buy-now") && productId) {
     whatsappNow(productId, {
       qty,
       kind: intent === "buy-now" ? "buy" : "quote",
       skipCart: true,
+      guest,
     });
   }
 }
@@ -4131,7 +4291,7 @@ function firstImageAttachmentUrl(files) {
 }
 
 function quotePdfItems(rows) {
-  return rows.map((line, i) => {
+  return rows.map(salesLine).map((line, i) => {
     const isCustom = Boolean(line.custom);
     const attachments = Array.isArray(line.attachments) ? line.attachments : [];
     return {
@@ -4162,10 +4322,16 @@ function whatsappDraftUrl() {
   return whatsappChatHref();
 }
 
-function quotePdfFingerprint(kind, items, refNo) {
+function quotePdfFingerprint(kind, items, refNo, buyer) {
   return JSON.stringify({
     kind: kind === "buy" ? "buy" : "quote",
     refNo: String(refNo || "").trim(),
+    buyer: {
+      email: String(buyer?.email || "").trim(),
+      name: String(buyer?.name || "").trim(),
+      phone: String(buyer?.phone || "").trim(),
+      otherPhone: String(buyer?.otherPhone || "").trim(),
+    },
     items: (Array.isArray(items) ? items : []).map((item) => [
       item.name,
       item.sku,
@@ -4249,7 +4415,8 @@ function openWhatsappDraft(lines, kind, options = {}) {
   const items = quotePdfItems(rows);
   const refNo = String(options?.refNo || "").trim() || nextRfqId();
   const details = options.details || null;
-  const fingerprint = quotePdfFingerprint(kind, items, refNo);
+  const buyer = options.buyer || null;
+  const fingerprint = quotePdfFingerprint(kind, items, refNo, buyer);
   const url = whatsappChatHref(whatsappPdfHintText(kind, refNo, "", details));
   if (typeof window === "undefined") return { url, truncated: false, copied: true, count: rows.length, refNo };
 
@@ -4330,7 +4497,7 @@ function openWhatsappDraft(lines, kind, options = {}) {
   const pending =
     waPdfInflight?.fingerprint === fingerprint
       ? waPdfInflight.promise
-      : buildQuotePdf({ kind, items, refNo }).then((pdf) => {
+      : buildQuotePdf({ kind, items, refNo, buyer }).then((pdf) => {
           rememberWaPdf(fingerprint, pdf);
           return pdf;
         });
@@ -4357,13 +4524,75 @@ function openWhatsappDraft(lines, kind, options = {}) {
   return { url, truncated: false, copied: false, count: rows.length, refNo };
 }
 
-function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false } = {}) {
+const PO_ERROR_TEXT = {
+  zh: {
+    default: "未能建立採購單，請稍後再試。",
+    no_price: "此產品價格已更新為待定，請改用詢價。",
+    unavailable: "此產品已不能訂購。",
+    moq: "數量低於最低訂購量。",
+    network: "連線失敗，採購單未建立，請稍後再試。",
+  },
+  en: {
+    default: "The purchase order could not be created. Please try again.",
+    no_price: "This product is now price upon request. Please ask for a price instead.",
+    unavailable: "This product can no longer be ordered.",
+    moq: "The quantity is below the minimum order.",
+    network: "Connection failed. The purchase order was not created. Please try again.",
+  },
+};
+
+/**
+ * "Buy now" on priced goods places a PO on the server (no RFQ). The server prices it and issues PO-YY######.
+ * A guest does not sign in: email is required, name and phone are optional.
+ */
+async function placeBuyNowPo(product, qty, line, guest) {
+  const user = getUser();
+  const contact = user?.email ? null : readGuestContact(guest);
+  const email = user?.email || contact?.email || "";
+  if (!email) return { ok: false, error: "email" };
+  const member = user?.email ? { ...(getAccount(user.email) || {}), ...(user || {}) } : null;
+  const placed = await createPurchaseOrderRemote({
+    lines: [{ productId: product.id, qty }],
+    buyer: {
+      email,
+      name: user?.name || contact?.name || "",
+      phone: member ? buyerContactPhone(user, user.email) : contact?.phone || contact?.otherPhone || "",
+    },
+  });
+  if (placed.legacy) return null;
+  if (!placed.ok) {
+    const lang = localStorage.getItem("subbie_lang") === "en" ? "en" : "zh";
+    const text = PO_ERROR_TEXT[lang];
+    window.alert(text[placed.error] || text.default);
+    return { ok: false, error: placed.error };
+  }
+  return {
+    ok: true,
+    po: placed.po,
+    ...openWhatsappDraft([line], "buy", {
+      refNo: placed.po.id,
+      buyer: {
+        email,
+        name: user?.name || contact?.name || "",
+        phone: member ? buyerContactPhone(user, user.email) : contact?.phone || contact?.otherPhone || "",
+        otherPhone: member ? String(member.otherPhone || "").trim() : contact?.otherPhone || "",
+      },
+    }),
+  };
+}
+
+async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false, guest } = {}) {
   const product = getProduct(productId);
   if (!product || isDiscontinued(product) || !isOrderable(product) || isProductOrderBlocked(productId)) return { ok: false, error: "discontinued" };
   const intent = kind === "buy" ? "buy" : "quote";
   const minQty = Math.max(1, Number(product.moq) || 1);
   const addQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
   const line = { productId, qty: addQty, intent };
+  if (intent === "buy" && canDirectBuy(product)) {
+    const placed = await placeBuyNowPo(product, addQty, line, guest);
+    if (placed) return placed;
+    // The server has no PO store here (production for now): keep the old behaviour below.
+  }
   const snapshot = skipCart ? getDraft() : null;
   if (skipCart) {
     const others = snapshot.lines.filter((row) => String(row.productId) !== String(productId) || row.custom);
@@ -4371,16 +4600,19 @@ function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false } = {
   } else {
     addToCart(productId, { intent, qty: addQty });
   }
-  const submitted = submitRfq([productId], {
+  // submitRfq reads the draft before its first await, so the cart can be put back straight away.
+  const pending = submitRfq([productId], {
     kind: intent,
     skipLogistics: true,
     channel: "whatsapp",
     allowGuest: !isLoggedIn(),
+    guest,
   });
   if (skipCart) setDraft(snapshot);
+  const submitted = await pending;
   if (!submitted.ok && submitted.error !== "not_logged_in") return submitted;
   const rfq = submitted.ok ? submitted.rfq : null;
-  return { ok: true, ...openWhatsappDraft([line], intent, { refNo: rfq?.id }), rfq };
+  return { ok: true, ...openWhatsappDraft([line], intent, { refNo: rfq?.id, buyer: submitted.buyer }), rfq };
 }
 
 function whatsappUrl() {
@@ -4514,6 +4746,7 @@ async function loginStaff({ email, password }) {
 function logoutStaff() {
   authApi("logout", { kind: "staff" });
   localStorage.removeItem(STAFF_AUTH_KEY);
+  clearServerRfqCache();
   emitStoreChange();
 }
 
@@ -4524,6 +4757,7 @@ async function verifyStaffSession() {
   if (result.error === "network") return;
   if (result.ok && normalizeEmail(result.account?.email) === normalizeEmail(local.email)) return;
   localStorage.removeItem(STAFF_AUTH_KEY);
+  clearServerRfqCache();
   emitStoreChange();
 }
 
@@ -5101,13 +5335,23 @@ function openMailto(href) {
 
 const ADMIN_ALERTS_KEY = "subbie_admin_alerts";
 
+/* Alerts about an RFQ the server holds live in memory only; the Portal builds them from what the server says changed. */
+function alertMentionsHeldRfq(alert) {
+  const ref = `${alert?.href || ""} ${alert?.title || ""}`;
+  for (const id of serverHeldIds) if (ref.includes(id)) return true;
+  return false;
+}
+
 function listAdminAlerts() {
   const list = readJson(ADMIN_ALERTS_KEY, []);
-  return Array.isArray(list) ? list : [];
+  const stored = (Array.isArray(list) ? list : []).filter((row) => !alertMentionsHeldRfq(row));
+  return [...memoryAlerts, ...stored].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 function setAdminAlerts(list) {
-  writeJson(ADMIN_ALERTS_KEY, (list || []).slice(0, 40));
+  const rows = list || [];
+  memoryAlerts = rows.filter((row) => row.memory).slice(0, 40);
+  writeJson(ADMIN_ALERTS_KEY, rows.filter((row) => !row.memory && !alertMentionsHeldRfq(row)).slice(0, 40));
 }
 
 function requestAdminNotifyPermission() {
@@ -5145,8 +5389,9 @@ function showAdminWebNotification(title, body, href) {
   }
 }
 
-function notifyAdmins({ kind, title, body, href } = {}) {
+function notifyAdmins({ kind, title, body, href, memory = false } = {}) {
   const alert = {
+    ...(memory ? { memory: true } : {}),
     id: `AL-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     kind: kind || "rfq",
     title: String(title || "Mattex Marketplace"),
@@ -5306,17 +5551,6 @@ function patchRfqById(id, fn) {
   return { ok: true, rfq: found };
 }
 
-function inboxStatus(rfq) {
-  if (rfq?.cancelStatus === "accepted" || rfq?.reviewStatus === "cancelled") return "cancelled";
-  if (rfq?.reviewStatus === "rejected") return "no_offer";
-  if (rfq?.reviewStatus === "revising") return "revising";
-  if (rfq?.reviewStatus) return rfq.reviewStatus;
-  if (["accepted", "returned", "rejected", "reviewing", "received", "no_offer", "revising"].includes(rfq?.status)) {
-    return rfq.status === "rejected" ? "no_offer" : rfq.status;
-  }
-  return "received";
-}
-
 function rfqIsNoOffer(rfq) {
   if (inboxStatus(rfq) === "no_offer") return true;
   const lines = rfq?.lines || [];
@@ -5334,12 +5568,6 @@ function startRfqReview(id) {
   });
 }
 
-function rfqBuyerKind(rfq) {
-  const email = normalizeEmail(rfq?.buyerEmail);
-  if (!email || email === GUEST_KEY || email === "guest@subbie.store" || email.startsWith("guest@")) return "guest";
-  return "member";
-}
-
 /** Marketplace submissions that belong in the sales inbox (guest + member). */
 function isDev1InboxRfq(rfq) {
   return Boolean(rfq?.id);
@@ -5350,49 +5578,65 @@ function setRfqLineQuotedPrice(id, productId, price) {
   if (!gate.ok) return gate;
   const raw = price === "" || price == null ? null : Number(price);
   const nextPrice = Number.isFinite(raw) && raw >= 0 ? raw : null;
-  return patchRfqById(id, (rfq) => ({
+  const patched = patchRfqById(id, (rfq) => ({
     ...rfq,
     lines: (rfq.lines || []).map((line) =>
       String(line.productId) === String(productId) ? { ...line, quotedUnitPrice: nextPrice, noOffer: false } : line
     ),
   }));
+  if (patched.ok) queueQuoteDraft(id);
+  return patched;
 }
 
 function setRfqLineQty(id, productId, qty) {
   const gate = requireStaff();
   if (!gate.ok) return gate;
   const nextQty = Math.max(1, Math.floor(Number(qty) || 1));
-  return patchRfqById(id, (rfq) => ({
+  const patched = patchRfqById(id, (rfq) => ({
     ...rfq,
     lines: (rfq.lines || []).map((line) =>
-      String(line.productId) === String(productId) ? { ...line, qty: nextQty } : line
+      String(line.productId) === String(productId) ? { ...line, salesQty: nextQty } : line
     ),
   }));
+  if (patched.ok) queueQuoteDraft(id);
+  return patched;
 }
 
 function setRfqLineRemark(id, productId, remark) {
   const gate = requireStaff();
   if (!gate.ok) return gate;
-  return patchRfqById(id, (rfq) => ({
+  const patched = patchRfqById(id, (rfq) => ({
     ...rfq,
     lines: (rfq.lines || []).map((line) =>
-      String(line.productId) === String(productId) ? { ...line, remark: String(remark || "") } : line
+      String(line.productId) === String(productId) ? { ...line, salesRemark: String(remark || "") } : line
     ),
   }));
+  if (patched.ok) queueQuoteDraft(id);
+  return patched;
 }
 
 function setRfqLineNoOffer(id, productId, noOffer = true) {
   const gate = requireStaff();
   if (!gate.ok) return gate;
-  return patchRfqById(id, (rfq) => {
-    const status = inboxStatus(rfq);
-    if (status === "cancelled") return rfq;
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  const held = serverHeldIds.has(id);
+  const status = inboxStatus(current);
+  if (status === "cancelled") return { ok: true, rfq: current };
+  /* The server holds the decision. A "no offer" decision on the whole RFQ is not undone from a single line. */
+  if (held && status === "no_offer" && !noOffer) return { ok: false, error: "no_offer_locked" };
+  let becameAllNoOffer = false;
+  const patched = patchRfqById(id, (rfq) => {
     const lines = (rfq.lines || []).map((line) =>
       String(line.productId) === String(productId)
         ? { ...line, noOffer: Boolean(noOffer), quotedUnitPrice: Boolean(noOffer) ? null : line.quotedUnitPrice }
         : line
     );
     const allNoOffer = lines.length > 0 && lines.every((line) => line.noOffer);
+    if (held) {
+      becameAllNoOffer = allNoOffer && inboxStatus(rfq) !== "no_offer";
+      return { ...rfq, lines };
+    }
     const wasNoOffer = inboxStatus(rfq) === "no_offer";
     const reason = allNoOffer ? rfq.reason || "No offer" : rfq.reason;
     const next = {
@@ -5411,51 +5655,74 @@ function setRfqLineNoOffer(id, productId, noOffer = true) {
     }
     return next;
   });
+  if (!patched.ok) return patched;
+  if (held) {
+    if (becameAllNoOffer) {
+      /* Every line has no offer: the server makes it a no-offer RFQ (status, time, mail). */
+      draftTimers.set(id, 0);
+      saveQuoteDraft(id, draftPricesOf(patched.rfq.lines)).finally(() => {
+        draftTimers.delete(id);
+        decideRfqRemote(id, { decision: "no_offer", reason: "No offer" }).finally(() => syncServerRfqs());
+      });
+    } else {
+      queueQuoteDraft(id);
+    }
+  }
+  return patched;
 }
 
-function assignRfqToBuyer(id, buyerEmail) {
-  const gate = requireStaff();
-  if (!gate.ok) return gate;
-  const buyer = listAssignableBuyers().find((b) => normalizeEmail(b.email) === normalizeEmail(buyerEmail));
-  if (!buyer) return { ok: false, error: "missing_buyer" };
+/** Move one RFQ to a member's list and apply the assign patch. Used by the local rules and the server result. */
+function moveRfqToMember(id, buyer, patch) {
   const map = getRfqsMap();
   let found = null;
-  let fromKey = "";
   Object.keys(map || {}).forEach((key) => {
     const list = Array.isArray(map[key]) ? map[key] : [];
     const idx = list.findIndex((r) => r.id === id);
     if (idx < 0) return;
     found = list[idx];
-    fromKey = key;
-  });
-  if (!found) return { ok: false, error: "missing" };
-  if (rfqBuyerKind(found) === "member") return { ok: false, error: "locked" };
-  Object.keys(map || {}).forEach((key) => {
-    const list = Array.isArray(map[key]) ? map[key] : [];
-    const idx = list.findIndex((r) => r.id === id);
-    if (idx < 0) return;
     list.splice(idx, 1);
     map[key] = list;
   });
+  if (!found) return { ok: false, error: "missing" };
+  const next = applyDecision(found, patch);
   const dest = normalizeEmail(buyer.email);
-  const assignedAt = new Date().toISOString();
-  const next = pushRfqActivity(
-    {
-      ...found,
-      buyerEmail: buyer.email,
-      buyerName: buyer.name || found.buyerName || "",
-      buyerKind: "member",
-      buyerPhone: found.buyerPhone || buyer.phone || "",
-      assignedFromGuest: Boolean(fromKey && fromKey !== dest),
-      assignedAt,
-    },
-    "assigned",
-    { at: assignedAt, detail: buyer.email, by: gate.account.email }
-  );
   map[dest] = [next, ...(Array.isArray(map[dest]) ? map[dest] : [])];
   setRfqsMap(map);
   emitStoreChange();
   return { ok: true, rfq: next };
+}
+
+function findAssignable(buyerEmail) {
+  return listAssignableBuyers().find((b) => normalizeEmail(b.email) === normalizeEmail(buyerEmail));
+}
+
+/** Local rules only. Fallback when the server cannot take the assignment. */
+function assignRfqToBuyer(id, buyerEmail) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const buyer = findAssignable(buyerEmail);
+  if (!buyer) return { ok: false, error: "missing_buyer" };
+  const found = getAllRfqs().find((r) => r.id === id);
+  if (!found) return { ok: false, error: "missing" };
+  const plan = planAssign(found, { buyer, by: gate.account.email });
+  if (!plan.ok) return plan;
+  return moveRfqToMember(id, buyer, plan.patch);
+}
+
+/** Assign a guest RFQ to a member, decided by the server. */
+async function assignRfqToBuyerRemote(id, buyerEmail) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const buyer = findAssignable(buyerEmail);
+  if (!buyer) return { ok: false, error: "missing_buyer" };
+  const found = getAllRfqs().find((r) => r.id === id);
+  if (!found) return { ok: false, error: "missing" };
+  const plan = planAssign(found, { buyer });
+  if (!plan.ok) return plan;
+  const remote = await assignRfqOnServer(id, { email: buyer.email, name: buyer.name, phone: buyer.phone });
+  if (remote.legacy) return assignRfqToBuyer(id, buyerEmail);
+  if (!remote.ok) return { ok: false, error: remote.error || "server" };
+  return moveRfqToMember(id, buyer, remote.patch);
 }
 
 function setRfqBuyerPhone(id, phone) {
@@ -5470,7 +5737,15 @@ function setRfqBuyerPhone(id, phone) {
     accounts[email] = { ...accounts[email], phone: nextPhone };
     setAccountsMap(accounts);
   }
-  return patchRfqById(id, (rfq) => ({ ...rfq, buyerPhone: nextPhone }));
+  const saved = patchRfqById(id, (rfq) => ({ ...rfq, buyerPhone: nextPhone }));
+  if (saved.ok && serverHeldIds.has(id)) {
+    serverWritesInFlight += 1;
+    saveBuyerPhone(id, nextPhone).finally(() => {
+      serverWritesInFlight -= 1;
+      syncServerRfqs();
+    });
+  }
+  return saved;
 }
 
 function getQuoteSnapshots() {
@@ -5492,35 +5767,6 @@ function mergeQuoteSnapshots(incoming, existing) {
 function newGuestQuoteToken() {
   const rand = Math.random().toString(36).slice(2, 10);
   return `${Date.now().toString(36)}${rand}`;
-}
-
-function snapshotLineImage(line) {
-  const image = String(line?.image || "").trim();
-  return image.startsWith("data:") ? "" : image;
-}
-
-function freezeQuoteLines(lines) {
-  return (lines || []).map((line) => {
-    const qty = Number(line.qty) || 0;
-    const unitPrice = line.noOffer
-      ? null
-      : Number(line.quotedUnitPrice) > 0
-        ? Number(line.quotedUnitPrice)
-        : null;
-    return {
-      productId: line.productId,
-      name: line.name || "",
-      productNo: line.productNo || "",
-      qty,
-      unit: line.unit || "",
-      quotedUnitPrice: unitPrice,
-      noOffer: Boolean(line.noOffer),
-      custom: Boolean(line.custom),
-      remark: String(line.remark || ""),
-      image: snapshotLineImage(line),
-      lineTotal: unitPrice != null ? unitPrice * qty : 0,
-    };
-  });
 }
 
 function freezeGuestQuotePayload(rfq) {
@@ -5610,14 +5856,6 @@ function applyRfqRequestVersion(rfq, versionNo) {
   };
 }
 
-function quoteVersionList(rfq) {
-  return Array.isArray(rfq?.quoteVersions) ? rfq.quoteVersions : [];
-}
-
-function nextQuoteVersionNo(rfq) {
-  return quoteVersionList(rfq).reduce((max, row) => Math.max(max, Number(row?.version) || 0), 0) + 1;
-}
-
 function quoteEffectiveVersionNo(rfq) {
   const listed = quoteVersionList(rfq);
   const stored = Number(rfq?.quoteEffectiveVersion);
@@ -5660,27 +5898,6 @@ const BUYER_ACTIVITY_KINDS = new Set([
   "whatsapp_quote",
   "po_created",
 ]);
-
-function activityDedupeKey(entry) {
-  return `${entry?.kind || ""}|${entry?.detail || ""}|${String(entry?.at || "").slice(0, 16)}`;
-}
-
-function pushRfqActivity(rfq, kind, extra = {}) {
-  if (!rfq || !kind) return rfq;
-  const at = extra.at || new Date().toISOString();
-  const entry = {
-    id: extra.id || `act-${kind}-${at}`,
-    kind,
-    at,
-    by: extra.by || "",
-    detail: extra.detail || "",
-    channel: extra.channel || rfq.channel || "",
-  };
-  const prev = Array.isArray(rfq.activity) ? rfq.activity : [];
-  const last = prev[prev.length - 1];
-  if (last && activityDedupeKey(last) === activityDedupeKey(entry)) return rfq;
-  return { ...rfq, activity: [...prev, entry] };
-}
 
 function mailLogStampForRfq(rfq, kind) {
   const id = String(rfq?.id || "");
@@ -5760,6 +5977,7 @@ function rfqActivityLog(rfq, { audience } = {}) {
   });
   let log = [...stored, ...extra].sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
   if (audience === "buyer") log = log.filter((row) => BUYER_ACTIVITY_KINDS.has(row.kind));
+  if (!SHOW_TMS_LINK) log = log.filter((row) => row.kind !== "tms");
   return log;
 }
 
@@ -5769,6 +5987,7 @@ function rfqLastActivity(rfq, opts) {
 }
 
 function hydrateRfqDecisionActivity(id) {
+  if (isHeldRfq(id)) return { ok: true, rfq: getAllRfqs().find((r) => r.id === id) };
   const current = getAllRfqs().find((r) => r.id === id);
   if (!current) return { ok: false, error: "missing" };
   const status = inboxStatus(current);
@@ -5877,8 +6096,9 @@ function quoteLinesDiffer(liveLines, frozenLines) {
       if (!liveKeys.has(key)) return true;
     }
   }
-  for (const line of live) {
-    const other = frozen.get(quoteLineKey(line));
+  for (const rawLine of live) {
+    const line = salesLine(rawLine);
+    const other = frozen.get(quoteLineKey(rawLine));
     if (!other) return true;
     if (Boolean(line.noOffer) !== Boolean(other.noOffer)) return true;
     if (quoteLinePrice(line) !== quoteLinePrice(other)) return true;
@@ -5911,42 +6131,6 @@ function rfqLinesForQuoteVersion(rfq, versionNo) {
   return merged;
 }
 
-function persistQuoteSnapshot(rfqLike, token) {
-  const id = String(token || newGuestQuoteToken());
-  const snapshot = { token: id, ...freezeGuestQuotePayload(rfqLike) };
-  const map = getQuoteSnapshots();
-  map[id] = snapshot;
-  setQuoteSnapshots(map);
-  return snapshot;
-}
-
-function buildDeliveredQuoteVersion(rfq, { channel, token, lines, note, createdAt } = {}) {
-  const frozenLines = freezeQuoteLines(lines || rfq?.lines);
-  const quotedSubtotal = frozenLines
-    .filter((line) => !line.noOffer && line.quotedUnitPrice != null)
-    .reduce((sum, line) => sum + line.lineTotal, 0);
-  return {
-    version: nextQuoteVersionNo(rfq),
-    createdAt: createdAt || new Date().toISOString(),
-    channel: channel === "whatsapp" ? "whatsapp" : "marketplace",
-    token: token || "",
-    lines: frozenLines,
-    quotedSubtotal,
-    deadline: rfq?.responseDate || "",
-    quoteNote: String(note || rfq?.quoteNote || "").trim(),
-  };
-}
-
-function applyDeliveredQuoteVersion(rfq, version, extra = {}) {
-  return {
-    ...rfq,
-    quoteVersions: [...quoteVersionList(rfq), version],
-    quoteEffectiveVersion: version.version,
-    quotedSubtotal: version.quotedSubtotal,
-    ...extra,
-  };
-}
-
 function loadQuoteVersionIntoDraft(id, versionNo) {
   const gate = requireStaff();
   if (!gate.ok) return gate;
@@ -5954,7 +6138,7 @@ function loadQuoteVersionIntoDraft(id, versionNo) {
   if (!current) return { ok: false, error: "missing" };
   const snap = getQuoteVersion(current, versionNo);
   if (!snap) return { ok: false, error: "missing_version" };
-  return patchRfqById(id, (rfq) => {
+  const loaded = patchRfqById(id, (rfq) => {
     const frozenById = new Map((snap.lines || []).map((line) => [quoteLineKey(line), line]));
     return {
       ...rfq,
@@ -5964,14 +6148,16 @@ function loadQuoteVersionIntoDraft(id, versionNo) {
         if (!frozen) return line;
         return {
           ...line,
-          qty: frozen.qty != null ? frozen.qty : line.qty,
+          salesQty: frozen.qty != null ? frozen.qty : line.salesQty,
           quotedUnitPrice: frozen.quotedUnitPrice,
           noOffer: Boolean(frozen.noOffer),
-          remark: frozen.remark != null ? frozen.remark : line.remark,
+          salesRemark: frozen.remark != null ? frozen.remark : line.salesRemark,
         };
       }),
     };
   });
+  if (loaded.ok) queueQuoteDraft(id);
+  return loaded;
 }
 
 function guestQuotePublicUrl(token, lang = "zh") {
@@ -5982,7 +6168,7 @@ function guestQuotePublicUrl(token, lang = "zh") {
 }
 
 function guestQuoteWhatsappText(rfq, publicUrl) {
-  const lines = (rfq?.lines || []).filter((line) => !line.noOffer && Number(line.quotedUnitPrice) > 0);
+  const lines = (rfq?.lines || []).map(salesLine).filter((line) => !line.noOffer && Number(line.quotedUnitPrice) > 0);
   const total = lines.reduce((sum, line) => sum + Number(line.quotedUnitPrice) * (Number(line.qty) || 0), 0);
   const block = lines
     .map((line, index) => {
@@ -6096,6 +6282,58 @@ function markGuestQuoteWhatsappSent(id) {
   });
 }
 
+/** Freeze the quote for WhatsApp, decided by the server. The frozen copy and public token live on the server. */
+async function createGuestQuoteSnapshotRemote(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  const ready = rfqCanSendWhatsappQuote(current);
+  if (!ready.ok) return { ok: false, error: ready.reason };
+
+  const remote = await freezeWhatsappQuoteOnServer(id, { lines: worksheetPayload(current.lines), phone: current.buyerPhone });
+  if (remote.legacy) return createGuestQuoteSnapshot(id);
+  if (!remote.ok) return { ok: false, error: remote.error || "server" };
+  const patched = patchRfqById(id, (rfq) => applyDecision(rfq, withoutPatchLines(remote.patch)));
+  const url = guestQuotePublicUrl(remote.token, "zh");
+  const href = buyerWhatsappHref(current.buyerPhone, guestQuoteWhatsappText(patched.rfq || current, url));
+  return { ...patched, token: remote.token, url, href };
+}
+
+/** "Quote sent on WhatsApp", decided by the server: adds a WhatsApp version to the same RFQ's timeline. */
+async function markGuestQuoteWhatsappSentRemote(id) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  const remote = await markWhatsappSentOnServer(id, {
+    knownVersion: quoteVersionList(current).reduce((max, row) => Math.max(max, Number(row?.version) || 0), 0),
+  });
+  if (remote.legacy) return markGuestQuoteWhatsappSent(id);
+  if (!remote.ok) return { ok: false, error: remote.error || "server" };
+  return patchRfqById(id, (rfq) => applyDecision(rfq, remote.patch));
+}
+
+/**
+ * Make a purchase order from the effective quote version. The server prices it from that version,
+ * numbers it and mails it; the browser shows what it returns. An RFQ the server does not hold uses the local rules.
+ */
+async function createBuyerPurchaseOrderRemote(id, payload = {}) {
+  const user = getUser();
+  if (!user?.email) return { ok: false, error: "auth" };
+  const current = getRfq(id);
+  if (!current) return { ok: false, error: "missing" };
+  if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "forbidden" };
+  if (!serverHeldIds.has(id)) return createBuyerPurchaseOrder(id, payload);
+  const check = planPoFromQuote(current);
+  if (!check.ok) return check;
+
+  const remote = await createPoFromQuote(id);
+  if (remote.legacy) return createBuyerPurchaseOrder(id, payload);
+  if (!remote.ok) return { ok: false, error: remote.error || "server" };
+  return patchRfqById(id, (rfq) => applyDecision(rfq, remote.patch));
+}
+
 function createBuyerPurchaseOrder(id, payload = {}) {
   const user = getUser();
   if (!user?.email) return { ok: false, error: "auth" };
@@ -6139,137 +6377,139 @@ function createBuyerPurchaseOrder(id, payload = {}) {
   });
 }
 
+/** The worksheet lines Sales are looking at, with any one-off price overlay applied. */
+/** The server's quote patch carries the worksheet lines it froze. The browser keeps its own lines (the member's words and Sales' draft). */
+function withoutPatchLines(patch) {
+  if (!patch?.fields || !("lines" in patch.fields)) return patch;
+  const { lines, ...fields } = patch.fields;
+  return { ...patch, fields };
+}
+
+function worksheetLines(current, linePrices) {
+  const prices = linePrices || {};
+  return (current.lines || []).map((l) => {
+    if (l.noOffer) return { ...l, quotedUnitPrice: null, noOffer: true };
+    const overlay = Object.prototype.hasOwnProperty.call(prices, String(l.productId)) ? prices[String(l.productId)] : undefined;
+    const raw = overlay === undefined ? l.quotedUnitPrice : overlay;
+    const n = raw === "" || raw == null ? NaN : Number(raw);
+    return { ...l, quotedUnitPrice: Number.isFinite(n) && n > 0 ? n : null };
+  });
+}
+
+/** The worksheet as the server wants it: only what a quote line needs. */
+function worksheetPayload(lines) {
+  return (lines || []).map(salesLine).map((line) => ({
+    productId: line.productId,
+    name: line.name,
+    productNo: line.productNo,
+    unit: line.unit,
+    qty: line.qty,
+    quotedUnitPrice: line.quotedUnitPrice,
+    noOffer: Boolean(line.noOffer),
+    custom: Boolean(line.custom),
+    remark: line.remark,
+    image: snapshotLineImage(line),
+  }));
+}
+
+/** Keep the frozen copy of a delivered quote under its public token. */
+function storeFrozenQuote(version, rfq, quoteNote) {
+  if (!version?.token) return;
+  const map = getQuoteSnapshots();
+  map[version.token] = {
+    token: version.token,
+    rfqId: rfq.id,
+    askKind: rfq.askKind === "buy" ? "buy" : "quote",
+    responseDate: rfq.responseDate || "",
+    quoteNote: String(quoteNote || "").trim(),
+    lines: version.lines,
+    quotedSubtotal: version.quotedSubtotal,
+    createdAt: version.createdAt,
+  };
+  setQuoteSnapshots(map);
+}
+
+/** Local rules only. Fallback when the server cannot take the quote (Vercel, old RFQs, stale copy). */
 function quoteRfqToBuyer(id, { linePrices, note } = {}) {
   const gate = requireStaff();
   if (!gate.ok) return gate;
   const current = getAllRfqs().find((r) => r.id === id);
   if (!current) return { ok: false, error: "missing" };
-  if (rfqBuyerKind(current) !== "member") return { ok: false, error: "guest" };
-  const status = inboxStatus(current);
-  if (status === "no_offer" || status === "rejected") return { ok: false, error: "rejected" };
-  if (status === "cancelled" || current.cancelStatus === "requested") return { ok: false, error: "cancel" };
-  if (status !== "accepted" && status !== "quoted") return { ok: false, error: "not_accepted" };
-  const prices = linePrices || {};
-  const lines = (current.lines || []).map((l) => {
-    if (l.noOffer) return { ...l, quotedUnitPrice: null, noOffer: true };
-    const overlay = Object.prototype.hasOwnProperty.call(prices, String(l.productId))
-      ? prices[String(l.productId)]
-      : undefined;
-    const raw = overlay === undefined ? l.quotedUnitPrice : overlay;
-    const n = raw === "" || raw == null ? NaN : Number(raw);
-    return {
-      ...l,
-      quotedUnitPrice: Number.isFinite(n) && n > 0 ? n : null,
-    };
+  const plan = planQuoteSubmit(current, {
+    draftLines: worksheetLines(current, linePrices),
+    note,
+    by: gate.account.email,
+    token: newGuestQuoteToken(),
   });
-  const offerLines = lines.filter((l) => !l.noOffer);
-  if (!offerLines.length || offerLines.some((l) => l.quotedUnitPrice == null)) return { ok: false, error: "prices" };
-  const quoteNote = String(note || "").trim();
-  const snapshot = persistQuoteSnapshot({ ...current, lines, quoteNote, responseDate: current.responseDate });
-  const sentAt = new Date().toISOString();
-  return patchRfqById(id, (rfq) => {
-    const version = buildDeliveredQuoteVersion(rfq, {
-      channel: "marketplace",
-      token: snapshot.token,
-      lines,
-      note: quoteNote,
-      createdAt: sentAt,
-    });
-    return pushRfqActivity(
-      applyDeliveredQuoteVersion(rfq, version, {
-        reviewStatus: "quoted",
-        quotedAt: sentAt,
-        quoteNote,
-        lines,
-      }),
-      "quoted",
-      { at: sentAt, detail: `v${version.version}`, by: gate.account.email }
-    );
-  });
+  if (!plan.ok) return plan;
+  storeFrozenQuote(plan.patch.version, current, plan.patch.fields.quoteNote);
+  return patchRfqById(id, (rfq) => applyDecision(rfq, plan.patch));
 }
 
+/**
+ * Submit To Buyer / Update quote to buyer, decided by the server. The browser checks its own copy
+ * first, the server freezes the new version and stamps time and staff, the browser applies the result.
+ * A guest RFQ never reaches the server: it is refused here with `guest`.
+ */
+async function quoteRfqToBuyerRemote(id, { linePrices, note } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  const lines = worksheetLines(current, linePrices);
+  const check = planQuoteSubmit(current, { draftLines: lines, note, by: gate.account.email, token: "check" });
+  if (!check.ok) return check;
+
+  const remote = await submitQuoteOnServer(id, {
+    lines: worksheetPayload(lines),
+    note,
+    knownVersion: quoteVersionList(current).reduce((max, row) => Math.max(max, Number(row?.version) || 0), 0),
+  });
+  if (remote.legacy) return quoteRfqToBuyer(id, { linePrices, note });
+  if (!remote.ok) return { ok: false, error: remote.error || "server" };
+  return patchRfqById(id, (rfq) => applyDecision(rfq, withoutPatchLines(remote.patch)));
+}
+
+/** Local rules only. Used as the fallback when the server cannot take the decision (Vercel, old RFQs). */
 function decideRfq(id, { decision, reason } = {}) {
   const gate = requireStaff();
   if (!gate.ok) return gate;
-  const nextDecision = decision === "rejected" ? "no_offer" : decision;
-  if (nextDecision === "returned" && !String(reason || "").trim()) {
-    return { ok: false, error: "reason" };
-  }
-  return patchRfqById(id, (rfq) => {
-    const status = inboxStatus(rfq);
-    if (status === "cancelled" || status === "revising") return rfq;
-    if (rfq.cancelStatus === "requested" && nextDecision === "accepted") return rfq;
-    if (rfq.reverseStatus === "requested" && nextDecision === "accepted") return rfq;
-    const at = new Date().toISOString();
-    const by = gate.account.email;
-    if (nextDecision === "no_offer") {
-      if (status === "no_offer") return rfq;
-      const why = String(reason || "No offer").trim();
-      return pushRfqActivity(
-        {
-          ...rfq,
-          reviewStatus: "no_offer",
-          reviewingBy: "",
-          reason: why,
-          noOfferAt: at,
-          lines: (rfq.lines || []).map((line) => ({ ...line, noOffer: true, quotedUnitPrice: null })),
-        },
-        "no_offer",
-        { at, detail: why, by }
-      );
+  let failure = null;
+  const result = patchRfqById(id, (rfq) => {
+    const plan = planDecision(rfq, { decision, reason, by: gate.account.email });
+    if (!plan.ok) {
+      failure = plan;
+      return rfq;
     }
-    if (status === "accepted" || status === "quoted" || status === "no_offer") return rfq;
-    if (nextDecision === "accepted") {
-      return pushRfqActivity(
-        { ...rfq, reviewStatus: "accepted", reviewingBy: "", reason: "", acceptedAt: at, acceptedBy: by },
-        "accepted",
-        { at, by }
-      );
-    }
-    if (nextDecision === "returned") {
-      const why = String(reason || "").trim();
-      return pushRfqActivity(
-        { ...rfq, reviewStatus: "returned", reviewingBy: "", reason: why, returnedAt: at },
-        "returned",
-        { at, detail: why, by }
-      );
-    }
-    return {
-      ...rfq,
-      reviewStatus: nextDecision,
-      reviewingBy: "",
-      reason: String(reason || "").trim(),
-    };
+    return plan.noop ? rfq : applyDecision(rfq, plan.patch);
   });
+  return failure || result;
 }
 
-function rfqHasPurchaseOrder(rfq) {
-  return Boolean(rfq?.buyerPo?.id || rfq?.buyerPo?.status === "created" || rfq?.buyerPo?.confirmedAt);
-}
+/**
+ * Accept / no offer, decided by the server. The browser checks the rules on its own copy first (it
+ * still holds cancel and revise state in this bridge), then the server decides, stamps the time and
+ * the staff member, and the browser only applies what the server returned.
+ * Falls back to the local rules when the server does not hold this RFQ.
+ */
+async function decideRfqRemote(id, { decision, reason } = {}) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const local = getAllRfqs().find((row) => row.id === id);
+  if (!local) return { ok: false, error: "missing" };
+  const plan = planDecision(local, { decision, reason, by: gate.account.email });
+  if (!plan.ok) return plan;
+  if (plan.noop) return { ok: true, rfq: local, changed: false };
 
-function canBuyerRequestCancel(rfq) {
-  if (!rfq) return false;
-  const status = inboxStatus(rfq);
-  if (status === "no_offer" || status === "cancelled") return false;
-  if (rfq.cancelStatus === "requested" || rfq.cancelStatus === "accepted") return false;
-  if (rfq.reverseStatus === "requested") return false;
-  if (rfqHasPurchaseOrder(rfq)) return false;
-  return true;
-}
-
-function canBuyerReverse(rfq) {
-  if (!rfq) return false;
-  const status = inboxStatus(rfq);
-  if (status === "no_offer" || status === "cancelled" || status === "revising") return false;
-  if (rfq.cancelStatus === "requested" || rfq.reverseStatus === "requested") return false;
-  if (rfqHasPurchaseOrder(rfq)) return false;
-  return true;
-}
-
-function rfqNeedsSalesReverse(rfq) {
-  const status = inboxStatus(rfq);
-  if (status === "revising") return false;
-  return status === "accepted" || status === "quoted" || Boolean(rfq?.tmsDocumentNo || rfq?.tmsId);
+  const remote = await decideRfqOnServer(id, { decision, reason });
+  if (remote.legacy) return decideRfq(id, { decision, reason });
+  if (!remote.ok) return { ok: false, error: remote.error === "staff" ? "staff" : remote.error || "server" };
+  if (remote.noop) {
+    const synced = patchRfqById(id, (rfq) => applyDecision(rfq, remote.patch || null));
+    return synced.ok ? { ok: true, rfq: synced.rfq, changed: false } : synced;
+  }
+  const applied = patchRfqById(id, (rfq) => applyDecision(rfq, remote.patch));
+  return applied.ok ? { ...applied, changed: true, mail: remote.mail || { ok: true, event: "" } } : applied;
 }
 
 function copyRfqToDraft(rfq) {
@@ -6310,164 +6550,132 @@ function notifySalesRfq(rfq, { title, body } = {}) {
   });
 }
 
-function patchEnterRevising(rfq, { at, by, kind = "reversed" } = {}) {
-  const stamp = at || new Date().toISOString();
+/** Apply a server (or local) cancel / reverse / decision patch to one RFQ copy. */
+function applyTransitionPatch(rfq, patch) {
+  const next = applyDecision(rfq, patch);
+  if (!patch?.enterRevising) return next;
   const versions = rfqRequestVersionList(rfq);
-  return pushRfqActivity(
-    {
-      ...rfq,
-      reviewStatus: "revising",
-      reverseStatus: "",
-      reverseRequestedAt: "",
-      cancelStatus: rfq.cancelStatus === "requested" ? "" : rfq.cancelStatus,
-      requestVersions: versions,
-      requestEffectiveVersion: rfqRequestEffectiveVersionNo({ ...rfq, requestVersions: versions }),
-    },
-    kind,
-    { at: stamp, by: by || "" }
-  );
+  return {
+    ...next,
+    requestVersions: versions,
+    requestEffectiveVersion: rfqRequestEffectiveVersionNo({ ...rfq, requestVersions: versions }),
+  };
+}
+
+function sendBuyerRequestNotices(notify, before, after, { serverMailed = false } = {}) {
+  const who = before.buyerName || before.buyerEmail || "Buyer";
+  const id = before.id;
+  if (notify === "reverse_requested") {
+    if (!serverMailed) notifySalesRfq(before, { title: `Reverse requested ${id}`, body: `${who} asked to reverse ${id}.` });
+    if (!serverMailed) deliverRfqReverseRequestedEmail(after || before);
+  } else if (notify === "cancelled") {
+    if (!serverMailed) notifySalesRfq(before, { title: `RFQ cancelled ${id}`, body: `${who} cancelled ${id}.` });
+  } else if (notify === "cancel_requested") {
+    if (!serverMailed) notifySalesRfq(before, { title: `Cancel requested ${id}`, body: `${who} asked to cancel ${id}.` });
+    if (!serverMailed) deliverRfqCancelRequestedEmail(after || before);
+  }
+}
+
+/** Buyer asks to cancel or reverse. `kind` is `buyer_cancel` or `buyer_reverse`. Local rules only (fallback). */
+function runBuyerRequestLocal(id, kind) {
+  const user = getUser();
+  if (!user?.email) return { ok: false, error: "auth" };
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
+  const plan = planCancelReverse(current, kind);
+  if (!plan.ok) return plan;
+  if (plan.noop) return { ok: true, rfq: current, changed: false };
+  const result = patchRfqById(id, (rfq) => applyTransitionPatch(rfq, plan.patch));
+  if (result.ok) sendBuyerRequestNotices(plan.notify, current, result.rfq);
+  return result.ok ? { ...result, changed: true } : result;
+}
+
+/**
+ * Buyer cancel / reverse decided by the server. The browser checks its own copy first (it still holds
+ * quote and PO state in this bridge), the server stamps the time, the browser applies what came back.
+ */
+async function runBuyerRequestRemote(id, kind) {
+  const user = getUser();
+  if (!user?.email) return { ok: false, error: "auth" };
+  const current = getAllRfqs().find((r) => r.id === id);
+  if (!current) return { ok: false, error: "missing" };
+  if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
+  const plan = planCancelReverse(current, kind);
+  if (!plan.ok) return plan;
+  if (plan.noop) return { ok: true, rfq: current, changed: false };
+
+  const remote = await decideRfqOnServer(id, { decision: kind });
+  if (remote.legacy) return runBuyerRequestLocal(id, kind);
+  if (!remote.ok) return { ok: false, error: remote.error === "locked" ? "locked" : remote.error || "server" };
+  const result = patchRfqById(id, (rfq) => applyTransitionPatch(rfq, remote.patch));
+  if (!result.ok) return result;
+  if (remote.noop) return { ...result, changed: false };
+  sendBuyerRequestNotices(remote.notify || plan.notify, current, result.rfq, { serverMailed: true });
+  return { ...result, changed: true };
 }
 
 function requestRfqReverse(id) {
-  const user = getUser();
-  if (!user?.email) return { ok: false, error: "auth" };
-  const current = getAllRfqs().find((r) => r.id === id);
-  if (!current) return { ok: false, error: "missing" };
-  if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
-  if (current.reverseStatus === "requested") return { ok: true, rfq: current };
-  if (!canBuyerReverse(current)) return { ok: false, error: "locked" };
-  if (!rfqNeedsSalesReverse(current)) {
-    return patchRfqById(id, (rfq) => patchEnterRevising(rfq, { kind: "reversed" }));
-  }
-  const result = patchRfqById(id, (rfq) => {
-    const at = new Date().toISOString();
-    return pushRfqActivity(
-      {
-        ...rfq,
-        reverseStatus: "requested",
-        reverseRequestedAt: at,
-      },
-      "reverse_requested",
-      { at }
-    );
-  });
-  if (result.ok) {
-    notifySalesRfq(current, {
-      title: `Reverse requested ${id}`,
-      body: `${current.buyerName || current.buyerEmail || "Buyer"} asked to reverse ${id}.`,
-    });
-    deliverRfqReverseRequestedEmail(result.rfq || current);
-  }
-  return result;
+  return runBuyerRequestLocal(id, "buyer_reverse");
 }
 
 function requestRfqCancel(id) {
-  const user = getUser();
-  if (!user?.email) return { ok: false, error: "auth" };
-  const current = getAllRfqs().find((r) => r.id === id);
-  if (!current) return { ok: false, error: "missing" };
-  if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
-  if (current.cancelStatus === "requested") return { ok: true, rfq: current };
-  if (!canBuyerRequestCancel(current)) return { ok: false, error: "locked" };
-  const instant = inboxStatus(current) === "revising" || !rfqNeedsSalesReverse(current);
-  if (instant) {
-    const result = patchRfqById(id, (rfq) => {
-      const at = new Date().toISOString();
-      return pushRfqActivity(
-        {
-          ...rfq,
-          cancelStatus: "accepted",
-          cancelKind: "cancel",
-          reviewStatus: "cancelled",
-          reverseStatus: "",
-          cancelledAt: at,
-        },
-        "cancel_accepted",
-        { at, detail: "buyer" }
-      );
-    });
-    if (result.ok) {
-      notifySalesRfq(current, {
-        title: `RFQ cancelled ${id}`,
-        body: `${current.buyerName || current.buyerEmail || "Buyer"} cancelled ${id}.`,
-      });
-    }
-    return result;
-  }
+  return runBuyerRequestLocal(id, "buyer_cancel");
+}
+
+function requestRfqReverseRemote(id) {
+  return runBuyerRequestRemote(id, "buyer_reverse");
+}
+
+function requestRfqCancelRemote(id) {
+  return runBuyerRequestRemote(id, "buyer_cancel");
+}
+
+/** Sales answer to a buyer's cancel / reverse request. Local rules only (fallback). */
+function decideCancelReverseLocal(id, kind) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  let failure = null;
   const result = patchRfqById(id, (rfq) => {
-    const at = new Date().toISOString();
-    return pushRfqActivity(
-      {
-        ...rfq,
-        cancelStatus: "requested",
-        cancelKind: "cancel",
-        cancelRequestedAt: at,
-      },
-      "cancel_requested",
-      { at }
-    );
+    const plan = planCancelReverse(rfq, kind, { by: gate.account.email });
+    if (!plan.ok) {
+      failure = plan;
+      return rfq;
+    }
+    return plan.noop ? rfq : applyTransitionPatch(rfq, plan.patch);
   });
-  if (result.ok) {
-    notifySalesRfq(current, {
-      title: `Cancel requested ${id}`,
-      body: `${current.buyerName || current.buyerEmail || "Buyer"} asked to cancel ${id}.`,
-    });
-    deliverRfqCancelRequestedEmail(result.rfq || current);
-  }
-  return result;
+  return failure || result;
+}
+
+async function decideCancelReverseRemote(id, kind) {
+  const gate = requireStaff();
+  if (!gate.ok) return gate;
+  const local = getAllRfqs().find((row) => row.id === id);
+  if (!local) return { ok: false, error: "missing" };
+  const plan = planCancelReverse(local, kind, { by: gate.account.email });
+  if (!plan.ok) return plan;
+  if (plan.noop) return { ok: true, rfq: local, changed: false };
+  const remote = await decideRfqOnServer(id, { decision: kind });
+  if (remote.legacy) return decideCancelReverseLocal(id, kind);
+  if (!remote.ok) return { ok: false, error: remote.error === "staff" ? "staff" : remote.error || "server" };
+  const applied = patchRfqById(id, (rfq) => applyTransitionPatch(rfq, remote.patch));
+  return applied.ok ? { ...applied, changed: !remote.noop, mail: remote.mail || { ok: true, event: "" } } : applied;
 }
 
 function decideRfqReverse(id, { accept } = {}) {
-  const gate = requireStaff();
-  if (!gate.ok) return gate;
-  return patchRfqById(id, (rfq) => {
-    if (rfq.reverseStatus !== "requested") return rfq;
-    const at = new Date().toISOString();
-    if (accept) {
-      return patchEnterRevising(rfq, { at, by: gate.account.email, kind: "reverse_accepted" });
-    }
-    return pushRfqActivity(
-      {
-        ...rfq,
-        reverseStatus: "declined",
-        reverseDeclinedAt: at,
-      },
-      "reverse_declined",
-      { at, by: gate.account.email }
-    );
-  });
+  return decideCancelReverseLocal(id, accept ? "reverse_accept" : "reverse_decline");
 }
 
 function decideRfqCancel(id, { accept } = {}) {
-  const gate = requireStaff();
-  if (!gate.ok) return gate;
-  return patchRfqById(id, (rfq) => {
-    if (rfq.cancelStatus !== "requested") return rfq;
-    if (accept) {
-      const at = new Date().toISOString();
-      return pushRfqActivity(
-        {
-          ...rfq,
-          cancelStatus: "accepted",
-          reviewStatus: "cancelled",
-          cancelledAt: at,
-          cancelledBy: gate.account.email,
-        },
-        "cancel_accepted",
-        { at, by: gate.account.email }
-      );
-    }
-    const at = new Date().toISOString();
-    return pushRfqActivity(
-      {
-        ...rfq,
-        cancelStatus: "declined",
-        cancelDeclinedAt: at,
-      },
-      "cancel_declined",
-      { at, by: gate.account.email }
-    );
-  });
+  return decideCancelReverseLocal(id, accept ? "cancel_accept" : "cancel_decline");
+}
+
+function decideRfqReverseRemote(id, { accept } = {}) {
+  return decideCancelReverseRemote(id, accept ? "reverse_accept" : "reverse_decline");
+}
+
+function decideRfqCancelRemote(id, { accept } = {}) {
+  return decideCancelReverseRemote(id, accept ? "cancel_accept" : "cancel_decline");
 }
 
 function appOrigin() {
@@ -6602,7 +6810,8 @@ function resubmitRfq(id, lines) {
       { at }
     );
   });
-  if (result.ok && inboxStatus(current) === "revising") {
+  if (result.ok) pushBuyerContentToServer(result.rfq || current, { resubmit: true });
+  if (result.ok && inboxStatus(current) === "revising" && !isHeldRfq(id)) {
     notifySalesRfq(result.rfq || current, {
       title: `RFQ resubmitted ${id}`,
       body: `${current.buyerName || current.buyerEmail || "Buyer"} resubmitted ${id}.`,
@@ -6633,7 +6842,7 @@ function updateBuyerRfqDetails(id, patch = {}) {
   if (!current) return { ok: false, error: "missing" };
   if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
   if (buyerRfqDetailsLocked(current)) return { ok: false, error: "locked" };
-  return patchRfqById(id, (rfq) => {
+  const edited = patchRfqById(id, (rfq) => {
     let nextLines = Array.isArray(rfq.lines) ? rfq.lines.slice() : [];
     const removeIds = new Set((patch.removeProductIds || []).map(String));
     if (removeIds.size) {
@@ -6686,6 +6895,8 @@ function updateBuyerRfqDetails(id, patch = {}) {
       lines: nextLines,
     };
   });
+  if (edited.ok) pushBuyerContentToServer(edited.rfq);
+  return edited;
 }
 
 function adminFollowUpWhatsapp(rfq) {
@@ -7385,9 +7596,11 @@ function leanSharedRfq(rfq) {
       attachments: Array.isArray(line?.attachments) ? line.attachments.map(leanSharedAttachment) : line?.attachments,
     };
   };
+  /* An RFQ the server holds never leaves this browser with Sales' unsent prices: a shared copy carries only what was delivered. */
+  const shown = serverHeldIds.has(rfq.id) ? deliveredLinePrices(rfq) : rfq.lines || [];
   return {
     ...rfq,
-    lines: (rfq.lines || []).map(leanLine),
+    lines: shown.map(leanLine),
     requestVersions: Array.isArray(rfq.requestVersions)
       ? rfq.requestVersions.map((version) => ({
           ...version,
@@ -7439,7 +7652,7 @@ function flushRfqsRemote() {
   rfqRemoteChain = rfqRemoteChain
     .then(async () => {
       const remote = await fetchRemoteKv([RFQS_KEY]);
-      const merged = mergeRfqMaps(latest, remote?.[RFQS_KEY] || {});
+      const merged = withoutHeldRfqs(mergeRfqMaps(latest, remote?.[RFQS_KEY] || {}));
       writeLocalOnly(RFQS_KEY, merged);
       const lean = leanSharedRfqsMap(merged);
       const saved = await persistKvNow(RFQS_KEY, lean);
@@ -7470,13 +7683,13 @@ if (typeof document !== "undefined" && typeof document.addEventListener === "fun
 }
 
 function persistSharedRfq(buyerKey, rfq) {
-  if (!rfq?.id) return;
+  if (!rfq?.id || isHeldRfq(rfq.id)) return;
   enqueueSharedPost({
     upsertRfq: true,
     buyerKey: buyerKey || GUEST_KEY,
     rfq: leanSharedRfq(rfq),
   });
-  persistRfqsRemote(getRfqsMap(), { now: true });
+  persistRfqsRemote(withoutHeldRfqs(getRfqsMap()), { now: true });
 }
 
 function dumpLocalSharedKv() {
@@ -7530,15 +7743,15 @@ function applySharedStore(kv) {
       return;
     }
     if (key === RFQS_KEY) {
-      const merged = mergeRfqMaps(readJson(RFQS_KEY, {}), value || {});
-      if (JSON.stringify(merged) !== JSON.stringify(readJson(RFQS_KEY, {}))) {
+      const merged = withoutHeldRfqs(mergeRfqMaps(readPersistedRfqs(), value || {}));
+      if (JSON.stringify(merged) !== JSON.stringify(readPersistedRfqs())) {
         writeLocalOnly(RFQS_KEY, merged);
         changed = true;
       }
       return;
     }
     if (key === QUOTE_SNAPSHOTS_KEY) {
-      const merged = mergeQuoteSnapshots(value || {}, getQuoteSnapshots());
+      const merged = withoutHeldSnapshots(mergeQuoteSnapshots(value || {}, getQuoteSnapshots()));
       if (JSON.stringify(merged) !== JSON.stringify(getQuoteSnapshots())) {
         writeLocalOnly(QUOTE_SNAPSHOTS_KEY, merged);
         changed = true;
@@ -7704,8 +7917,8 @@ function refreshRemoteRfqs() {
       };
       const remoteRfqs = mergeRfqMaps(tableRfqs || {}, kv?.[RFQS_KEY] || {});
       if (!Object.keys(remoteRfqs).length) return;
-      const merged = mergeRfqMaps(readJson(RFQS_KEY, {}), remoteRfqs);
-      if (JSON.stringify(merged) === JSON.stringify(readJson(RFQS_KEY, {}))) return;
+      const merged = withoutHeldRfqs(mergeRfqMaps(readPersistedRfqs(), remoteRfqs));
+      if (JSON.stringify(merged) === JSON.stringify(readPersistedRfqs())) return;
       writeLocalOnly(RFQS_KEY, merged);
       emitStoreChange();
     })
@@ -7757,6 +7970,204 @@ function beginLocalSharedSync() {
   }
 }
 
+
+/* ---- Server-owned RFQ fields -------------------------------------------------------------
+ * The server decides status, decisions, cancel / reverse, owner, quote versions and the activity log.
+ * The browser keeps a working copy for the rest and, after every sync, takes the server's value for
+ * the fields it owns. An RFQ made on another device is added from the server's copy. */
+let serverSyncTimer = 0;
+let serverSyncBusy = false;
+let serverWritesInFlight = 0;
+const draftTimers = new Map();
+const draftMigrated = new Set();
+
+function rfqFromServerEntry(entry) {
+  const owned = entry.owned || {};
+  const payload = entry.payload && typeof entry.payload === "object" ? entry.payload : {};
+  const lines = Array.isArray(payload.lines) && payload.lines.length ? payload.lines : Array.isArray(entry.lines) ? entry.lines : [];
+  const base = {
+    ...payload,
+    id: owned.id,
+    lines,
+    submittedAt: payload.submittedAt || owned.createdAt || "",
+    project: payload.project || entry.project || "",
+    channel: payload.channel || entry.channel || "rfq",
+    askKind: payload.askKind || entry.askKind || "quote",
+    companyName: payload.companyName || entry.companyName || "",
+  };
+  return mergeOwned(base, owned);
+}
+
+
+/** Sales alerts from what the server says happened after this Portal tab started looking. */
+function raiseServerAlerts(entries, knownIds, map) {
+  const nameOf = (id) => {
+    for (const list of Object.values(map || {})) {
+      const hit = (Array.isArray(list) ? list : []).find((r) => r.id === id);
+      if (hit) return hit.buyerName || hit.buyerEmail || "Buyer";
+    }
+    return "Buyer";
+  };
+  const known = new Set(knownIds);
+  const stamps = [];
+  for (const entry of entries) {
+    const o = entry.owned || {};
+    stamps.push(Date.parse(o.createdAt) || 0, ...(o.activity || []).map((row) => Date.parse(row.at) || 0));
+  }
+  if (alertBaseline === null) {
+    alertBaseline = Math.max(0, ...stamps);
+    return;
+  }
+  let newest = alertBaseline;
+  const href = (id) => `${adminOrigin()}/?rfq=${encodeURIComponent(id)}`;
+  for (const entry of entries) {
+    const o = entry.owned || {};
+    const who = nameOf(o.id);
+    const created = Date.parse(o.createdAt) || 0;
+    if (!known.has(o.id) && created > alertBaseline && !alertedKeys.has(`${o.id}|new`)) {
+      alertedKeys.add(`${o.id}|new`);
+      notifyAdmins({ kind: "rfq", memory: true, title: `New RFQ ${o.id}`, body: `${who} submitted a new RFQ from Mattex Marketplace.`, href: href(o.id) });
+    }
+    newest = Math.max(newest, created);
+    for (const row of o.activity || []) {
+      const at = Date.parse(row.at) || 0;
+      newest = Math.max(newest, at);
+      const key = `${o.id}|${row.kind}|${row.at}`;
+      if (at <= alertBaseline || alertedKeys.has(key)) continue;
+      const title =
+        row.kind === "cancel_requested" ? `Cancel requested ${o.id}` :
+        row.kind === "reverse_requested" ? `Reverse requested ${o.id}` :
+        row.kind === "resubmitted" ? `RFQ resubmitted ${o.id}` :
+        row.kind === "cancel_accepted" && row.detail === "buyer" ? `RFQ cancelled ${o.id}` : "";
+      if (!title) continue;
+      alertedKeys.add(key);
+      notifyAdmins({ kind: "rfq", memory: true, title, body: `${who}: ${title}.`, href: href(o.id) });
+    }
+  }
+  alertBaseline = newest;
+}
+
+async function syncServerRfqs() {
+  if (typeof window === "undefined" || serverSyncBusy || serverWritesInFlight > 0 || draftTimers.size > 0) return;
+  const portal = isPortalSurface();
+  if (portal ? !getStaffSession()?.email : !getUser()?.email) return;
+  serverSyncBusy = true;
+  try {
+    const map = getRfqsMap();
+    const known = [];
+    Object.values(map || {}).forEach((list) => (Array.isArray(list) ? list : []).forEach((rfq) => rfq?.id && known.push(rfq.id)));
+    const res = await syncRfqsFromServer({ as: portal ? "staff" : "buyer", known });
+    if (!res.ok || serverWritesInFlight > 0 || draftTimers.size > 0) return;
+    const latest = getRfqsMap();
+    let changed = false;
+    for (const entry of res.rfqs) {
+      const id = entry?.owned?.id;
+      if (!id) continue;
+      serverHeldIds.add(id);
+      let foundKey = "";
+      let foundIdx = -1;
+      for (const key of Object.keys(latest)) {
+        const idx = (Array.isArray(latest[key]) ? latest[key] : []).findIndex((r) => r.id === id);
+        if (idx >= 0) {
+          foundKey = key;
+          foundIdx = idx;
+          break;
+        }
+      }
+      const current = foundIdx >= 0 ? latest[foundKey][foundIdx] : null;
+      if (!current && !entry.payload) continue;
+      const next = current ? mergeOwned(current, entry.owned) : rfqFromServerEntry(entry);
+      const nextKey = normalizeEmail(next.buyerEmail) || GUEST_KEY;
+      if (current && nextKey === foundKey && JSON.stringify(next) === JSON.stringify(current)) continue;
+      if (current) latest[foundKey] = latest[foundKey].filter((r) => r.id !== id);
+      latest[nextKey] = [next, ...(Array.isArray(latest[nextKey]) ? latest[nextKey] : [])];
+      changed = true;
+    }
+    if (portal) raiseServerAlerts(res.rfqs, known, latest);
+    purgeHeldLocalTraces();
+    /* Take the server-held RFQs out of browser storage (also clears copies stored before they lived on the server). */
+    const { persisted, memory } = splitRfqMap(latest);
+    memoryRfqMap = memory;
+    if (JSON.stringify(persisted) !== JSON.stringify(readJson(RFQS_KEY, {}))) writeLocalOnly(RFQS_KEY, persisted);
+    if (changed) emitStoreChange();
+    if (portal) {
+      /* Prices typed before the draft lived on the server: send them once. */
+      for (const entry of res.rfqs) {
+        const id = entry?.owned?.id;
+        if (!id || entry.owned.draft || draftMigrated.has(id)) continue;
+        draftMigrated.add(id);
+        const local = getAllRfqs().find((r) => r.id === id);
+        if ((local?.lines || []).some((line) => line.noOffer || Number(line.quotedUnitPrice) > 0)) queueQuoteDraft(id);
+      }
+    }
+  } finally {
+    serverSyncBusy = false;
+  }
+}
+
+function startServerRfqSync() {
+  if (typeof window === "undefined") return;
+  window.clearInterval(serverSyncTimer);
+  syncServerRfqs();
+  serverSyncTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") syncServerRfqs();
+  }, 10000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") syncServerRfqs();
+  });
+}
+
+/** Keep Sales' unsent prices on the server. Waits a moment so typing is one save, and a sync never overwrites a pending edit. */
+function queueQuoteDraft(id) {
+  if (typeof window === "undefined" || !id) return;
+  window.clearTimeout(draftTimers.get(id));
+  draftTimers.set(
+    id,
+    window.setTimeout(async () => {
+      const rfq = getAllRfqs().find((row) => row.id === id);
+      serverWritesInFlight += 1;
+      try {
+        if (rfq) await saveQuoteDraft(id, draftPricesOf(rfq.lines));
+      } finally {
+        serverWritesInFlight -= 1;
+        draftTimers.delete(id);
+      }
+      syncServerRfqs();
+    }, 400)
+  );
+}
+
+/** What the member typed into an RFQ the server holds. Inline photos stay in the browser. */
+function buyerContentOf(rfq) {
+  const keep = (line) => (String(line?.image || "").startsWith("data:") ? { ...line, image: "" } : line);
+  return {
+    lines: (rfq.lines || []).map(keep),
+    note: rfq.note || "",
+    address: rfq.address || "",
+    responseDate: rfq.responseDate || "",
+    quotationDeadline: rfq.quotationDeadline || "",
+    deliveryDate: rfq.deliveryDate || "",
+    deliveryMode: rfq.deliveryMode || "",
+    deliveryLots: rfq.deliveryLots || [],
+    project: rfq.project || "",
+    projects: rfq.projects || [],
+    requestVersions: rfq.requestVersions || [],
+    requestEffectiveVersion: rfq.requestEffectiveVersion || 0,
+  };
+}
+
+/** Tell the server about the member's edit or resubmit. If it says no, the next sync puts the server's state back. */
+async function pushBuyerContentToServer(rfq, { resubmit = false } = {}) {
+  if (!rfq?.id) return;
+  serverWritesInFlight += 1;
+  try {
+    await pushBuyerContent(rfq.id, buyerContentOf(rfq), { resubmit });
+  } finally {
+    serverWritesInFlight -= 1;
+  }
+  syncServerRfqs();
+}
+
 function startSharedStoreSync() {
   if (typeof window === "undefined") return;
   window.clearInterval(sharedStoreTimer);
@@ -7775,6 +8186,7 @@ function startSharedStoreSync() {
     });
   }
   if (isPortalSurface()) verifyStaffSession();
+  startServerRfqSync();
 }
 
 applySavedProductPatches();
@@ -7896,6 +8308,7 @@ export {
   requireBuyerAuth,
   addFromStorefront,
   consumePendingInviteContinue,
+  cancelPendingWhatsappInvite,
   setAuthInviteHidden,
   isAuthInviteHidden,
   consumePendingAfterAuth,
@@ -7956,14 +8369,19 @@ export {
   getAllRfqs,
   startRfqReview,
   decideRfq,
+  decideRfqRemote,
   requestRfqCancel,
   requestRfqReverse,
+  requestRfqCancelRemote,
+  requestRfqReverseRemote,
   canBuyerRequestCancel,
   canBuyerReverse,
   rfqNeedsSalesReverse,
   copyRfqToDraft,
   decideRfqCancel,
   decideRfqReverse,
+  decideRfqCancelRemote,
+  decideRfqReverseRemote,
   openRfqEmailPreview,
   inferRfqEmailPreviewKind,
   deliverRfqAcceptedEmail,
@@ -7978,8 +8396,11 @@ export {
   rfqDiscussEmailHref,
   openWhatsappChat,
   quoteRfqToBuyer,
+  quoteRfqToBuyerRemote,
   createGuestQuoteSnapshot,
+  createGuestQuoteSnapshotRemote,
   markGuestQuoteWhatsappSent,
+  markGuestQuoteWhatsappSentRemote,
   getGuestQuoteSnapshot,
   quoteVersionList,
   rfqRequestVersionList,
@@ -8007,6 +8428,7 @@ export {
   rfqCanSendWhatsappQuote,
   formatBuyerPhoneDisplay,
   createBuyerPurchaseOrder,
+  createBuyerPurchaseOrderRemote,
   rfqBuyerKind,
   isDev1InboxRfq,
   setRfqLineQuotedPrice,
@@ -8014,6 +8436,7 @@ export {
   setRfqLineRemark,
   setRfqLineNoOffer,
   assignRfqToBuyer,
+  assignRfqToBuyerRemote,
   setRfqBuyerPhone,
   uploadRfqToTms,
   quotePdfItems,

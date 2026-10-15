@@ -153,6 +153,20 @@ function readCookie(request, name) {
   return hit ? decodeURIComponent(hit.slice(name.length + 1)) : "";
 }
 
+/** Short-lived signed upload ticket. `exp` is required by unsign. */
+export function signTicket(payload) {
+  return sign({ ...payload, kind: "upload", exp: Date.now() + 10 * 60 * 1000 });
+}
+
+export function readTicket(value) {
+  try {
+    const payload = unsign(value);
+    return payload && payload.kind === "upload" && payload.id ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
 export function readSession(request, kind) {
   try {
     const payload = unsign(readCookie(request, COOKIES[kind]));
@@ -183,6 +197,22 @@ async function findAccount(email, kind) {
   if (kind) query = query.eq("kind", kind);
   const { data } = await query.maybeSingle();
   return data || null;
+}
+
+/**
+ * Is this email a registered, enabled, not-rejected buyer account?
+ * Returns { checked:false } when accounts are not reachable from here (local dev without Supabase).
+ */
+export async function lookupBuyerAccount(email) {
+  let client;
+  try {
+    client = db();
+  } catch {
+    return { checked: false };
+  }
+  const { data } = await client.from("user_accounts").select(PUBLIC_COLUMNS).eq("email", normalizeEmail(email)).eq("kind", "buyer").maybeSingle();
+  const ok = Boolean(data) && data.enabled !== false && data.approval_status !== "rejected";
+  return { checked: true, ok, account: ok ? { email: data.email, name: data.name || "", phone: data.phone || "" } : null };
 }
 
 async function verifyPassword(email, kind, password) {

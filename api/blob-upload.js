@@ -1,4 +1,7 @@
+import { randomBytes } from "node:crypto";
 import { handleUpload } from "@vercel/blob/client";
+import { readSession, readTicket, signTicket } from "./auth.js";
+import { takeUploadTicket } from "../server/upload-limit.js";
 
 /** SSR polyfill sets globalThis.window in the Vite process; @vercel/blob then refuses to mint a client token. */
 async function withoutBrowserGlobals(fn) {
@@ -28,14 +31,52 @@ async function withoutBrowserGlobals(fn) {
   }
 }
 
+const GUEST_TICKETS_PER_HOUR = 40;
+const MEMBER_TICKETS_PER_HOUR = 400;
+
+function fail(message, status) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+/** A browser on another site must not mint upload tokens through a visitor's session. */
+function assertSameSite(request) {
+  const origin = request.headers.get("origin");
+  if (!origin) return;
+  let originHost = "";
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    throw fail("forbidden", 403);
+  }
+  const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || "";
+  if (host && originHost !== host) throw fail("forbidden", 403);
+}
+
+/**
+ * Guests may upload (they can submit RFQs), but only with a short-lived signed ticket, a per-client
+ * hourly cap, and file type and size limits. No login is required.
+ */
+async function issueTicket(request) {
+  assertSameSite(request);
+  const member = readSession(request, "buyer") || readSession(request, "staff");
+  const taken = await takeUploadTicket(request, member ? MEMBER_TICKETS_PER_HOUR : GUEST_TICKETS_PER_HOUR);
+  if (!taken.ok) throw fail("too many uploads, try again later", 429);
+  return { ticket: signTicket({ id: randomBytes(9).toString("base64url"), who: member ? "member" : "guest" }) };
+}
+
 export async function handleRfqBlobUpload(body, request) {
+  if (body?.type === "ticket") return issueTicket(request);
   return withoutBrowserGlobals(() =>
     handleUpload({
       body,
       request,
-      onBeforeGenerateToken: async (pathname) => {
+      onBeforeGenerateToken: async (pathname, clientPayload) => {
+        assertSameSite(request);
         const path = String(pathname || "");
         if (path.startsWith("products/")) {
+          if (!readSession(request, "staff")) throw fail("auth", 401);
           return {
             allowedContentTypes: ["image/webp", "image/jpeg"],
             addRandomSuffix: true,
@@ -46,7 +87,10 @@ export async function handleRfqBlobUpload(body, request) {
         if (!path.startsWith("rfq/")) {
           throw new Error("Invalid upload path");
         }
+        const ticket = readTicket(String(clientPayload || ""));
+        if (!ticket) throw fail("upload ticket required", 401);
         return {
+          tokenPayload: JSON.stringify({ ticket: ticket.id }),
           allowedContentTypes: [
             "application/pdf",
             "image/jpeg",
@@ -69,6 +113,6 @@ export async function POST(request) {
     return Response.json(json);
   } catch (error) {
     console.error("blob-upload", error);
-    return Response.json({ error: error?.message || "upload failed" }, { status: 400 });
+    return Response.json({ error: error?.message || "upload failed" }, { status: Number(error?.status) || 400 });
   }
 }

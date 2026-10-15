@@ -4,6 +4,7 @@ import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { readSession } from "./auth.js";
 import { handleCatalogGroupsGet, handleCatalogGroupsSave } from "../server/catalog-groups.js";
+import { toPublicProduct } from "../server/public-catalog.js";
 
 const DIR = path.join(process.cwd(), "data");
 const SNAPSHOT_FILE = path.join(DIR, "catalog-snapshot.json");
@@ -289,7 +290,7 @@ function catalogForCaller(snapshot, request) {
   if (!snapshot || readSession(request, "staff")) return snapshot;
   return {
     ...snapshot,
-    products: (snapshot.products || []).filter(buyerVisibleProduct),
+    products: (snapshot.products || []).filter(buyerVisibleProduct).map(toPublicProduct),
   };
 }
 

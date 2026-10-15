@@ -27,6 +27,8 @@ supabase/.temp
 .env*
 .local-shared-store.json
 .local-shared-store.lock
+.local-rfq-store.json
+.local-rfq-store.json.*.tmp
 data/catalog-snapshot.json
 data/catalog-version.json
 data/local-buyer-auth.json

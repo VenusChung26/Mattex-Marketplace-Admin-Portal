@@ -1,7 +1,8 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { handleRfqBlobUpload } from "./api/blob-upload.js";
-import { handleSharedStoreGet, handleSharedStorePost } from "./api/shared-store.js";
+import { handleRfqGet, handleRfqPost } from "./api/rfq.js";
+import { handleSharedStoreGet, handleSharedStorePost } from "./server/shared-store.js";
 import { handleTmsLogin, handleTmsStatus, handleTmsSubmit } from "./api/tms-submit.js";
 import { handleSendEmail } from "./api/send-email.js";
 import { handleAuth } from "./api/auth.js";
@@ -152,6 +153,29 @@ function jsonPlugin() {
           res.end(JSON.stringify(json));
           return;
         }
+        if (path === "/api/rfq" && (req.method === "GET" || req.method === "POST")) {
+          let posted = {};
+          if (req.method === "POST") {
+            try {
+              ({ body: posted } = await readJsonBody(req));
+            } catch {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+              return;
+            }
+          }
+          const request = new Request(`http://${req.headers.host || "localhost:5178"}${req.url}`, {
+            method: "GET",
+            headers: { cookie: String(req.headers.cookie || "") },
+          });
+          const result = req.method === "POST" ? await handleRfqPost(posted, request) : await handleRfqGet(request);
+          res.statusCode = result.status || 200;
+          res.setHeader("Content-Type", "application/json");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(JSON.stringify(result.body));
+          return;
+        }
         if (path === "/api/shared-store" && req.method === "POST") {
           let body = {};
           try {
@@ -260,7 +284,13 @@ function jsonPlugin() {
           if (isBlob) {
             const request = new Request(`http://${req.headers.host || "localhost:5178"}/api/blob-upload`, {
               method: "POST",
-              headers: { "content-type": "application/json", ...(req.headers.host ? { host: req.headers.host } : {}) },
+              headers: {
+                "content-type": "application/json",
+                ...(req.headers.host ? { host: req.headers.host } : {}),
+                ...(req.headers.origin ? { origin: req.headers.origin } : {}),
+                ...(req.headers.cookie ? { cookie: req.headers.cookie } : {}),
+                ...(req.headers["x-forwarded-for"] ? { "x-forwarded-for": req.headers["x-forwarded-for"] } : {}),
+              },
               body: raw,
             });
             const json = await handleRfqBlobUpload(body, request);
@@ -320,7 +350,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   if (env.BLOB_READ_WRITE_TOKEN) process.env.BLOB_READ_WRITE_TOKEN = env.BLOB_READ_WRITE_TOKEN;
   for (const [key, value] of Object.entries(env)) {
-    if (key.startsWith("TMS_") || key.startsWith("RESEND_") || key === "SUPABASE_SERVICE_ROLE_KEY" || key === "SESSION_SECRET" || key === "OPENAI_API_KEY" || key === "SPEC_MATCH_API_KEY" || key === "LOCAL_STAFF_EMAIL" || key === "LOCAL_STAFF_PASSWORD") {
+    if (key.startsWith("TMS_") || key.startsWith("RESEND_") || key.startsWith("RFQ_") || key === "SUPABASE_SERVICE_ROLE_KEY" || key === "SESSION_SECRET" || key === "OPENAI_API_KEY" || key === "SPEC_MATCH_API_KEY" || key === "LOCAL_STAFF_EMAIL" || key === "LOCAL_STAFF_PASSWORD") {
       process.env[key] = value;
     }
   }

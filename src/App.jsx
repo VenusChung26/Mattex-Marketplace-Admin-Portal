@@ -13,6 +13,7 @@ import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import RfqPage from "./pages/RfqPage";
 import RfqsPage from "./pages/RfqsPage";
+import PurchaseOrdersPage from "./pages/PurchaseOrdersPage";
 import WhatsappPage from "./pages/WhatsappPage";
 import WhatsappChatPage from "./pages/WhatsappChatPage";
 import SupplierPage from "./pages/SupplierPage";
@@ -166,6 +167,7 @@ export default function App() {
           <Route path="/promo" element={<Navigate to="/zh/promo" replace />} />
           <Route path="/spec-match" element={<PreferredRedirect to={SHOW_SPEC_MATCH ? "/spec-match" : "/"} />} />
           <Route path="/rfqs" element={<PreferredRedirect to={SHOW_RFQ ? "/rfqs" : "/"} />} />
+          <Route path="/pos" element={<PreferredRedirect to={SHOW_RFQ ? "/pos" : "/"} />} />
           <Route path="/whatsapp" element={<PreferredRedirect to="/whatsapp" />} />
           <Route path="/whatsapp-chat" element={<PreferredRedirect to="/whatsapp-chat" />} />
           <Route path="/details/:id" element={<LegacyParam prefix="details" />} />
@@ -194,6 +196,7 @@ export default function App() {
             <Route path="rfq" element={<RfqPage />} />
             <Route path="spec-match" element={SHOW_SPEC_MATCH ? <SpecMatchPage /> : <Navigate to=".." replace />} />
             <Route path="rfqs" element={<RfqsRoute />} />
+            <Route path="pos" element={SHOW_RFQ ? <PurchaseOrdersPage /> : <Navigate to=".." replace />} />
             <Route path="whatsapp" element={<WhatsappPage />} />
             <Route path="whatsapp/:id" element={<WhatsappPage />} />
             <Route path="whatsapp-chat" element={<WhatsappChatPage />} />

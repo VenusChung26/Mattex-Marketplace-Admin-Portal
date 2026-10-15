@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { AdminSearchBar, FilterTabs } from "./AdminControls";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
+import { salesLine } from "../../lib/rfqRules.js";
 import { useStore } from "../../hooks/useStore";
 import { PasswordChecklist, PasswordInput } from "../../components/AccountForm";
 import AttachmentLinks, { linePhotoSrc, PreviewThumb } from "../../components/AttachmentLinks";
@@ -31,9 +34,9 @@ import {
   resendStaffInvite,
   updateStaff,
   changeOwnStaffPassword,
-  decideRfq,
-  decideRfqCancel,
-  decideRfqReverse,
+  decideRfqRemote,
+  decideRfqCancelRemote,
+  decideRfqReverseRemote,
   deliverAdminAlertEmails,
   formatPrice,
   displayLeadTime,
@@ -66,11 +69,11 @@ import {
   markAdminAlertsSeen,
   pullSharedStore,
   refreshRemoteRfqs,
-  assignRfqToBuyer,
+  assignRfqToBuyerRemote,
   setRfqBuyerPhone,
   buyerWhatsappHref,
-  createGuestQuoteSnapshot,
-  markGuestQuoteWhatsappSent,
+  createGuestQuoteSnapshotRemote,
+  markGuestQuoteWhatsappSentRemote,
   rfqQuotedOffline,
   rfqCanSendWhatsappQuote,
   formatBuyerPhoneDisplay,
@@ -82,7 +85,7 @@ import {
   publishHardBlockers,
   publishWarnBlockers,
   quotePdfItems,
-  quoteRfqToBuyer,
+  quoteRfqToBuyerRemote,
   quoteVersionList,
   quoteDraftIsDirty,
   rfqLinesForQuoteVersion,
@@ -122,14 +125,41 @@ import { clearTmsSession } from "../../lib/tmsSession";
 import { tmsTransactedHref, transactedRefsForLine } from "../../lib/tmsTransacted";
 import QuoteVersionSelect, { DRAFT_VALUE, RfqRequestVersionSelect } from "../../components/QuoteVersionSelect";
 import RfqActivityLog from "../../components/RfqActivityLog";
-import { SHOW_PRODUCT_IMPORT, SHOW_RFQ_QUOTES, SHOW_TMS_LINK } from "../../lib/flags";
+import { SHOW_PRODUCT_IMPORT, SHOW_RFQ_PRICING, SHOW_RFQ_QUOTES, SHOW_TMS_LINK } from "../../lib/flags";
+
+/** Sales price/qty/remark editing, Submit To Buyer, WhatsApp quote. Hidden while SHOW_RFQ_PRICING is off. */
+const QUOTING = SHOW_RFQ_QUOTES && SHOW_RFQ_PRICING;
+
+/** Inbox filters that stay empty while pricing and TMS are hidden. They return when QUOTING is on. */
+const HIDDEN_WHILE_NOT_QUOTING = new Set(["reviewing", "tms", "revising", "returned", "quoted"]);
+
+
+/** Copy that names TMS only while the TMS links are on. */
+function tmsCopy(pt, withTms, withoutTms) {
+  return pt(SHOW_TMS_LINK ? withTms : withoutTms);
+}
+
+const TMS_FIELDS = ["tmsId", "tmsDocumentNo", "tmsUrl", "lastTmsError"];
+
+/** With TMS hidden, the Portal behaves as if no iRFQ was ever created. The stored fields are left alone. */
+function hideTmsFields(rfq) {
+  if (SHOW_TMS_LINK || !rfq || !TMS_FIELDS.some((key) => rfq[key])) return rfq;
+  const copy = { ...rfq };
+  TMS_FIELDS.forEach((key) => delete copy[key]);
+  return copy;
+}
 import BannersPanel from "./BannersPanel";
+import PoPanel from "./PoPanel";
+import { usePurchaseOrders } from "../../hooks/usePurchaseOrders";
+import { STICKY_ACTION_TD, STICKY_ACTION_TH, ViewToggle } from "./AdminControls";
+import MailStatus from "./MailStatus";
 import { useLanguage } from "../../i18n";
 import { adminText } from "../../lib/adminCopy";
 import PortalLangToggle from "../../components/PortalLangToggle";
 
 const NAV = [
   { id: "rfqs", label: "RFQ inbox" },
+  { id: "pos", label: "Purchase orders" },
   { id: "products", label: "Products" },
   { id: "banners", label: "Banners" },
   { id: "accounts", label: "Accounts" },
@@ -168,11 +198,6 @@ const STATUS_TABS = [
 ];
 
 const RFQ_ACTION_TAB = { id: "action", label: "Pending" };
-
-const STICKY_ACTION_TH =
-  "sticky right-0 top-0 z-20 bg-brand-50 px-3 py-2 shadow-[-8px_0_12px_-8px_rgba(16,21,19,0.2)]";
-const STICKY_ACTION_TD =
-  "sticky right-0 z-[1] bg-white px-3 py-2 shadow-[-8px_0_12px_-8px_rgba(16,21,19,0.14)]";
 
 const RFQ_STATUS_TABS = [
   RFQ_ACTION_TAB,
@@ -439,7 +464,7 @@ function rfqSearchHay(rfq) {
     rfq.id,
     rfq.buyerName,
     rfq.buyerEmail,
-    rfq.tmsDocumentNo,
+    SHOW_TMS_LINK ? rfq.tmsDocumentNo : "",
     rfq.project,
     rfqProjectName(rfq),
     rfq.channel,
@@ -471,6 +496,10 @@ export default function AdminPortal() {
   const focusBuyerParam = String(params.get("buyer") || "").trim();
   const [page, setPage] = useState(focusRfqId ? "rfqs" : focusBuyerParam ? "accounts" : "rfqs");
   const [jumpAlert, setJumpAlert] = useState(null);
+  const [poAlert, setPoAlert] = useState(null);
+  const purchaseOrders = usePurchaseOrders(Boolean(staff));
+  const [rfqUpdatedAt, setRfqUpdatedAt] = useState(0);
+  const knownPoIds = useRef(null);
   const mailedAlertIds = useRef(new Set());
   const notifiedAlertIds = useRef(new Set());
   const [productSource, setProductSource] = useState("mattex");
@@ -516,12 +545,19 @@ export default function AdminPortal() {
 
   useEffect(() => {
     if (!staff?.email || page !== "rfqs") return undefined;
-    refreshRemoteRfqs();
+    let alive = true;
+    const run = () => Promise.resolve(refreshRemoteRfqs()).finally(() => {
+      if (alive) setRfqUpdatedAt(Date.now());
+    });
+    run();
     const timer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
-      refreshRemoteRfqs();
+      run();
     }, 15000);
-    return () => window.clearInterval(timer);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
   }, [staff?.email, page]);
 
   useEffect(() => {
@@ -552,6 +588,35 @@ export default function AdminPortal() {
     const timer = window.setTimeout(() => setJumpAlert(null), 6000);
     return () => window.clearTimeout(timer);
   }, [jumpAlert]);
+
+  // New purchase orders come from the server list (kept fresh on every page). Nothing is stored in the browser:
+  // the first load only sets the baseline, later ids that were not there before raise the banner.
+  useEffect(() => {
+    if (!staff) {
+      knownPoIds.current = null;
+      setPoAlert(null);
+      return;
+    }
+    if (purchaseOrders.state !== "ready") return;
+    const ids = new Set(purchaseOrders.records.map((row) => row.id));
+    if (knownPoIds.current) {
+      const fresh = purchaseOrders.records.filter((row) => !knownPoIds.current.has(row.id) && row.status !== "confirmed");
+      if (fresh.length) {
+        const first = fresh[0];
+        const title = fresh.length > 1 ? `${pt("New purchase order")} × ${fresh.length}` : `${pt("New purchase order")} ${first.id}`;
+        const body = fresh.length > 1 ? fresh.map((row) => row.id).join(", ") : `${first.buyerName || first.buyerEmail || pt("Guest")} · HKD ${Number(first.total || 0).toLocaleString("en-US")}`;
+        setPoAlert({ title, body });
+        showAdminWebNotification(title, body);
+      }
+    }
+    knownPoIds.current = ids;
+  }, [staff, purchaseOrders.state, purchaseOrders.records]);
+
+  useEffect(() => {
+    if (!poAlert) return undefined;
+    const timer = window.setTimeout(() => setPoAlert(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [poAlert]);
 
   useEffect(() => {
     if (!flash) return undefined;
@@ -603,7 +668,7 @@ export default function AdminPortal() {
         <main className="mx-auto max-w-md px-4 py-16">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-200">{pt("Staff only")}</p>
           <h1 className="mt-2 font-display text-3xl">{pt("Mattex Sales portal")}</h1>
-          <p className="mt-2 text-sm text-white/60">{pt("Product ops, Excel, buyer accounts, RFQ review, TMS upload.")}</p>
+          <p className="mt-2 text-sm text-white/60">{tmsCopy(pt, "Product ops, Excel, buyer accounts, RFQ review, TMS upload.", "Product ops, Excel, buyer accounts, RFQ review.")}</p>
           <form
             className="mt-8 space-y-4 rounded-2xl bg-white p-6 text-ink"
             onSubmit={async (e) => {
@@ -661,6 +726,7 @@ export default function AdminPortal() {
 
   const inboxRfqs = SHOW_RFQ_QUOTES ? allRfqs : allRfqs.filter(isDev1InboxRfq);
   const pendingRfqs = inboxRfqs.filter(rfqNeedsAction).length;
+  const pendingPos = purchaseOrders.records.filter((row) => row.status !== "confirmed").length;
   const product = products.find((p) => p.id === editing) || null;
 
   function goRfqInbox() {
@@ -862,6 +928,7 @@ export default function AdminPortal() {
               >
                 <span>{pt(item.label)}</span>
                 {item.id === "rfqs" && pendingRfqs ? <span className="text-xs">{pendingRfqs}</span> : null}
+                {item.id === "pos" && pendingPos ? <span className="text-xs">{pendingPos}</span> : null}
               </button>
             );
           })}
@@ -897,6 +964,32 @@ export default function AdminPortal() {
           <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">{pt("Mattex operations")}</p>
           <p className="text-sm text-mute">{pt("Same marketplace catalog — this portal only adds product / RFQ ops.")}</p>
           {flash ? <p className={`mt-2 text-sm ${flashError ? "text-red-700" : "text-brand-700"}`}>{pt(flash)}</p> : null}
+          {poAlert ? (
+            <div className="mt-3 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-brand-300 bg-brand-50 px-4 py-3" role="status">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">{pt("New purchase order")}</p>
+                <p className="mt-1 text-sm font-semibold text-brand-900">{poAlert.title}</p>
+                <p className="mt-0.5 text-sm text-ink">{poAlert.body}</p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white"
+                  onClick={() => {
+                    setFocusReport(null);
+                    setFocusBuyerEmail("");
+                    setPage("pos");
+                    setPoAlert(null);
+                  }}
+                >
+                  {pt("Go to purchase orders")}
+                </button>
+                <button type="button" className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink" onClick={() => setPoAlert(null)}>
+                  {pt("Dismiss")}
+                </button>
+              </div>
+            </div>
+          ) : null}
           {jumpAlert ? (
             <div className="mt-3 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-brand-300 bg-brand-50 px-4 py-3">
               <div className="min-w-0">
@@ -957,12 +1050,15 @@ export default function AdminPortal() {
           ) : null}
           {page === "products" && productSource === "chain" ? <ChainProductsPanel /> : null}
           {page === "banners" ? <BannersPanel note={note} /> : null}
+          {page === "pos" ? <PoPanel note={note} po={purchaseOrders} /> : null}
           {page === "rfqs" ? (
             <RfqPanel
               key={inboxHomeKey}
               rfqs={allRfqs}
               note={note}
               focusId={focusRfqId}
+              updatedAt={rfqUpdatedAt}
+              onRefresh={() => Promise.resolve(refreshRemoteRfqs()).finally(() => setRfqUpdatedAt(Date.now()))}
               onClearFocus={() => {
                 setSearchParams({});
                 setPage("rfqs");
@@ -1114,66 +1210,31 @@ function AdminModal({ title, onClose, children, wide, footer }) {
 }
 
 function HoverTip({ text, children }) {
-  const [show, setShow] = useState(false);
+  const [tip, setTip] = useState(null);
   if (!text) return children;
+  /* Fixed position, above the control, so a scrolling table never clips it. */
+  const open = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const width = 224;
+    const left = Math.min(Math.max(8, rect.right - width), Math.max(8, window.innerWidth - width - 8));
+    setTip({ left, top: rect.top - 6 });
+  };
   return (
-    <span
-      className="relative inline-flex [&_button:disabled]:pointer-events-none"
-      onMouseEnter={() => setShow(true)}
-      onMouseLeave={() => setShow(false)}
-    >
+    <span className="relative inline-flex [&_button:disabled]:pointer-events-none" onMouseEnter={open} onMouseLeave={() => setTip(null)}>
       {children}
-      {show ? (
-        <span
-          role="tooltip"
-          className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md bg-charcoal px-2.5 py-1.5 text-left text-[11px] font-medium normal-case leading-snug tracking-normal text-white shadow-lg"
-        >
-          {text}
-        </span>
-      ) : null}
+      {tip
+        ? createPortal(
+            <span
+              role="tooltip"
+              style={{ position: "fixed", left: tip.left, top: tip.top, width: 224, transform: "translateY(-100%)", zIndex: 1000 }}
+              className="pointer-events-none rounded-md bg-charcoal px-2.5 py-1.5 text-left text-[11px] font-medium normal-case leading-snug tracking-normal text-white shadow-lg"
+            >
+              {text}
+            </span>,
+            document.body
+          )
+        : null}
     </span>
-  );
-}
-
-function AdminSearchBar({ value, onChange, placeholder, label }) {
-  return (
-    <label className="mb-4 block">
-      <span className="sr-only">{label || placeholder}</span>
-      <input
-        type="search"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-mute focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
-      />
-    </label>
-  );
-}
-
-function FilterTabs({ tabs, counts, value, onChange, label }) {
-  const { lang } = useLanguage();
-  const pt = (value) => adminText(lang, value);
-  return (
-    <div className="mb-4 flex flex-wrap gap-1 rounded-xl border border-line bg-white p-1" role="tablist" aria-label={label}>
-      {tabs.map((tab) => {
-        const active = value === tab.id;
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            onClick={() => onChange(tab.id)}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-              active ? "bg-brand-600 text-white" : "text-mute hover:bg-brand-50 hover:text-ink"
-            }`}
-          >
-            {pt(tab.label)}
-            <span className={`tabular-nums text-[11px] ${active ? "text-white/80" : "text-mute"}`}>{counts[tab.id] ?? 0}</span>
-          </button>
-        );
-      })}
-    </div>
   );
 }
 
@@ -1347,7 +1408,7 @@ function CategoryPanel({ products, note, onOpenProduct }) {
           </div>
         </div>
       </div>
-      <div className="grid gap-4 lg:grid-cols-[minmax(16rem,20rem)_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(24rem,28rem)_1fr]">
         <div className="overflow-auto rounded-xl border border-line bg-white max-h-[calc(100vh-16rem)]">
           <table className="w-full text-left text-[12px]">
             <thead className="sticky top-0 bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
@@ -1373,11 +1434,11 @@ function CategoryPanel({ products, note, onOpenProduct }) {
                         {cat.deletedCount ? <span className="ml-1 text-[10px] text-mute">({cat.deletedCount} deleted)</span> : null}
                       </button>
                     </td>
-                    <td className={`${STICKY_ACTION_TD} text-right ${selectedCat ? "!bg-brand-50" : ""}`}>
-                      <div className="flex justify-end gap-1">
+                    <td className={`${STICKY_ACTION_TD} whitespace-nowrap text-right ${selectedCat ? "!bg-brand-50" : ""}`}>
+                      <div className="flex justify-end gap-1.5">
                         <button
                           type="button"
-                          className="rounded border border-line px-2 py-1 text-[10px] font-semibold"
+                          className="shrink-0 whitespace-nowrap rounded border border-line px-3 py-1.5 text-xs font-semibold"
                           onClick={(e) => {
                             e.stopPropagation();
                             setEditingId(cat.id);
@@ -1395,7 +1456,7 @@ function CategoryPanel({ products, note, onOpenProduct }) {
                         >
                           <button
                             type="button"
-                            className="rounded border border-red-200 px-2 py-1 text-[10px] font-semibold text-red-700 disabled:opacity-40"
+                            className="shrink-0 whitespace-nowrap rounded border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-40"
                             disabled={categories.length <= 1 || cat.count > 0}
                             onClick={() => removeCategory(cat)}
                           >{pt("Delete")}</button>
@@ -3058,21 +3119,22 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
   const product = productForLine(line);
   const refs = transactedRefsForLine(line, product);
   const status = inboxStatus(rfq);
-  const canNoOffer = !readOnly && (showPricing || status === "accepted" || status === "quoted");
+  const canNoOffer = !readOnly && QUOTING && (showPricing || status === "accepted" || status === "quoted");
   const canEditPrice = showPricing && !line.noOffer && !readOnly;
+  const sales = salesLine(line);
   const [preview, setPreview] = useState(false);
   const [price, setPrice] = useState(() => (line.quotedUnitPrice != null ? String(line.quotedUnitPrice) : ""));
-  const [qty, setQty] = useState(() => String(line.qty || 1));
-  const [remark, setRemark] = useState(() => String(line.remark || ""));
+  const [qty, setQty] = useState(() => String(sales.qty || 1));
+  const [remark, setRemark] = useState(() => String(sales.remark || ""));
 
   useEffect(() => {
     setPrice(line.quotedUnitPrice != null ? String(line.quotedUnitPrice) : "");
   }, [line.quotedUnitPrice, line.productId]);
 
   useEffect(() => {
-    setQty(String(line.qty || 1));
-    setRemark(String(line.remark || ""));
-  }, [line.qty, line.remark, line.productId]);
+    setQty(String(sales.qty || 1));
+    setRemark(String(sales.remark || ""));
+  }, [sales.qty, sales.remark, line.productId]);
 
   function savePrice(raw) {
     const current = line.quotedUnitPrice != null ? String(line.quotedUnitPrice) : "";
@@ -3083,7 +3145,7 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
 
   function saveQty() {
     const next = Math.max(1, Math.floor(Number(qty) || 1));
-    if (next === Number(line.qty || 1)) {
+    if (next === Number(sales.qty || 1)) {
       setQty(String(next));
       return;
     }
@@ -3091,7 +3153,7 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
   }
 
   function saveRemark() {
-    if (String(remark) === String(line.remark || "")) return;
+    if (String(remark) === String(sales.remark || "")) return;
     note?.(setRfqLineRemark(rfq.id, line.productId, remark), pt("Remark saved"));
   }
 
@@ -3112,8 +3174,8 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
           </p>
           {canNoOffer ? null : (
             <p className="mt-1 text-[11px] text-ink">
-              <span className="font-semibold uppercase tracking-wide text-mute">{pt("Qty")}</span> {line.qty || 1}
-              {line.remark ? <span className="ml-2 text-mute">{line.remark}</span> : null}
+              <span className="font-semibold uppercase tracking-wide text-mute">{pt("Qty")}</span> {sales.qty || 1}
+              {sales.remark ? <span className="ml-2 text-mute">{sales.remark}</span> : null}
             </p>
           )}
           {line.custom && line.description ? (
@@ -3184,7 +3246,13 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
           </label>
         </div>
       ) : null}
-      {((showPricing && !readOnly) || (SHOW_TMS_LINK && (status === "accepted" || status === "quoted"))) && refs.options.length ? (
+      {canNoOffer && (Number(sales.qty) !== Number(line.qty) || String(sales.remark || "") !== String(line.remark || "")) ? (
+        <p className="mt-1 text-[10px] text-mute">
+          {pt("Buyer asked")}: × {line.qty || 1}
+          {line.remark ? ` · ${line.remark}` : ""}
+        </p>
+      ) : null}
+      {SHOW_TMS_LINK && ((showPricing && !readOnly) || status === "accepted" || status === "quoted") && refs.options.length ? (
         <div className="mt-2 flex flex-wrap gap-1.5 pl-14">
           {refs.options.map((opt) => (
             <span key={`${opt.productCode}-${opt.price}`} className="inline-flex items-center gap-1 rounded-full border border-line bg-white pl-2 pr-1 py-0.5 text-[10px]">
@@ -3249,10 +3317,11 @@ function MemberAssignSearch({ rfqId, note, compact }) {
     setPending(buyer);
   }
 
-  function confirmAssign() {
+  async function confirmAssign() {
     if (!pending?.email) return;
-    const result = assignRfqToBuyer(rfqId, pending.email);
+    const email = pending.email;
     setPending(null);
+    const result = await assignRfqToBuyerRemote(rfqId, email);
     if (!result?.ok && result?.error === "locked") {
       note?.({ ok: false, error: pt("This RFQ already belongs to a marketplace account and cannot be reassigned.") });
       return;
@@ -3377,7 +3446,7 @@ function rfqStatusKey(rfq) {
   if (status === "revising") return "revising";
   if (status === "no_offer" || status === "rejected") return "rejected";
   if (status === "accepted" || status === "quoted") {
-    if (!SHOW_RFQ_QUOTES) return "accepted";
+    if (!QUOTING) return "accepted";
     if (status === "quoted") return "quoted";
     return rfq.tmsDocumentNo ? "accepted" : "tms";
   }
@@ -3493,33 +3562,6 @@ function RfqStatusChip({ rfq }) {
   );
 }
 
-function ViewToggle({ value, onChange }) {
-  const { lang } = useLanguage();
-  const pt = (value) => adminText(lang, value);
-  return (
-    <div className="inline-flex rounded-lg border border-line bg-white p-1" role="group" aria-label={pt("RFQ view")}>
-      {[
-        { id: "card", label: "Cards" },
-        { id: "list", label: "List" },
-      ].map((item) => {
-        const active = value === item.id;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onChange(item.id)}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-              active ? "bg-brand-600 text-white" : "text-mute hover:bg-brand-50 hover:text-ink"
-            }`}
-          >
-            {pt(item.label)}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function rfqIsOpen(rfq) {
   const status = inboxStatus(rfq);
   return (
@@ -3602,7 +3644,7 @@ function RfqActions({
     ? "rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50"
     : "rounded-md border border-red-200 px-2 py-1 text-[10px] font-medium text-red-600 hover:bg-red-50";
 
-  const tmsOpen = rfq.tmsDocumentNo ? (
+  const tmsOpen = SHOW_TMS_LINK && rfq.tmsDocumentNo ? (
     <a href={tmsIrfqDetailsHref(rfq)} target="_blank" rel="noreferrer" className={dark}>
       Open {rfq.tmsDocumentNo}
     </a>
@@ -3644,7 +3686,7 @@ function RfqActions({
   const guestBuyer = rfqBuyerKind(rfq) !== "member";
   const waReady = rfqCanSendWhatsappQuote(rfq);
   const waSent = rfqQuotedOffline(rfq);
-  const quoteTools = SHOW_RFQ_QUOTES;
+  const quoteTools = QUOTING;
   const waTitle =
     waReady.ok
       ? ""
@@ -3706,20 +3748,22 @@ function RfqActions({
               >{pt("Quote sent on WhatsApp")}</button>
             </>
           ) : null}
-          {rfq.tmsDocumentNo ? (
-            <a
-              href={tmsIrfqDetailsHref(rfq)}
-              target="_blank"
-              rel="noreferrer"
-              className={dark}
-            >
-              {pt("Open")} {rfq.tmsDocumentNo}
-            </a>
-          ) : (
-            <button type="button" className={warn} disabled={accepting} onClick={() => onCreateTms?.(rfq)}>
-              {accepting ? pt("Creating iRFQ…") : pt("Create TMS iRFQ")}
-            </button>
-          )}
+          {SHOW_TMS_LINK ? (
+            rfq.tmsDocumentNo ? (
+              <a
+                href={tmsIrfqDetailsHref(rfq)}
+                target="_blank"
+                rel="noreferrer"
+                className={dark}
+              >
+                {pt("Open")} {rfq.tmsDocumentNo}
+              </a>
+            ) : (
+              <button type="button" className={warn} disabled={accepting} onClick={() => onCreateTms?.(rfq)}>
+                {accepting ? pt("Creating iRFQ…") : pt("Create TMS iRFQ")}
+              </button>
+            )
+          ) : null}
           <button type="button" className={quietReject} onClick={() => onReject(rfq)}>
             {pt("Reject (No Offer)")}
           </button>
@@ -3791,7 +3835,7 @@ function RfqDetail({
     : viewingDraft
       ? rfq.lines || []
       : rfqLinesForQuoteVersion(rfq, viewMode);
-  const showPricing = SHOW_RFQ_QUOTES && rfqCanPrice(rfq);
+  const showPricing = QUOTING && rfqCanPrice(rfq);
   const account = listBuyers().find((b) => sameEmail(b.email, rfq.buyerEmail));
   const actionKind = rfqActionKind(rfq, open);
   const guestBuyer = rfqBuyerKind(rfq) !== "member";
@@ -3827,19 +3871,19 @@ function RfqDetail({
       : actionKind === "cancel"
       ? pt("Buyer asked to cancel this RFQ.")
                     : actionKind === "decide"
-        ? SHOW_RFQ_QUOTES
+        ? QUOTING
           ? pt("Acknowledge to price this RFQ, or Reject (No Offer).")
           : pt("Acknowledge this RFQ to start handling it, or Reject (No Offer).")
         : actionKind === "price"
-          ? !SHOW_RFQ_QUOTES
+          ? !QUOTING
             ? pt("RFQ accepted. Buyer sees In review. Follow up by phone if needed.")
             : guestBuyer
-            ? "Guest has no marketplace account — cannot send this quote to My RFQs. Send quote on WhatsApp, assign a registered member, or Create TMS iRFQ."
+            ? (SHOW_TMS_LINK ? "Guest has no marketplace account — cannot send this quote to My RFQs. Send quote on WhatsApp, assign a registered member, or Create TMS iRFQ." : "Guest has no marketplace account — cannot send this quote to My RFQs. Send quote on WhatsApp or assign a registered member.")
             : status === "quoted"
-            ? pt("Quote is with the buyer. You can update prices or Create TMS iRFQ.")
-            : pt("Enter a unit price for each line, then Submit To Buyer or Create TMS iRFQ.")
+            ? tmsCopy(pt, "Quote is with the buyer. You can update prices or Create TMS iRFQ.", "Quote is with the buyer. You can update prices.")
+            : tmsCopy(pt, "Enter a unit price for each line, then Submit To Buyer or Create TMS iRFQ.", "Enter a unit price for each line, then Submit To Buyer.")
           : actionKind === "open"
-            ? !SHOW_RFQ_QUOTES
+            ? !QUOTING
               ? pt("RFQ accepted. Buyer sees In review. Follow up by phone if needed.")
               : rfq.tmsDocumentNo
               ? `iRFQ is ready in TMS${status === "quoted" && !guestBuyer ? " · quote sent to buyer" : waSent ? " · quote sent on WhatsApp" : guestBuyer ? " · guest quote stays off marketplace" : ""}.`
@@ -3883,6 +3927,7 @@ function RfqDetail({
         </div>
         <RfqStatusChip rfq={rfq} />
       </div>
+      <MailStatus id={rfq.id} note={note} className="mt-4" />
       {actionKind ? (
         <div
           className={`mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 ${
@@ -3962,11 +4007,11 @@ function RfqDetail({
           </div>
           {historicalRequest ? (
             <p className="mt-2 text-xs text-mute">{pt("Viewing a previous RFQ request. Switch to Current to see the latest submission.")}</p>
-          ) : SHOW_RFQ_QUOTES && !viewingDraft ? (
+          ) : QUOTING && !viewingDraft ? (
             <p className="mt-2 text-xs text-mute">
               Viewing a frozen send. Line prices are read-only. Submit / WhatsApp still use Draft. Load into draft, then send, to freeze a new version.
             </p>
-          ) : SHOW_RFQ_QUOTES && versions.length ? (
+          ) : QUOTING && versions.length ? (
             <p className="mt-2 text-xs text-mute">{pt("Worksheet edits stay draft until Submit To Buyer or Quote sent on WhatsApp.")}</p>
           ) : null}
           <ul className="mt-3 space-y-2">
@@ -3993,17 +4038,17 @@ function RfqDetail({
             <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">{pt("Buyer asked to cancel. Accept to close, or keep the RFQ.")}</p>
           ) : null}
           {status === "cancelled" ? <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-xs text-mute">{pt("Cancelled")}</p> : null}
-          {SHOW_RFQ_QUOTES && status === "quoted" && !guestBuyer ? (
+          {QUOTING && status === "quoted" && !guestBuyer ? (
             <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-900">{pt("Quote submitted to buyer")}</p>
           ) : null}
-          {SHOW_RFQ_QUOTES && guestBuyer && waSent ? (
+          {QUOTING && guestBuyer && waSent ? (
             <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
               Quote sent on WhatsApp{rfq.quoteDeliveredAt ? ` · ${String(rfq.quoteDeliveredAt).slice(0, 16).replace("T", " ")}` : ""}. Assign a member to also submit into My RFQs.
             </p>
           ) : null}
           {status === "accepted" ? (
-            <p className={`mt-3 rounded-lg px-3 py-2 text-xs ${SHOW_RFQ_QUOTES && rfq.tmsDocumentNo ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-amber-900"}`}>
-              {!SHOW_RFQ_QUOTES
+            <p className={`mt-3 rounded-lg px-3 py-2 text-xs ${QUOTING && rfq.tmsDocumentNo ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-amber-900"}`}>
+              {!QUOTING
                 ? pt("Accepted. Buyer sees In review. Follow up by phone if needed.")
                 : rfq.tmsDocumentNo
                 ? `iRFQ created · ${rfq.tmsDocumentNo}`
@@ -4012,8 +4057,8 @@ function RfqDetail({
                   : guestBuyer
                     ? waSent
                       ? pt("Accepted. Quote sent on WhatsApp — assign a member or update the WhatsApp quote.")
-                      : "Accepted. Guest cannot receive a marketplace quote — send on WhatsApp, assign a member, or Create TMS iRFQ."
-                    : pt("Accepted. Enter prices, then Submit To Buyer or Create TMS iRFQ.")}
+                      : (SHOW_TMS_LINK ? "Accepted. Guest cannot receive a marketplace quote — send on WhatsApp, assign a member, or Create TMS iRFQ." : "Accepted. Guest cannot receive a marketplace quote — send on WhatsApp or assign a member.")
+                    : tmsCopy(pt, "Accepted. Enter prices, then Submit To Buyer or Create TMS iRFQ.", "Accepted. Enter prices, then Submit To Buyer.")}
             </p>
           ) : null}
         </section>
@@ -4065,10 +4110,20 @@ function RfqDetail({
   );
 }
 
-function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetail, onOpenBuyer }) {
+function formatStamp(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function RfqPanel({ rfqs: rawRfqs, note, focusId = "", updatedAt = 0, onRefresh, onClearFocus, onOpenDetail, onOpenBuyer }) {
   const { lang } = useLanguage();
   const pt = (value) => adminText(lang, value);
-  const rfqs = SHOW_RFQ_QUOTES ? rawRfqs : rawRfqs.filter(isDev1InboxRfq);
+  const rfqs = useMemo(
+    () => (SHOW_RFQ_QUOTES ? rawRfqs : rawRfqs.filter(isDev1InboxRfq)).map(hideTmsFields),
+    [rawRfqs]
+  );
   const [view, setView] = useState("list");
   const [statusTab, setStatusTab] = useState("action");
   const [query, setQuery] = useState("");
@@ -4086,7 +4141,12 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
   const searchedRfqs = needle
     ? rfqs.filter((r) => matchesSearch(needle, ...rfqSearchHay(r)))
     : rfqs;
-  const statusTabs = SHOW_RFQ_QUOTES ? RFQ_STATUS_TABS : RFQ_STATUS_TABS_SLICE;
+  const statusTabs = (SHOW_RFQ_QUOTES
+    ? SHOW_TMS_LINK
+      ? RFQ_STATUS_TABS
+      : RFQ_STATUS_TABS.filter((tab) => tab.id !== "accepted")
+    : RFQ_STATUS_TABS_SLICE
+  ).filter((tab) => QUOTING || !HIDDEN_WHILE_NOT_QUOTING.has(tab.id));
   const activeStatusTab = statusTabs.some((tab) => tab.id === statusTab) ? statusTab : "action";
   const visibleRfqs =
     activeStatusTab === "all"
@@ -4182,7 +4242,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
 
   async function confirmReject() {
     const why = rejectReason.trim() || pt("No offer");
-    const result = decideRfq(rejecting.id, { decision: "no_offer", reason: why });
+    const result = await decideRfqRemote(rejecting.id, { decision: "no_offer", reason: why });
     if (!result?.ok) {
       setRejectError(result?.error || pt("Unable to reject."));
       note(result, pt("RFQ marked No Offer Rejected"));
@@ -4191,51 +4251,56 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
     const next = result.rfq || { ...rejecting, reviewStatus: "no_offer", reason: why };
     closeReject();
     followRfq(next);
-    const mail = await deliverRfqNoOfferEmail(next);
+    if (result.changed === false) return;
+    const mail = result.mail || (await deliverRfqNoOfferEmail(next));
     mailNote(mail, pt("RFQ moved to No Offer Rejected. Buyer email sent."), pt("RFQ rejected. Buyer email could not be sent."));
   }
 
   async function acceptCancel(rfq) {
-    const result = decideRfqCancel(rfq.id, { accept: true });
+    const result = await decideRfqCancelRemote(rfq.id, { accept: true });
     if (!result?.ok) {
       note(result, pt("Cancel accepted"));
       return;
     }
     followRfq(result.rfq || { ...rfq, cancelStatus: "accepted", reviewStatus: "cancelled" });
-    const mail = await deliverRfqCancelAcceptedEmail(result.rfq || rfq);
+    if (result.changed === false) return;
+    const mail = result.mail || (await deliverRfqCancelAcceptedEmail(result.rfq || rfq));
     mailNote(mail, pt("Cancel accepted. Buyer email sent."), pt("Cancel accepted. Buyer email could not be sent."));
   }
 
   async function declineCancel(rfq) {
-    const result = decideRfqCancel(rfq.id, { accept: false });
+    const result = await decideRfqCancelRemote(rfq.id, { accept: false });
     if (!result?.ok) {
       note(result, pt("RFQ kept"));
       return;
     }
     followRfq(result.rfq || { ...rfq, cancelStatus: "declined" });
-    const mail = await deliverRfqCancelDeclinedEmail(result.rfq || rfq);
+    if (result.changed === false) return;
+    const mail = result.mail || (await deliverRfqCancelDeclinedEmail(result.rfq || rfq));
     mailNote(mail, pt("RFQ kept in In review. Buyer email sent."), pt("RFQ kept. Buyer email could not be sent."));
   }
 
   async function acceptReverse(rfq) {
-    const result = decideRfqReverse(rfq.id, { accept: true });
+    const result = await decideRfqReverseRemote(rfq.id, { accept: true });
     if (!result?.ok) {
       note(result, pt("Reverse accepted"));
       return;
     }
     followRfq(result.rfq || { ...rfq, reviewStatus: "revising", reverseStatus: "" });
-    const mail = await deliverRfqReverseAcceptedEmail(result.rfq || rfq);
+    if (result.changed === false) return;
+    const mail = result.mail || (await deliverRfqReverseAcceptedEmail(result.rfq || rfq));
     mailNote(mail, pt("Reverse accepted. Buyer can revise. Email sent."), pt("Reverse accepted. Buyer email could not be sent."));
   }
 
   async function declineReverse(rfq) {
-    const result = decideRfqReverse(rfq.id, { accept: false });
+    const result = await decideRfqReverseRemote(rfq.id, { accept: false });
     if (!result?.ok) {
       note(result, pt("RFQ kept"));
       return;
     }
     followRfq(result.rfq || { ...rfq, reverseStatus: "declined" });
-    const mail = await deliverRfqReverseDeclinedEmail(result.rfq || rfq);
+    if (result.changed === false) return;
+    const mail = result.mail || (await deliverRfqReverseDeclinedEmail(result.rfq || rfq));
     mailNote(mail, pt("RFQ kept in In review. Buyer email sent."), pt("RFQ kept. Buyer email could not be sent."));
   }
 
@@ -4291,23 +4356,31 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
   }
 
   async function acceptRfq(rfq) {
-    const result = decideRfq(rfq.id, { decision: "accepted" });
+    if (acceptingId) return;
+    setAcceptingId(rfq.id);
+    let result;
+    try {
+      result = await decideRfqRemote(rfq.id, { decision: "accepted" });
+    } finally {
+      setAcceptingId("");
+    }
     if (!result?.ok) {
       note(
         result,
-        SHOW_RFQ_QUOTES
-          ? pt("RFQ accepted — enter prices, then Submit To Buyer or Create TMS iRFQ")
+        QUOTING
+          ? tmsCopy(pt, "RFQ accepted — enter prices, then Submit To Buyer or Create TMS iRFQ", "RFQ accepted — enter prices, then Submit To Buyer")
           : pt("RFQ accepted — buyer sees In review. Follow up by phone if needed.")
       );
       return;
     }
     const next = result.rfq || { ...rfq, reviewStatus: "accepted" };
     followRfq(next);
-    const mail = await deliverRfqAcceptedEmail(next);
+    if (result.changed === false) return;
+    const mail = result.mail || (await deliverRfqAcceptedEmail(next));
     mailNote(
       mail,
-      SHOW_RFQ_QUOTES
-        ? pt("RFQ accepted. Buyer email sent. Enter prices, then Submit To Buyer or Create TMS iRFQ.")
+      QUOTING
+        ? tmsCopy(pt, "RFQ accepted. Buyer email sent. Enter prices, then Submit To Buyer or Create TMS iRFQ.", "RFQ accepted. Buyer email sent. Enter prices, then Submit To Buyer.")
         : pt("RFQ moved to In review. Buyer email sent."),
       pt("RFQ accepted. Buyer email could not be sent.")
     );
@@ -4317,10 +4390,15 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
     await createIrfq(rfq);
   }
 
-  function submitToBuyer(rfq) {
+  async function submitToBuyer(rfq) {
+    if (quotingId) return;
     setQuotingId(rfq.id);
-    const result = quoteRfqToBuyer(rfq.id);
-    setQuotingId("");
+    let result;
+    try {
+      result = await quoteRfqToBuyerRemote(rfq.id);
+    } finally {
+      setQuotingId("");
+    }
     if (result?.error === "prices") {
       note(result, pt("Enter a price for every line before submitting to the buyer."));
       return;
@@ -4336,7 +4414,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
     note(result, pt("Quote submitted to buyer"));
   }
 
-  function sendWhatsappQuote(rfq) {
+  async function sendWhatsappQuote(rfq) {
     const ready = rfqCanSendWhatsappQuote(rfq);
     if (!ready.ok) {
       note(
@@ -4350,8 +4428,16 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
       return;
     }
     setWaBusyId(rfq.id);
-    const created = createGuestQuoteSnapshot(rfq.id);
+    /* Open the tab now, while the click still counts, then point it at WhatsApp once the server has frozen the quote. */
+    let pending = null;
+    try {
+      pending = window.open("about:blank", "_blank");
+    } catch {
+      pending = null;
+    }
+    const created = await createGuestQuoteSnapshotRemote(rfq.id);
     if (!created?.ok) {
+      try { pending?.close(); } catch { /* already closed */ }
       setWaBusyId("");
       note(created, created?.error === "guest" ? "Guest quote was not created." : "Unable to freeze this quote.");
       return;
@@ -4359,8 +4445,13 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
     const href = created.href;
     let opened = false;
     try {
-      const win = window.open(href, "_blank", "noopener,noreferrer");
-      opened = Boolean(win);
+      if (pending && !pending.closed) {
+        pending.opener = null;
+        pending.location.href = href;
+        opened = true;
+      } else {
+        opened = Boolean(window.open(href, "_blank", "noopener,noreferrer"));
+      }
     } catch {
       opened = false;
     }
@@ -4374,12 +4465,12 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
     );
   }
 
-  function markWhatsappSent(rfq) {
+  async function markWhatsappSent(rfq) {
     if (waOpenedId !== rfq.id) {
       note({ ok: false, error: "not_opened" }, pt("Open WhatsApp first, then mark sent."));
       return;
     }
-    const result = markGuestQuoteWhatsappSent(rfq.id);
+    const result = await markGuestQuoteWhatsappSentRemote(rfq.id);
     if (result?.ok) setWaOpenedId("");
     note(result, pt("Quote marked sent on WhatsApp (not submitted to My RFQs)"));
   }
@@ -4467,20 +4558,28 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
 
   return (
     <div>
-      <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl text-brand-900">{pt("RFQ inbox")}</h1>
           <p className="text-sm text-mute">
-            {pt("Accept the RFQ to start handling it. Buyer sees Submitted, then In review. Quotes and purchase orders stay hidden.")}
+            {pt("Accept the RFQ to start handling it. Buyer sees Submitted, then In review. Pricing and quotes are hidden for now.")}
           </p>
         </div>
-        <ViewToggle value={view} onChange={setView} />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-3 text-xs text-mute">
+            {updatedAt ? <span>{pt("Updated")} {formatStamp(updatedAt)}</span> : null}
+            <button type="button" className="rounded-lg border border-line bg-white px-3 py-1.5 text-sm text-ink hover:bg-brand-50" onClick={() => onRefresh?.()}>
+              {pt("Refresh")}
+            </button>
+          </div>
+          <ViewToggle value={view} onChange={setView} />
+        </div>
       </div>
       <AdminSearchBar
         value={query}
         onChange={setQuery}
         label={pt("Search RFQs")}
-        placeholder={pt("Search RFQ no., buyer, product, TMS…")}
+        placeholder={tmsCopy(pt, "Search RFQ no., buyer, product, TMS…", "Search RFQ no., buyer, product…")}
       />
       <FilterTabs tabs={statusTabs} counts={rfqStatusCounts(searchedRfqs)} value={activeStatusTab} onChange={setStatusTab} label={pt("RFQ status")} />
       {focusId ? (
@@ -4516,7 +4615,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
         </p>
       ) : view === "list" ? (
         <div className="overflow-auto rounded-xl border border-line bg-white max-h-[calc(100vh-16rem)]">
-          <table className="min-w-[64rem] w-full text-left text-[12px]">
+          <table className="min-w-[52rem] w-full text-left text-[12px]">
             <thead className="pointer-events-none sticky top-0 z-10 bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
               <tr>
                 {[pt("RFQ"), pt("Buyer"), pt("Channel"), pt("Products"), pt("Status"), pt("Activity"), pt("Action")].map((h) => (
@@ -4546,7 +4645,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                       <RfqBuyerMeta rfq={r} note={note} onOpenBuyer={onOpenBuyer} compact />
                     </td>
                     <td className="px-3 py-2 uppercase">{r.channel || "rfq"}</td>
-                    <td className="px-3 py-2 min-w-[22rem]">
+                    <td className={`px-3 py-2 ${QUOTING ? "min-w-[22rem]" : "min-w-[14rem]"}`}>
                       <ul className="space-y-2">
                         {lines.map((l) => (
                           <RfqLineRow
@@ -4554,7 +4653,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                             rfq={r}
                             line={l}
                             note={note}
-                            showPricing={SHOW_RFQ_QUOTES && rfqCanPrice(r)}
+                            showPricing={QUOTING && rfqCanPrice(r)}
                             compact
                           />
                         ))}
@@ -4625,7 +4724,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                       rfq={r}
                       line={l}
                       note={note}
-                      showPricing={SHOW_RFQ_QUOTES && rfqCanPrice(r)}
+                      showPricing={QUOTING && rfqCanPrice(r)}
                     />
                   ))}
                 </ul>
@@ -4643,7 +4742,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                 {status === "cancelled" ? (
                   <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-xs text-mute">{pt("Cancelled")}</p>
                 ) : null}
-                {SHOW_RFQ_QUOTES && status === "quoted" ? (
+                {QUOTING && status === "quoted" ? (
                   <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
                     {rfqBuyerKind(r) === "guest"
                       ? pt("Priced. Guest cannot receive this in marketplace My RFQs.")
@@ -4653,18 +4752,18 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", onClearFocus, onOpenDetai
                 {status === "accepted" ? (
                   <p
                     className={`mt-3 rounded-lg px-3 py-2 text-xs ${
-                      SHOW_RFQ_QUOTES && r.tmsDocumentNo ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-amber-900"
+                      QUOTING && r.tmsDocumentNo ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-amber-900"
                     }`}
                   >
-                    {!SHOW_RFQ_QUOTES
+                    {!QUOTING
                       ? pt("Accepted. Buyer sees In review. Follow up by phone if needed.")
                       : r.tmsDocumentNo
                       ? `iRFQ created · ${r.tmsDocumentNo}`
                       : r.lastTmsError
                         ? `TMS failed: ${r.lastTmsError}`
                         : rfqBuyerKind(r) === "guest"
-                          ? "Accepted. Guest cannot receive a marketplace quote — assign a member or WhatsApp, or Create TMS iRFQ."
-                          : pt("Accepted. Enter prices, then Submit To Buyer or Create TMS iRFQ.")}
+                          ? (SHOW_TMS_LINK ? "Accepted. Guest cannot receive a marketplace quote — assign a member or WhatsApp, or Create TMS iRFQ." : "Accepted. Guest cannot receive a marketplace quote — assign a member or WhatsApp.")
+                          : tmsCopy(pt, "Accepted. Enter prices, then Submit To Buyer or Create TMS iRFQ.", "Accepted. Enter prices, then Submit To Buyer.")}
                   </p>
                 ) : null}
                 <div className="mt-3">

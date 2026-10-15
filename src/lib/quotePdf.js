@@ -47,6 +47,47 @@ function makePageCanvas() {
   return { canvas, ctx };
 }
 
+function buyerRows(buyer) {
+  const email = String(buyer?.email || "").trim();
+  if (!email) return [];
+  const rows = [["電郵", email]];
+  const name = String(buyer?.name || "").trim();
+  const phone = String(buyer?.phone || "").trim();
+  const other = String(buyer?.otherPhone || "").trim();
+  if (name) rows.push(["姓名", name]);
+  if (phone) rows.push(["電話", phone]);
+  if (other && other !== phone) rows.push(["其他電話", other]);
+  return rows;
+}
+
+function drawBuyer(ctx, rows, y) {
+  ctx.fillStyle = "#143528";
+  ctx.font = "700 18px 'PingFang TC', 'Noto Sans TC', sans-serif";
+  ctx.fillText("買家", MARGIN, y);
+  let cursor = y + 32;
+  const valueX = MARGIN + 120;
+  const maxWidth = PAGE_W - MARGIN - valueX;
+  ctx.font = "500 18px 'PingFang TC', 'Noto Sans TC', sans-serif";
+  for (const [label, value] of rows) {
+    const lines = wrapText(ctx, value, maxWidth);
+    ctx.fillStyle = "#5b6660";
+    ctx.fillText(label, MARGIN, cursor);
+    ctx.fillStyle = "#121816";
+    for (const line of lines) {
+      ctx.fillText(line, valueX, cursor);
+      cursor += 28;
+    }
+  }
+  cursor += 8;
+  ctx.strokeStyle = "#d6ddd8";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(MARGIN, cursor);
+  ctx.lineTo(PAGE_W - MARGIN, cursor);
+  ctx.stroke();
+  return cursor + 36;
+}
+
 function drawHeader(ctx, { kind, count, page, totalPages, refNo }) {
   const isBuy = kind === "buy";
   ctx.fillStyle = "#143528";
@@ -173,17 +214,17 @@ function drawItem(ctx, item, y) {
   return bottom + 28;
 }
 
-function paginateItems(ctx, items) {
+function paginateItems(ctx, items, firstY) {
   const pages = [];
   let current = [];
-  let used = 188;
+  let used = firstY;
   for (const item of items) {
     ctx.font = "500 18px 'PingFang TC', 'Noto Sans TC', sans-serif";
     const height = itemHeight(ctx, item);
     if (current.length && used + height > PAGE_H - 88) {
       pages.push(current);
       current = [];
-      used = 188;
+      used = 208;
     }
     current.push(item);
     used += height;
@@ -192,14 +233,16 @@ function paginateItems(ctx, items) {
   return pages.length ? pages : [[]];
 }
 
-function renderPages({ kind, items, refNo }) {
+function renderPages({ kind, items, refNo, buyer }) {
+  const contact = buyerRows(buyer);
   const probe = makePageCanvas().ctx;
-  const groups = paginateItems(probe, items);
+  const firstItemY = contact.length ? drawBuyer(probe, contact, 196) : 208;
+  const groups = paginateItems(probe, items, firstItemY);
   return groups.map((group, index) => {
     const { canvas, ctx } = makePageCanvas();
     drawHeader(ctx, { kind, count: items.length, page: index + 1, totalPages: groups.length, refNo });
     ctx.font = "500 18px 'PingFang TC', 'Noto Sans TC', sans-serif";
-    let y = 208;
+    let y = index === 0 && contact.length ? drawBuyer(ctx, contact, 196) : 208;
     for (const item of group) y = drawItem(ctx, item, y);
     drawFooter(ctx, kind);
     return canvas;
@@ -305,14 +348,14 @@ function jpegsToPdf(images) {
   return concatBytes(parts);
 }
 
-export async function buildQuotePdf({ kind, items, refNo }) {
+export async function buildQuotePdf({ kind, items, refNo, buyer }) {
   const prepared = await Promise.all(
     (Array.isArray(items) ? items : []).map(async (item) => ({
       ...item,
       imageEl: await loadPdfImage(item.image),
     }))
   );
-  const pages = renderPages({ kind, items: prepared, refNo });
+  const pages = renderPages({ kind, items: prepared, refNo, buyer });
   const jpegs = [];
   for (const canvas of pages) jpegs.push(await canvasToJpeg(canvas));
   const bytes = jpegsToPdf(jpegs);

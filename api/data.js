@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { readSession } from "./auth.js";
-import { mergeRfqMaps } from "./shared-store.js";
+import { mergeRfqMaps } from "../server/shared-store.js";
 import { PUBLIC_KV_KEYS } from "../src/lib/kvKeys.js";
 const SEQ_KEYS = new Set(["subbie_rfq_seq", "subbie_report_seq", "subbie_tmp_sku_seq", "subbie_tms_seq"]);
 const APPEND_KEYS = new Set(["subbie_admin_alerts", "subbie_product_reports", "subbie_buyer_mail_log"]);

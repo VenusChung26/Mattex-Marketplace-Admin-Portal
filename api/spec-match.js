@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -347,14 +347,14 @@ function isPicture(body) {
 
 async function visionBinary() {
   const bin = path.join(tmpdir(), "mattex-vision-ocr");
+  const source = path.join(process.cwd(), "scripts", "vision-ocr.swift");
   try {
-    await access(bin);
-    return bin;
+    const [binStat, sourceStat] = await Promise.all([stat(bin), stat(source)]);
+    if (binStat.mtimeMs >= sourceStat.mtimeMs) return bin;
   } catch {
-    /* compile once on this machine */
+    /* compile when the reader is missing or newer */
   }
   if (process.platform !== "darwin") return "";
-  const source = path.join(process.cwd(), "scripts", "vision-ocr.swift");
   await execFileAsync("swiftc", ["-O", "-o", bin, source], { timeout: 120000 });
   return bin;
 }

@@ -6,5 +6,6 @@ dist
 .env*
 .local-shared-store.json
 .local-shared-store.lock
+.local-rfq-store.json
 .cursor
 supabase/.temp

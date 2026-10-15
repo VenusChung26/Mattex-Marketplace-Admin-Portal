@@ -4,9 +4,10 @@ import { PHONE_REGIONS } from "../lib/phone";
 function PhoneInputs({ t, region, otherCode, national, onRegion, onOtherCode, onNational, invalid = false }) {
   return (
     <div className="flex gap-2">
+      <div className="relative shrink-0" style={{ width: "9.5rem", flex: "0 0 9.5rem" }}>
       <select
-        className="field-input shrink-0"
-        style={{ width: "9.5rem", flex: "0 0 9.5rem" }}
+        className="field-input w-full appearance-none"
+        style={{ paddingRight: "2.35rem" }}
         value={region || "852"}
         onChange={(e) => onRegion(e.target.value)}
         aria-label={t("phoneRegion")}
@@ -17,6 +18,15 @@ function PhoneInputs({ t, region, otherCode, national, onRegion, onOtherCode, on
           </option>
         ))}
       </select>
+      <svg
+        viewBox="0 0 16 16"
+        className="pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-mute"
+        style={{ right: "0.95rem" }}
+        aria-hidden
+      >
+        <path d="M4.2 6.2 8 10 11.8 6.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      </div>
       {region === "other" ? (
         <input
           type="text"
@@ -70,14 +80,7 @@ function PurposeChecks({ t, slot, whatsappOn, wechatOn, onToggle }) {
   );
 }
 
-export function BuyerContactFields({ t, value, onChange, errors = {} }) {
-  const roles = Array.isArray(value.roles) ? value.roles : [];
-
-  function toggleRole(role) {
-    const next = roles.includes(role) ? roles.filter((item) => item !== role) : [...roles, role];
-    onChange("roles", next);
-  }
-
+export function BuyerPhoneFields({ t, value, onChange, errors = {}, required = true }) {
   function togglePurpose(slot, kind) {
     const key = kind === "whatsapp" ? "whatsappOn" : "wechatOn";
     if (slot === "2" && value[key] === "1") return;
@@ -97,21 +100,12 @@ export function BuyerContactFields({ t, value, onChange, errors = {} }) {
     onChange("addPhone", true);
   }
 
+  const phoneLabel = t("mobilePhone");
+  const otherLabel = t("otherPhone");
+
   return (
     <>
-      <AccountField asLabel={false} label={t("accountRoles")} required error={errors.roles}>
-        <div className="flex flex-wrap gap-4 pt-1">
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={roles.includes("contractor")} onChange={() => toggleRole("contractor")} />
-            {t("roleContractor")}
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={roles.includes("buyer")} onChange={() => toggleRole("buyer")} />
-            {t("roleBuyer")}
-          </label>
-        </div>
-      </AccountField>
-      <AccountField asLabel={false} label={t("mobilePhone")} required error={errors.phone}>
+      <AccountField asLabel={false} label={phoneLabel} required={required} error={errors.phone}>
         <PhoneInputs
           t={t}
           region={value.phoneRegion}
@@ -136,7 +130,7 @@ export function BuyerContactFields({ t, value, onChange, errors = {} }) {
         </button>
       )}
       {value.addPhone ? (
-        <AccountField asLabel={false} label={t("otherPhone")} required error={errors.phone2}>
+        <AccountField asLabel={false} label={otherLabel} required={required} error={errors.phone2}>
           <PhoneInputs
             t={t}
             region={value.phone2Region}
@@ -159,6 +153,33 @@ export function BuyerContactFields({ t, value, onChange, errors = {} }) {
           </button>
         </AccountField>
       ) : null}
+    </>
+  );
+}
+
+export function BuyerContactFields({ t, value, onChange, errors = {} }) {
+  const roles = Array.isArray(value.roles) ? value.roles : [];
+
+  function toggleRole(role) {
+    const next = roles.includes(role) ? roles.filter((item) => item !== role) : [...roles, role];
+    onChange("roles", next);
+  }
+
+  return (
+    <>
+      <AccountField asLabel={false} label={t("accountRoles")} required error={errors.roles}>
+        <div className="flex flex-wrap gap-4 pt-1">
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={roles.includes("contractor")} onChange={() => toggleRole("contractor")} />
+            {t("roleContractor")}
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={roles.includes("buyer")} onChange={() => toggleRole("buyer")} />
+            {t("roleBuyer")}
+          </label>
+        </div>
+      </AccountField>
+      <BuyerPhoneFields t={t} value={value} onChange={onChange} errors={errors} />
     </>
   );
 }

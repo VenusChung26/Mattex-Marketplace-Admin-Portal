@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { logoutUser } from "../lib/store";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
+import { SHOW_RFQ } from "../lib/flags";
 
 export default function AccountMenu({ user, light = false }) {
   const { t, lang } = useLanguage();
@@ -64,6 +65,16 @@ export default function AccountMenu({ user, light = false }) {
           >
             {t("profile")}
           </Link>
+          {SHOW_RFQ ? (
+            <Link
+              role="menuitem"
+              to={withLocale(lang, "/pos")}
+              className="block w-full text-left px-4 py-2.5 text-sm text-ink hover:bg-brand-50 hover:text-brand-700"
+              onClick={() => setOpen(false)}
+            >
+              {lang === "zh" ? "我的採購單" : "My purchase orders"}
+            </Link>
+          ) : null}
           <button
             role="menuitem"
             type="button"

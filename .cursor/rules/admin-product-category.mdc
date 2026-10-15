@@ -7,7 +7,7 @@ alwaysApply: true
 
 Products third tab: Mattex Products | **Product Category** | Mattex Chain Products.
 
-Add / rename / delete. Delete blocked while any product (including Trash) still uses that category, and blocked for the last category. Disabled Delete uses a visible hover tooltip. Counts include Trash. Row open icon jumps to Mattex Products Edit. Select products to move; Add products assigns from the rest of the catalog. One product, one category. Never unassign to empty. Trash rows are read-only. Product form still has Add category.
+Add / rename / delete. Delete blocked while any product (including Trash) still uses that category, and blocked for the last category. Disabled Delete uses a visible hover tooltip that opens above the button (fixed position, rendered on `document.body` so no table clips it). Edit and Delete labels never wrap onto two lines. Counts include Trash. Row open icon jumps to Mattex Products Edit. Select products to move; Add products assigns from the rest of the catalog. One product, one category. Never unassign to empty. Trash rows are read-only. Product form still has Add category.
 
 ```jsx
 // ❌ BAD

@@ -4,6 +4,7 @@ import CopyLinkButton from "./CopyLinkButton";
 import { useLanguage } from "../i18n";
 import { allProductsTo, withLocale } from "../lib/locale";
 import { getCategoryDefs } from "../lib/store";
+import MobileCategoryTabs from "./MobileCategories";
 
 function OpenIcon({ className = "h-3.5 w-3.5" }) {
   return (
@@ -62,9 +63,17 @@ export default function CategorySideNav({
   }`;
 
   return (
+    <>
+    <MobileCategoryTabs
+      categories={categories}
+      activeSlug={activeSlug}
+      filterMode={filterMode}
+      onSelectAll={onSelectAll}
+      onSelectCategory={onSelectCategory}
+    />
     <nav
       aria-label={t("categories")}
-      className="flex w-full min-w-0 max-w-full max-h-60 flex-col overflow-hidden lg:sticky lg:max-h-[var(--cat-nav-max)]"
+      className="hidden w-full min-w-0 max-w-full flex-col overflow-hidden lg:sticky lg:flex lg:max-h-[var(--cat-nav-max)]"
       style={{ top: offsetTop, "--cat-nav-max": maxHeight }}
     >
       <p className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.14em] text-mute mb-2">{t("categories")}</p>
@@ -138,5 +147,6 @@ export default function CategorySideNav({
         })}
       </ul>
     </nav>
+    </>
   );
 }

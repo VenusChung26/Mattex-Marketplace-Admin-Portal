@@ -20,7 +20,7 @@ Guest WhatsApp then Assign then Submit To Buyer is **one timeline** (WA v1/v2, m
 
 Old version cannot be resent in place — **Load into draft**, then send, which freezes a **new** version. Confirm if the draft is dirty.
 
-PO only against the **effective** version. Portal old version = read-only preview; edit only on **Draft**. Keep frozen public `/zh/quote/:token` URLs. Do not treat multi-supplier Variant A as versions.
+PO from a quote only against the **effective** version. A PO can also be created directly from priced goods (`unit_price > 0`) via Buy now, with no quote version. Unpriced goods have no Buy now, only Ask price (RFQ). The quote-version PO rules above are unchanged. Portal old version = read-only preview; edit only on **Draft**. Keep frozen public `/zh/quote/:token` URLs. Do not treat multi-supplier Variant A as versions.
 
 ```jsx
 // ❌ BAD

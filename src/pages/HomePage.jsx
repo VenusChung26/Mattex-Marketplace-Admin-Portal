@@ -299,6 +299,12 @@ export default function HomePage() {
     jumpToId("catalog-toolbar");
   }
 
+  function glideToCatalog() {
+    holdCatalogPinRef.current = true;
+    setCatalogPinned(true);
+    jumpToId("catalog-toolbar", { animate: true });
+  }
+
   function openFilteredCatalog(kind) {
     setSelectedCategories([]);
     setSearchQuery("");
@@ -439,7 +445,7 @@ export default function HomePage() {
           clearFilters();
           scrollToCatalog();
         }}
-        onCatalogClick={scrollToCatalog}
+        onCatalogClick={glideToCatalog}
         onDraftClick={onCartClick}
         suggestProducts={suggestionsPool}
       />

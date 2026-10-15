@@ -5,6 +5,7 @@ import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import { buildQuotePdf, downloadBlob } from "../lib/quotePdf";
+import { getPublicQuote } from "../lib/remote";
 import { formatPrice, getGuestQuoteSnapshot, pullQuoteSnapshots, snapshotQuotePdfItems } from "../lib/store";
 
 export default function PublicQuotePage() {
@@ -13,11 +14,20 @@ export default function PublicQuotePage() {
   useStore();
   const [ready, setReady] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
-  const snapshot = getGuestQuoteSnapshot(decodeURIComponent(token || ""));
+  const [serverQuote, setServerQuote] = useState(null);
+  const snapshot = serverQuote || getGuestQuoteSnapshot(decodeURIComponent(token || ""));
 
   useEffect(() => {
     let cancelled = false;
-    pullQuoteSnapshots(decodeURIComponent(token || ""))
+    const key = decodeURIComponent(token || "");
+    getPublicQuote(key)
+      .then((found) => {
+        if (found.ok) {
+          if (!cancelled) setServerQuote(found.quote);
+          return null;
+        }
+        return pullQuoteSnapshots(key);
+      })
       .catch(() => {})
       .finally(() => {
         if (!cancelled) setReady(true);

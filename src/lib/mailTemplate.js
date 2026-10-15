@@ -402,6 +402,55 @@ export function salesNewRfqEmailHtml({ logoUrl, salesEmail, rfqId, buyerName, pr
   });
 }
 
+function poLineDetails(lines, total) {
+  const rows = (lines || []).map((line) => ({
+    label: `${line.sku || ""} ${line.name || ""}`.trim(),
+    value: `${line.qty} ${line.unit || ""} × HKD ${Number(line.unitPrice).toFixed(2)}`.replace("  ", " "),
+  }));
+  rows.push({ label: "Total", value: `HKD ${Number(total || 0).toFixed(2)}` });
+  return rows;
+}
+
+export function poReceivedEmailHtml({ logoUrl, salesEmail, name, poId, lines, total, rfqsHref, shopHref, toEmail }) {
+  return renderMattexEmail({
+    logoUrl,
+    salesEmail,
+    toEmail,
+    title: "We received your order",
+    greeting: `Hi ${name},`,
+    paragraphs: ["Your purchase order was placed. Sales will confirm it and follow up on delivery."],
+    detailsTitle: `Purchase order ${poId}`,
+    details: poLineDetails(lines, total),
+    buttonLabel: "View your order",
+    buttonHref: rfqsHref,
+    footerLinks: [
+      { label: "My RFQs", href: rfqsHref },
+      { label: "Marketplace", href: shopHref },
+      { label: "Contact", href: `mailto:${salesEmail}` },
+    ],
+  });
+}
+
+export function salesNewPoEmailHtml({ logoUrl, salesEmail, poId, buyerName, buyerContact, lines, total }) {
+  return renderMattexEmail({
+    logoUrl,
+    brandName: "Mattex Marketplace Admin Portal",
+    salesEmail,
+    toEmail: salesEmail,
+    title: "New purchase order from Marketplace",
+    greeting: "Hi Sales,",
+    paragraphs: ["A buyer placed a purchase order with Buy now. Open the portal and confirm it once received."],
+    detailsTitle: `Purchase order ${poId}`,
+    details: [{ label: "Buyer", value: buyerName }, { label: "Contact", value: buyerContact }, ...poLineDetails(lines, total)],
+    buttonLabel: "Open in portal",
+    buttonHref: ADMIN_PUBLIC_HOME,
+    footerLinks: [
+      { label: "Sales portal", href: ADMIN_PUBLIC_HOME },
+      { label: "Contact", href: `mailto:${salesEmail}` },
+    ],
+  });
+}
+
 export function rfqAcceptedEmailHtml({ logoUrl, salesEmail, name, rfqId, project, rfqsHref, shopHref, toEmail }) {
   return renderMattexEmail({
     logoUrl,

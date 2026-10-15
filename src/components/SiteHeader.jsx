@@ -11,6 +11,7 @@ import { SHOW_RFQ } from "../lib/flags";
 import { usePromo } from "../lib/promo";
 import { closeAuthModal, getCategoryByName, getCategoryDefs, getProductsByCategory, logoutUser } from "../lib/store";
 import { ProductSearchBox } from "./SearchSuggestions";
+import { CategorySheet } from "./MobileCategories";
 
 function CartIcon({ className = "h-4 w-4" }) {
   return (
@@ -71,6 +72,7 @@ export default function SiteHeader({
   const categories = useMemo(() => getCategoryDefs(), [catalogEpoch]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [catsOpen, setCatsOpen] = useState(false);
+  const [mobileCatsOpen, setMobileCatsOpen] = useState(false);
   const [navSolid, setNavSolid] = useState(!overlay);
   const [query, setQuery] = useState(searchValue || "");
   const isHome = stripLocale(location.pathname) === "/";
@@ -388,23 +390,24 @@ export default function SiteHeader({
       {menuOpen ? (
         <div className="lg:hidden border-t border-white/10 bg-charcoal/98 px-4 py-4 max-h-[80vh] overflow-y-auto">
           <div className="flex flex-col gap-1 text-sm font-medium text-white/80">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-white/40 pt-1 pb-1">{t("categories")}</p>
-            <div className="grid grid-cols-1 gap-1 mb-2">
-              {categories.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => pickCategory(c.name)}
-                  className="nav-cat-item text-left"
-                >
-                  <FallbackImage src={c.image} fallback={c.imageFallback} alt="" loading="lazy" />
-                  <span className="min-w-0">
-                    <span className="block text-[13px] font-semibold leading-snug">{c.name}</span>
-                    <span className="block text-[11px] text-white/45">{c.count} items</span>
-                  </span>
-                </button>
-              ))}
-            </div>
+            <button
+              type="button"
+              className="mb-2 flex items-center justify-between border border-white/15 px-3 py-2.5 text-left hover:bg-white/10"
+              onClick={() => setMobileCatsOpen(true)}
+              aria-haspopup="dialog"
+            >
+              <span>{t("categories")}</span>
+              <span className="text-xs text-white/60" aria-hidden>▸</span>
+            </button>
+            <CategorySheet
+              open={mobileCatsOpen}
+              onClose={() => setMobileCatsOpen(false)}
+              categories={categories}
+              onPick={(c) => {
+                setMobileCatsOpen(false);
+                pickCategory(c.name);
+              }}
+            />
             <form className="mb-2" onSubmit={submitSearch}>
               <ProductSearchBox
                 value={query}
@@ -446,6 +449,11 @@ export default function SiteHeader({
                 <Link to={lp("/login")} className="py-2.5 hover:text-white" onClick={closeMenu}>
                   {t("profile")}
                 </Link>
+                {SHOW_RFQ ? (
+                  <Link to={lp("/pos")} className="py-2.5 hover:text-white" onClick={closeMenu}>
+                    {lang === "zh" ? "我的採購單" : "My purchase orders"}
+                  </Link>
+                ) : null}
                 <button
                   type="button"
                   className="py-2.5 text-left hover:text-white"
