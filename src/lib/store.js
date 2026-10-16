@@ -8240,6 +8240,7 @@ export {
   getProductRemarks,
   getProductRating,
   hydrateStore,
+  seedCatalogSnapshot,
   startSharedStoreSync,
   pullSharedStore,
   pullQuoteSnapshots,

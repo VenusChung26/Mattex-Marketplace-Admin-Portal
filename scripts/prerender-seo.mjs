@@ -23,7 +23,7 @@ async function writePage(relPath, html) {
 }
 
 async function main() {
-  await hydrateStore();
+  await ensureSsrCatalog();
   const template = await readFile(path.join(distDir, "index.html"), "utf8");
   const paths = listPublicPrerenderPaths();
 
