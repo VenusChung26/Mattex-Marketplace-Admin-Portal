@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLanguage } from "../i18n";
 import { foldHan } from "../lib/han";
-import { flattenSuggestOptions, productSku, searchSuggestOptions } from "../lib/searchOptions";
+import { categoriesInCatalog, flattenSuggestOptions, productSku, searchSuggestOptions } from "../lib/searchOptions";
 import { scrollNodeIntoView } from "../lib/scrollInto";
 
 function highlightMatch(text, query) {
@@ -175,9 +175,11 @@ export function ProductSearchBox({
   onValue,
   onTerm,
   onProduct,
+  onCategory,
   onSubmit,
   keepOpenOnTerm = false,
   products,
+  browseCategories,
   excludeIds = [],
   placeholder,
   ariaLabel,
@@ -190,16 +192,20 @@ export function ProductSearchBox({
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const excludeKey = excludeIds.join("\0");
-  const options = useMemo(
-    () => searchSuggestOptions(products, value, { excludeIds: excludeKey ? excludeKey.split("\0") : [] }),
-    [products, value, excludeKey]
-  );
+  const query = String(value || "");
+  const browsing = !query.trim();
+  const options = useMemo(() => {
+    if (!admin && browsing) {
+      const categories = browseCategories?.length ? browseCategories : categoriesInCatalog(products);
+      return { words: [], categories, products: [] };
+    }
+    return searchSuggestOptions(products, value, { excludeIds: excludeKey ? excludeKey.split("\0") : [] });
+  }, [admin, browsing, browseCategories, products, value, excludeKey]);
   const items = useMemo(() => flattenSuggestOptions(options), [options]);
   const labels = admin
     ? { words: "Suggestions", categories: "Categories", products: "Products", empty: "No products match." }
     : { words: t("suggestWords"), categories: t("suggestCategories"), products: t("suggestProducts"), empty: t("suggestEmpty") };
-  const query = String(value || "");
-  const show = open && Boolean(query.trim());
+  const show = open && (admin ? Boolean(query.trim()) : !browsing || options.categories.length > 0);
 
   function pick(item) {
     setActiveIndex(-1);
@@ -207,6 +213,11 @@ export function ProductSearchBox({
     if (item.type === "product") {
       setOpen(false);
       onProduct?.(item.product);
+      return;
+    }
+    if (item.type === "category" && onCategory) {
+      setOpen(false);
+      onCategory(item.label);
       return;
     }
     setOpen(keepOpenOnTerm);
@@ -229,10 +240,10 @@ export function ProductSearchBox({
         className={inputClassName}
         onChange={(event) => {
           onValue?.(event.target.value);
-          setOpen(Boolean(event.target.value.trim()));
+          setOpen(admin ? Boolean(event.target.value.trim()) : true);
           setActiveIndex(-1);
         }}
-        onFocus={() => setOpen(Boolean(query.trim()))}
+        onFocus={() => setOpen(admin ? Boolean(query.trim()) : true)}
         onBlur={() => setOpen(false)}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {

@@ -121,8 +121,14 @@ export default function AuthModal({ open, onClose }) {
     e.preventDefault();
     if (busy) return;
     setBusy(true);
-    const result = await loginUser({ email, password });
-    setBusy(false);
+    let result;
+    try {
+      result = await loginUser({ email, password });
+    } catch {
+      result = { ok: false, error: "network" };
+    } finally {
+      setBusy(false);
+    }
     if (!result.ok) {
       setError(
         result.error === "password"

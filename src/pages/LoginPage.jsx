@@ -8,7 +8,7 @@ import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import { SHOW_RFQ } from "../lib/flags";
-import { consumePendingAfterAuth, closeAuthModal, loginUser, logoutUser, takeDisabledKick, updateUserProfile } from "../lib/store";
+import { consumePendingAfterAuth, closeAuthModal, loginUser, logoutUser, takeDisabledKick, updateUserProfile, verifyBuyerSession } from "../lib/store";
 import ProjectListEditor from "../components/ProjectListEditor";
 import { BuyerContactFields } from "../components/BuyerContactFields";
 import { composePhone, contactFormFromAccount, contactPayload, formatPhoneLine, normalizeRoles } from "../lib/phone";
@@ -53,6 +53,12 @@ export default function LoginPage() {
   }, []);
 
   useEffect(() => {
+    if (!user?.email) return undefined;
+    verifyBuyerSession();
+    return undefined;
+  }, [user?.email]);
+
+  useEffect(() => {
     if (user) return;
     if (takeDisabledKick()) setError(t("loginErrorDisabled"));
   }, [user, t]);
@@ -85,8 +91,14 @@ export default function LoginPage() {
       return;
     }
     setBusy(true);
-    const result = await loginUser({ email, password });
-    setBusy(false);
+    let result;
+    try {
+      result = await loginUser({ email, password });
+    } catch {
+      result = { ok: false, error: "network" };
+    } finally {
+      setBusy(false);
+    }
     if (!result.ok) {
       setFieldErrors({});
       setError(

@@ -1364,6 +1364,15 @@ async function publishCatalogProducts(list) {
   emitStoreChange();
 }
 
+/** Node prerender and /api/ssr. The browser catalog fetch does not run there. */
+async function seedCatalogSnapshot(data) {
+  const products = Array.isArray(data?.products) ? data.products : [];
+  if (!products.length) return false;
+  applyHostCategoryImages(data.categories);
+  await publishCatalogProducts(products);
+  return true;
+}
+
 function yieldToBrowser() {
   return new Promise((resolve) => {
     if (typeof requestAnimationFrame === "function") {
@@ -3207,7 +3216,11 @@ function setSessionUser(user) {
     sessionStorage.removeItem(PENDING_WA_RFQ_KEY);
   }
 
-  localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+  try {
+    localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+  } catch {
+    /* a full browser store must not leave the sign-in button stuck */
+  }
   if (!prevEmail && nextEmail) adoptGuestSpecMatch(nextEmail);
   emitStoreChange();
 }
@@ -8246,6 +8259,7 @@ export {
   getUser,
   takeDisabledKick,
   getDraft,
+  verifyBuyerSession,
   setDraft,
   getCart,
   cartCount,

@@ -31,8 +31,11 @@ export default function AccountMenu({ user, light = false }) {
     : "inline-flex items-center gap-1.5 bg-brand-600 px-3 sm:px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700";
 
   if (!user) {
+    const loginClass = light
+      ? "inline-flex items-center gap-1.5 bg-brand-600 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-500 transition-colors lg:px-4"
+      : triggerClass;
     return (
-      <Link to={withLocale(lang, "/login")} className={triggerClass}>
+      <Link to={withLocale(lang, "/login")} className={loginClass}>
         {t("login")}
       </Link>
     );

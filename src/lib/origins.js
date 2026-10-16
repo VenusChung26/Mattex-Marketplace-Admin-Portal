@@ -1,24 +1,24 @@
-const DEV_MARKETPLACE = "http://localhost:5178";
-const DEV_ADMIN = "http://localhost:5179";
+const DEV_MARKETPLACE = "http://localhost:5182";
+const DEV_ADMIN = "http://localhost:5183";
+const PROD_MARKETPLACE = "https://marketplace.mattex.com.hk";
+const PROD_ADMIN = "https://subbie-admin.mattex.com.hk";
 
 export function isAdminSurface() {
   return import.meta.env.VITE_SURFACE === "admin";
 }
 
 export function marketplaceOrigin() {
-  const fromEnv = import.meta.env.VITE_MARKETPLACE_ORIGIN;
-  if (fromEnv) return String(fromEnv).replace(/\/$/, "");
   if (import.meta.env.DEV) return DEV_MARKETPLACE;
+  if (isAdminSurface()) return PROD_MARKETPLACE;
   if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;
-  return DEV_MARKETPLACE;
+  return PROD_MARKETPLACE;
 }
 
 export function adminOrigin() {
-  const fromEnv = import.meta.env.VITE_ADMIN_ORIGIN;
-  if (fromEnv) return String(fromEnv).replace(/\/$/, "");
   if (import.meta.env.DEV) return DEV_ADMIN;
+  if (!isAdminSurface()) return PROD_ADMIN;
   if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;
-  return DEV_ADMIN;
+  return PROD_ADMIN;
 }
 
 export function marketplaceHomeHref(lang = "en") {

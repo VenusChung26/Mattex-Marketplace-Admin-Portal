@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hydrateStore } from "../src/lib/store.js";
+import { ensureSsrCatalog } from "../src/lib/ssrCatalog.js";
 import { absUrl, siteOrigin, stripLocale, withLocale } from "../src/lib/locale.js";
 import { injectPublicDocument, listPublicPrerenderPaths } from "../src/lib/ssrHtml.js";
 

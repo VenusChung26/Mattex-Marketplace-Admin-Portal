@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { applyDecision, planAssign } from "../src/lib/rfqRules.js";
 import { createStore, memoryAdapter, takeNumber, emptyState } from "./rfq-core.js";
 
 const staff = { kind: "staff", email: "sales@mattex.com.hk" };
@@ -86,6 +87,27 @@ test("RFQ and PO keep separate lists", async () => {
   assert.equal(po.id, "PO-26000001");
   assert.equal((await store.list("rfq", staff)).length, 1);
   assert.equal((await store.list("po", staff)).length, 1);
+});
+
+test("assigning a guest purchase order moves it onto that member's list", async () => {
+  const store = createStore(memoryAdapter(), { now: at("2026-10-15T09:00:00Z") });
+  const { record } = await store.create(
+    "po",
+    { buyerKind: "guest", buyerEmail: "walkin@example.com", buyerName: "Walk-in", buyerPhone: "91234567", status: "created" },
+    guest,
+  );
+  const plan = planAssign(record, { buyer: { email: "Alice@Example.com", name: "Alice", phone: "999" }, by: staff.email, at: "2026-10-15T09:05:00.000Z" });
+  const saved = await store.update("po", record.id, record.revision, () => {
+    const next = applyDecision(record, plan.patch);
+    return { ...plan.patch.fields, activity: next.activity };
+  }, staff);
+  assert.equal(saved.record.buyerKind, "member");
+  assert.equal(saved.record.buyerEmail, "Alice@Example.com");
+  assert.equal(saved.record.buyerPhone, "91234567");
+  assert.equal(saved.record.status, "created");
+  assert.deepEqual((await store.list("po", alice)).map((row) => row.id), [record.id]);
+  assert.equal((await store.list("po", { kind: "buyer", email: "walkin@example.com" })).length, 0);
+  assert.equal(planAssign(saved.record, { buyer: { email: "bob@example.com", name: "Bob" } }).error, "locked");
 });
 
 test("countWhere counts without exposing records", async () => {

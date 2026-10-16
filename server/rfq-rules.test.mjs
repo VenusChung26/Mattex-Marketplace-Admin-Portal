@@ -92,6 +92,8 @@ const member = { email: "Buyer@Example.com", name: "Real Buyer", phone: "9999999
 test("guest kinds are recognised", () => {
   for (const email of ["", "__guest__", "guest@subbie.store", "guest@anything.com"]) assert.equal(rfqBuyerKind({ buyerEmail: email }), "guest");
   assert.equal(rfqBuyerKind({ buyerEmail: "a@b.com" }), "member");
+  assert.equal(rfqBuyerKind({ buyerKind: "guest", buyerEmail: "walkin@example.com" }), "guest");
+  assert.equal(rfqBuyerKind({ buyerKind: "member", buyerEmail: "" }), "member");
 });
 
 test("assigning a guest RFQ makes it a member RFQ, keeps the guest phone, and logs who", () => {
@@ -108,6 +110,17 @@ test("assigning a guest RFQ makes it a member RFQ, keeps the guest phone, and lo
 test("a member RFQ cannot be reassigned, and a bad email is refused", () => {
   assert.equal(planAssign({ ...base, buyerEmail: "a@b.com" }, { buyer: member }).error, "locked");
   assert.equal(planAssign(guestRfq, { buyer: { email: "nope" } }).error, "missing_buyer");
+});
+
+test("a guest purchase order with a real email can be assigned once, and keeps its status", () => {
+  const po = { id: "PO-26000009", buyerKind: "guest", buyerEmail: "walkin@example.com", buyerName: "Walk-in", buyerPhone: "91234567", status: "created" };
+  const plan = planAssign(po, { buyer: member, by: "s@x.com", at });
+  const next = applyDecision(po, plan.patch);
+  assert.equal(next.buyerKind, "member");
+  assert.equal(next.buyerEmail, "Buyer@Example.com");
+  assert.equal(next.buyerPhone, "91234567");
+  assert.equal(next.status, "created");
+  assert.equal(planAssign(next, { buyer: member, at }).error, "locked");
 });
 
 test("assigning still works after a WhatsApp quote", () => {

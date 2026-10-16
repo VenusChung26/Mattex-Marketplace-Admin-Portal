@@ -4,6 +4,16 @@ export function productSku(product) {
   return String(product?.productNo || product?.provisionalSku || product?.id || "").trim();
 }
 
+export function categoriesInCatalog(catalog) {
+  const categories = new Map();
+  for (const product of catalog || []) {
+    const category = String(product?.category || "").trim();
+    if (!category) continue;
+    categories.set(category, (categories.get(category) || 0) + 1);
+  }
+  return [...categories.entries()].sort((a, b) => a[0].localeCompare(b[0], "zh"));
+}
+
 export function searchSuggestOptions(catalog, query, { excludeIds = [], wordLimit = 8, categoryLimit = 6, productLimit = 8 } = {}) {
   const q = foldHan(String(query || "").trim()).toLowerCase();
   if (!q) return { words: [], categories: [], products: [] };

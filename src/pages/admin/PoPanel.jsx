@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { confirmPurchaseOrder } from "../../lib/remote";
 import { buildQuotePdf, downloadBlob } from "../../lib/quotePdf";
 import { getProduct } from "../../lib/store";
@@ -28,11 +28,11 @@ const FILTERS = [
  * Purchase orders placed with "Buy now". Display only: the server owns status and numbers.
  * The list comes from the Portal (`po`), which keeps it fresh on every page for the sidebar badge.
  */
-export default function PoPanel({ note, po: source }) {
+export default function PoPanel({ note, po: source, guestAssign, focusId = "" }) {
   const { lang } = useLanguage();
   const pt = (value) => adminText(lang, value);
   const { records, state, updatedAt, refresh, replace } = source;
-  const [filter, setFilter] = useState("created");
+  const [filter, setFilter] = useState(focusId ? "all" : "created");
   const [view, setView] = useState("list");
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState("");
@@ -59,6 +59,17 @@ export default function PoPanel({ note, po: source }) {
       return hay.includes(q);
     });
   }, [records, filter, query]);
+
+  useEffect(() => {
+    if (focusId) setFilter("all");
+  }, [focusId]);
+
+  useEffect(() => {
+    if (!focusId) return undefined;
+    const node = document.getElementById(`admin-po-${focusId}`);
+    if (node) node.scrollIntoView({ block: "center" });
+    return undefined;
+  }, [focusId, view, shown]);
 
   async function downloadPdf(po) {
     if (pdfId) return;
@@ -163,8 +174,9 @@ export default function PoPanel({ note, po: source }) {
               {shown.map((row) => {
                 const confirmed = row.status === "confirmed";
                 const noContact = row.buyerKind === "guest" && !row.buyerEmail && !row.buyerPhone;
+                const focused = row.id === focusId;
                 return (
-                  <tr key={row.id} className="border-t border-line/80 align-top">
+                  <tr id={`admin-po-${row.id}`} key={row.id} className={`border-t border-line/80 align-top ${focused ? "bg-brand-50" : ""}`}>
                     <td className="whitespace-nowrap px-3 py-2 font-semibold text-ink">{row.id}</td>
                     <td className="min-w-[10rem] px-3 py-2">
                       {noContact ? (
@@ -207,7 +219,7 @@ export default function PoPanel({ note, po: source }) {
                       {confirmed ? <p>{pt("Received")} {stamp(row.confirmedAt)} · {row.confirmedBy}</p> : null}
                       <MailStatus id={row.id} mail={row.mail || []} onRecord={replace} note={note} className="mt-2 !px-2 !py-1.5 !text-[11px]" />
                     </td>
-                    <td className={`${STICKY_ACTION_TD} whitespace-nowrap`}>
+                    <td className={`${STICKY_ACTION_TD} whitespace-nowrap ${focused ? "!bg-brand-50" : ""}`}>
                       <div className="flex flex-col items-stretch gap-1.5">
                         {confirmed ? null : (
                           <button
@@ -235,8 +247,9 @@ export default function PoPanel({ note, po: source }) {
         {shown.map((po) => {
           const confirmed = po.status === "confirmed";
           const noContact = po.buyerKind === "guest" && !po.buyerEmail && !po.buyerPhone;
+          const focused = po.id === focusId;
           return (
-            <li key={po.id} className="rounded-xl border border-line bg-white p-4">
+            <li id={`admin-po-${po.id}`} key={po.id} className={`rounded-xl border bg-white p-4 ${focused ? "border-brand-600 ring-2 ring-brand-200" : "border-line"}`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-base font-bold text-ink">{po.id}</span>

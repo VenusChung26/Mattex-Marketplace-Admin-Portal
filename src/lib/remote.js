@@ -6,9 +6,15 @@ function localPath(path) {
   return value;
 }
 
-async function send(path, { method = "GET", body, headers, cache } = {}) {
+async function send(path, { method = "GET", body, headers, cache, timeoutMs } = {}) {
   const init = { method, credentials: "same-origin" };
   if (cache) init.cache = cache;
+  let timer;
+  if (timeoutMs) {
+    const controller = new AbortController();
+    init.signal = controller.signal;
+    timer = setTimeout(() => controller.abort(), timeoutMs);
+  }
   const nextHeaders = { ...(headers || {}) };
   const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   if (body !== undefined) {
@@ -20,7 +26,11 @@ async function send(path, { method = "GET", body, headers, cache } = {}) {
     }
   }
   if (Object.keys(nextHeaders).length) init.headers = nextHeaders;
-  return fetch(localPath(path), init);
+  try {
+    return await fetch(localPath(path), init);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function sendJson(path, options) {
@@ -216,6 +226,20 @@ export async function resendRecordMail(id) {
   }
 }
 
+/**
+ * Staff only: give a guest purchase order to a registered member.
+ * Returns { ok, po }. The server keeps the number and status, and refuses a second assign.
+ */
+export async function assignPurchaseOrder(id, buyer) {
+  try {
+    const { res, data } = await sendJson("/api/rfq", { method: "POST", body: { action: "po_assign", id, buyer } });
+    if (!res.ok || !data?.ok) return { ok: false, error: data?.error || `http_${res.status}` };
+    return { ok: true, po: data.po };
+  } catch {
+    return { ok: false, error: "network" };
+  }
+}
+
 /** Staff only: mark a PO as received. */
 export async function confirmPurchaseOrder(id) {
   try {
@@ -237,7 +261,7 @@ export async function postSpecMatch(body) {
 
 export async function postAuth(body) {
   try {
-    const { data } = await sendJson("/api/auth", { method: "POST", body });
+    const { data } = await sendJson("/api/auth", { method: "POST", body, timeoutMs: 20000 });
     return data && typeof data === "object" ? data : { ok: false, error: "server" };
   } catch {
     return { ok: false, error: "network" };

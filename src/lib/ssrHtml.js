@@ -278,13 +278,17 @@ const HOME_COPY = {
     topProducts: "Hit products",
     supplierCompanies: "Supplier companies",
     supplierSupport: "Open a company page for hit products and a searchable catalog",
-    howHeadline: "From catalog to quote in three steps",
-    step1Title: "Browse specs",
-    step1Body: "Open product details for datasheet-style info before you quote.",
-    step2Title: "Ask, add, or tailor make",
-    step2Body: "WhatsApp for price, add catalog SKUs, or describe a Tailor Made Product if it is not listed.",
-    step3Title: "Send via WhatsApp",
-    step3Body: "Review quantities in your cart. We prepare a PDF with product images, then you open WhatsApp to send the PDF link to the supplier.",
+    howHeadline: "Asking and buying",
+    step1Title: "Search",
+    step1Body: "Search from the top bar, or browse the catalog.",
+    step2Title: "Ask now",
+    step2Body: "When a product has no price, ask for a quote on WhatsApp.",
+    step3Title: "Buy now",
+    step3Body: "When a product has a price, buy it from stock on WhatsApp.",
+    step4Title: "Cart",
+    step4Body: "Add several products and send them together later.",
+    step5Title: "Not in the catalog",
+    step5Body: "Add a tailor-made product, or upload a specification to match.",
     customPitchTitle: "Not in the catalog? Still quote it.",
     customPitchBody: "Name the material, attach drawings or spec files, and drop it in the same cart as listed SKUs.",
     allProductsTitle: "All products",
@@ -300,13 +304,17 @@ const HOME_COPY = {
     topProducts: "熱門產品",
     supplierCompanies: "供應商公司",
     supplierSupport: "進入公司頁查看熱門產品與可搜尋目錄",
-    howHeadline: "三步完成問價",
-    step1Title: "瀏覽規格",
-    step1Body: "先開啟產品詳情，查看規格再問價。",
-    step2Title: "詢價、加入，或度身訂造",
-    step2Body: "可用 WhatsApp 問價、加入目錄 SKU，目錄沒有的可新增度身訂造產品。",
-    step3Title: "用 WhatsApp 送出",
-    step3Body: "在購物車核對數量。系統會準備含產品圖的 PDF 連結，再開 WhatsApp 傳送給供應商。",
+    howHeadline: "詢價與購買",
+    step1Title: "搜尋產品",
+    step1Body: "於頂欄搜尋，或瀏覽目錄。",
+    step2Title: "立即問價",
+    step2Body: "產品未標價時，以 WhatsApp 詢問該項報價。",
+    step3Title: "立即購買",
+    step3Body: "產品已標價時，以 WhatsApp 購買現貨。",
+    step4Title: "加入購物車",
+    step4Body: "數項產品稍後一併送出。",
+    step5Title: "目錄未有",
+    step5Body: "新增度身訂造產品，或上傳規格配對。",
     customPitchTitle: "目錄沒有，一樣可以問價",
     customPitchBody: "寫物料名稱、上傳圖則或規格附件，同目錄 SKU 放喺同一個購物車。",
     allProductsTitle: "全部產品",
@@ -492,6 +500,19 @@ function pageContent(page) {
       <p>${esc(copy.heroSupport)}</p>
       <p><a href="${esc(withLocale(lang, "/catalog"))}">${esc(copy.browseCatalog)}</a></p>
       <section>
+        <h2>${esc(copy.howHeadline)}</h2>
+        <h3>${esc(copy.step1Title)}</h3>
+        <p>${esc(copy.step1Body)}</p>
+        <h3>${esc(copy.step2Title)}</h3>
+        <p>${esc(copy.step2Body)}</p>
+        <h3>${esc(copy.step3Title)}</h3>
+        <p>${esc(copy.step3Body)}</p>
+        <h3>${esc(copy.step4Title)}</h3>
+        <p>${esc(copy.step4Body)}</p>
+        <h3>${esc(copy.step5Title)}</h3>
+        <p>${esc(copy.step5Body)}</p>
+      </section>
+      <section>
         <h2>${esc(copy.materialCategories)}</h2>
         <ul>
           ${categories
@@ -524,22 +545,13 @@ function pageContent(page) {
         </ul>
       </section>
       <section>
-        <h2>${esc(copy.howHeadline)}</h2>
-        <h3>${esc(copy.step1Title)}</h3>
-        <p>${esc(copy.step1Body)}</p>
-        <h3>${esc(copy.step2Title)}</h3>
-        <p>${esc(copy.step2Body)}</p>
-        <h3>${esc(copy.step3Title)}</h3>
-        <p>${esc(copy.step3Body)}</p>
-      </section>
-      <section>
         <h2>${esc(copy.customPitchTitle)}</h2>
         <p>${esc(copy.customPitchBody)}</p>
       </section>
       <section>
         <h2>${esc(copy.allProductsTitle)}</h2>
         <p>${esc(copy.searchHint)}</p>
-        <p>${products.length} products</p>
+        <p>${products.length} ${lang === "zh" ? "件產品" : "products"}</p>
         ${products.map((product) => productBlock(lang, product)).join("\n")}
       </section>
     </article>`;

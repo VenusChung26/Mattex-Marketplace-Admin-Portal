@@ -21,6 +21,13 @@ test("production: buyer receipt plus Sales and the resend@ copy", () => {
   ]);
   assert.match(mails[0].subject, /PO-26000001/);
   assert.match(mails[0].innerHtml, /HKD 10\.00/);
+  assert.match(mails[0].innerHtml, /\/zh\/pos/);
+  assert.match(mails[1].innerHtml, /subbie-admin\.mattex\.com\.hk\/\?po=PO-26000001/);
+});
+
+test("a new RFQ mail opens that RFQ in the portal", () => {
+  const [sales] = mailsFor("rfq", rfq, { env: {} }).filter((m) => m.role === "sales");
+  assert.match(sales.innerHtml, /subbie-admin\.mattex\.com\.hk\/\?rfq=RFQ-26000001/);
 });
 
 test("outside production Sales gets one mail, not two", () => {

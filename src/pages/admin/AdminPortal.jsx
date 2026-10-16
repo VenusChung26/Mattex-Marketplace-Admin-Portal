@@ -482,6 +482,35 @@ function ChevronIcon({ open }) {
   );
 }
 
+/** The PO or RFQ number an alert is about, from its link or its title. */
+function recordIdFromAlert(alert) {
+  const href = String(alert?.href || "");
+  try {
+    const url = new URL(href, "http://localhost");
+    const po = String(url.searchParams.get("po") || "").trim();
+    const rfq = String(url.searchParams.get("rfq") || url.searchParams.get("id") || "").trim();
+    if (po) return po;
+    if (rfq) return rfq;
+  } catch {
+    /* the href is not a URL */
+  }
+  const match = String(alert?.title || "").match(/\b((?:PO|RFQ)-\d+)\b/);
+  return match ? match[1] : "";
+}
+
+/** Server numbers are PREFIX-YY plus six digits. Older local numbers such as RFQ-1297 are not. */
+function isServerDocId(id) {
+  return /^(?:PO|RFQ)-\d{8}$/.test(String(id || ""));
+}
+
+/** Keep a banner only when it names a purchase order or RFQ the server issued and the portal is showing. */
+function alertMatchesRecord(alert, rfqs, pos) {
+  const id = recordIdFromAlert(alert);
+  if (!isServerDocId(id)) return false;
+  if (id.startsWith("PO-")) return (pos || []).some((row) => row.id === id);
+  return (rfqs || []).some((row) => row.id === id);
+}
+
 function findReportedProduct(products, report) {
   if (!report) return null;
   return products.find((p) => p.id === report.productId) || products.find((p) => p.productNo && p.productNo === report.productNo) || null;
@@ -493,8 +522,9 @@ export default function AdminPortal() {
   const { staff, allRfqs, reports, adminAlerts } = useStore();
   const [params, setSearchParams] = useSearchParams();
   const focusRfqId = String(params.get("rfq") || params.get("id") || "").trim();
+  const focusPoId = String(params.get("po") || "").trim();
   const focusBuyerParam = String(params.get("buyer") || "").trim();
-  const [page, setPage] = useState(focusRfqId ? "rfqs" : focusBuyerParam ? "accounts" : "rfqs");
+  const [page, setPage] = useState(focusPoId ? "pos" : focusRfqId ? "rfqs" : focusBuyerParam ? "accounts" : "rfqs");
   const [jumpAlert, setJumpAlert] = useState(null);
   const [poAlert, setPoAlert] = useState(null);
   const purchaseOrders = usePurchaseOrders(Boolean(staff));
@@ -526,6 +556,10 @@ export default function AdminPortal() {
   const products = listAdminProducts();
 
   useEffect(() => {
+    if (focusPoId) {
+      setPage("pos");
+      return;
+    }
     if (focusRfqId) {
       setPage("rfqs");
       return;
@@ -536,7 +570,7 @@ export default function AdminPortal() {
       setAccountsNavOpen(true);
       setPage("accounts");
     }
-  }, [focusRfqId, focusBuyerParam]);
+  }, [focusPoId, focusRfqId, focusBuyerParam]);
 
   useEffect(() => {
     if (!staff) return;
@@ -578,10 +612,10 @@ export default function AdminPortal() {
       notifiedAlertIds.current.add(alert.id);
       showAdminWebNotification(alert.title, alert.body, alert.href);
     });
-    const unseen = alerts.filter((alert) => !alert.seen);
+    const unseen = alerts.filter((alert) => !alert.seen && alertMatchesRecord(alert, allRfqs, purchaseOrders.records));
     setJumpAlert(unseen[0] || null);
     return undefined;
-  }, [staff, adminAlerts]);
+  }, [staff, adminAlerts, allRfqs, purchaseOrders.records]);
 
   useEffect(() => {
     if (!jumpAlert) return undefined;
@@ -605,7 +639,7 @@ export default function AdminPortal() {
         const first = fresh[0];
         const title = fresh.length > 1 ? `${pt("New purchase order")} × ${fresh.length}` : `${pt("New purchase order")} ${first.id}`;
         const body = fresh.length > 1 ? fresh.map((row) => row.id).join(", ") : `${first.buyerName || first.buyerEmail || pt("Guest")} · HKD ${Number(first.total || 0).toLocaleString("en-US")}`;
-        setPoAlert({ title, body });
+        setPoAlert({ title, body, id: first.id });
         showAdminWebNotification(title, body);
       }
     }
@@ -675,9 +709,15 @@ export default function AdminPortal() {
               e.preventDefault();
               setLoginBusy(true);
               setError("");
-              const result = await loginStaff({ email, password });
-              if (!result.ok) {
+              let result;
+              try {
+                result = await loginStaff({ email, password });
+              } catch {
+                result = { ok: false, error: "network" };
+              } finally {
                 setLoginBusy(false);
+              }
+              if (!result.ok) {
                 setError(
                   result.error === "buyer"
                     ? pt("This email is a buyer account.")
@@ -689,7 +729,6 @@ export default function AdminPortal() {
                 );
                 return;
               }
-              setLoginBusy(false);
             }}
           >
             <label className="block text-sm font-medium">{pt("Email")}<RequiredMark />
@@ -759,16 +798,27 @@ export default function AdminPortal() {
   async function openJumpAlert(alert) {
     const href = String(alert?.href || "/admin");
     let rfq = "";
+    let po = "";
     let buyer = "";
     try {
       const url = new URL(href, window.location.origin);
       rfq = String(url.searchParams.get("rfq") || "").trim();
+      po = String(url.searchParams.get("po") || "").trim();
       buyer = String(url.searchParams.get("buyer") || "").trim();
     } catch {
       rfq = "";
+      po = "";
       buyer = "";
     }
-    if (rfq) {
+    const titled = recordIdFromAlert(alert);
+    if (!po && titled.startsWith("PO-")) po = titled;
+    if (!rfq && titled.startsWith("RFQ-")) rfq = titled;
+    if (po) {
+      setFocusReport(null);
+      setFocusBuyerEmail("");
+      setSearchParams({ po });
+      setPage("pos");
+    } else if (rfq) {
       await pullSharedStore();
       openRfqDetail(rfq);
     } else if (buyer) {
@@ -978,6 +1028,7 @@ export default function AdminPortal() {
                   onClick={() => {
                     setFocusReport(null);
                     setFocusBuyerEmail("");
+                    if (poAlert.id) setSearchParams({ po: poAlert.id });
                     setPage("pos");
                     setPoAlert(null);
                   }}
@@ -1003,7 +1054,7 @@ export default function AdminPortal() {
                   className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white"
                   onClick={() => openJumpAlert(jumpAlert)}
                 >
-                  {jumpAlert.kind === "rfq" || String(jumpAlert.href || "").includes("rfq=") ? pt("Go to RFQ") : pt("Jump")}
+                  {recordIdFromAlert(jumpAlert).startsWith("PO-") ? pt("Go to purchase order") : jumpAlert.kind === "rfq" || String(jumpAlert.href || "").includes("rfq=") ? pt("Go to RFQ") : pt("Jump")}
                 </button>
                 <button
                   type="button"
@@ -1050,10 +1101,11 @@ export default function AdminPortal() {
           ) : null}
           {page === "products" && productSource === "chain" ? <ChainProductsPanel /> : null}
           {page === "banners" ? <BannersPanel note={note} /> : null}
-          {page === "pos" ? <PoPanel note={note} po={purchaseOrders} /> : null}
-          {page === "rfqs" ? (
-            <RfqPanel
-              key={inboxHomeKey}
+          {page === "pos" ? (
+            <PoPanel
+              note={note}
+              po={purchaseOrders}
+              focusId={focusPoId}
               rfqs={allRfqs}
               note={note}
               focusId={focusRfqId}
@@ -1961,6 +2013,8 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
   const imageInputRef = useRef(null);
   const actionLock = useRef(false);
   const [acting, setActing] = useState(false);
+  const [pageSize, setPageSize] = useState(20);
+  const [pageIndex, setPageIndex] = useState(0);
   async function runAction(work) {
     if (actionLock.current) return;
     actionLock.current = true;
@@ -1980,8 +2034,6 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
     ? searchedProducts
     : searchedProducts.filter((p) => productStatusKey(p) === statusTab);
   const selectedProducts = visibleProducts.filter((p) => selected.has(p.id));
-  const allVisibleSelected = visibleProducts.length > 0 && visibleProducts.every((p) => selected.has(p.id));
-  const someVisibleSelected = visibleProducts.some((p) => selected.has(p.id));
   const awaitingPublish = products.filter((p) => !p.deleted && productStatusKey(p) !== "published");
   const draft = form || toForm(product);
   const purposeTags = String(draft.purposes || "").split(/[\n,;]+/).map((tag) => tag.trim()).filter(Boolean);
@@ -1990,6 +2042,11 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
     ? reports.filter((r) => r.productId === product.id || (product.productNo && r.productNo === product.productNo))
     : []
   ).filter((r) => r.status === "open" || r.status === "looking" || r.id === focusReport?.id);
+  const pageCount = Math.max(1, Math.ceil(visibleProducts.length / pageSize));
+  const currentPage = Math.min(pageIndex, pageCount - 1);
+  const pageRows = visibleProducts.slice(currentPage * pageSize, currentPage * pageSize + pageSize);
+  const allVisibleSelected = pageRows.length > 0 && pageRows.every((p) => selected.has(p.id));
+  const someVisibleSelected = pageRows.some((p) => selected.has(p.id));
 
   useEffect(() => {
     if (!openProductId) return;
@@ -2010,6 +2067,10 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
     onOpenedProduct?.();
     onClearFocus?.();
   }
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [query, statusTab, pageSize]);
 
   function field(key, value) {
     setForm({ ...(form || toForm(product)), [key]: value });
@@ -2097,16 +2158,12 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
     setSelected((prev) => {
       const next = new Set(prev);
       if (allVisibleSelected) {
-        visibleProducts.forEach((p) => next.delete(p.id));
+        pageRows.forEach((p) => next.delete(p.id));
       } else {
-        visibleProducts.forEach((p) => next.add(p.id));
+        pageRows.forEach((p) => next.add(p.id));
       }
       return next;
     });
-  }
-
-  function clearSelected() {
-    setSelected(new Set());
   }
 
   function editSelected() {
@@ -2410,8 +2467,8 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
             </tr>
           </thead>
           <tbody>
-            {visibleProducts.length ? (
-              visibleProducts.map((p) => {
+            {pageRows.length ? (
+              pageRows.map((p) => {
                 const checked = selected.has(p.id);
                 return (
                   <tr
@@ -2496,6 +2553,45 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
           wide
           footer={
             <div className="flex flex-wrap justify-end gap-2">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-mute">
+        <p>
+          {visibleProducts.length
+            ? `${currentPage * pageSize + 1}–${Math.min(visibleProducts.length, currentPage * pageSize + pageRows.length)} / ${visibleProducts.length}`
+            : `0 / ${visibleProducts.length}`}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2">
+            {pt("Rows per page")}
+            <select
+              className="rounded-lg border border-line bg-white px-2 py-1.5 text-sm text-ink"
+              value={pageSize}
+              aria-label={pt("Rows per page")}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+            >
+              {[10, 20, 30, 50, 100].map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="rounded-lg border border-line bg-white px-3 py-1.5 text-sm text-ink disabled:opacity-40"
+            disabled={currentPage <= 0}
+            onClick={() => setPageIndex(currentPage - 1)}
+          >
+            {pt("Previous")}
+          </button>
+          <span className="text-ink">{currentPage + 1} / {pageCount}</span>
+          <button
+            type="button"
+            className="rounded-lg border border-line bg-white px-3 py-1.5 text-sm text-ink disabled:opacity-40"
+            disabled={currentPage >= pageCount - 1}
+            onClick={() => setPageIndex(currentPage + 1)}
+          >
+            {pt("Next")}
+          </button>
+        </div>
+      </div>
               {product && product.deleted ? (
                 <button
                   type="button"
@@ -3421,6 +3517,8 @@ function MemberAssignSearch({ rfqId, note, compact }) {
 }
 
 function RfqBuyerMeta({ rfq, note, onOpenBuyer, compact }) {
+  const { lang } = useLanguage();
+  const pt = (value) => adminText(lang, value);
   const kind = rfqBuyerKind(rfq);
   return (
     <div className={compact ? "space-y-1" : "space-y-2"}>
@@ -3430,7 +3528,7 @@ function RfqBuyerMeta({ rfq, note, onOpenBuyer, compact }) {
             kind === "member" ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"
           }`}
         >
-          {kind === "member" ? "Member" : "Guest"}
+          {kind === "member" ? pt("Member") : pt("Guest")}
         </span>
         <BuyerNameLink name={rfq.buyerName} email={rfq.buyerEmail} onOpen={onOpenBuyer} />
       </div>

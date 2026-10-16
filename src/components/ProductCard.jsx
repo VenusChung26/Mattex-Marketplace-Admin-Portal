@@ -485,7 +485,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
     return (
       <div className="min-w-0 space-y-1 text-center">
         <div className="group/act">
-          <p className="buy-now-hint">{hint}</p>
+          {hint ? <p className="buy-now-hint">{hint}</p> : null}
           {control}
         </div>
         {extra}
@@ -507,12 +507,12 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
     <div className="grid grid-cols-2 items-start gap-2">
       {column(
         primaryBtn,
-        priced ? t("buyNowWhatsappHint") : t("quoteNowWhatsappHint"),
+        priced ? t("buyNowLine") : t("quoteNowLine"),
         priced ? textAction(t("orRequestNow"), t("quoteNowWhatsappHint"), "quote-now") : null,
       )}
       {column(
         addBtn,
-        priced ? t("cartBuyHint") : t("cartQuoteHint"),
+        t("cartLine"),
         priced ? textAction(t("addToQuoteRequest"), t("cartQuoteHint"), "quote") : null,
       )}
     </div>
@@ -707,7 +707,7 @@ export default function ProductCard({ product, onAdd, rank = null, compact = fal
       <ProductBadges product={selected} rank={selected.id === product.id ? rank : null} />
       <Link
         to={withLocale(lang, `/details/${selected.id}`)}
-        className="block h-40 overflow-hidden bg-brand-50 lg:aspect-[3/2] lg:h-auto"
+        className="block h-28 overflow-hidden bg-brand-50 min-[752px]:h-40 lg:aspect-[3/2] lg:h-auto"
       >
         <ProductImage
           src={selected.image}
@@ -717,7 +717,7 @@ export default function ProductCard({ product, onAdd, rank = null, compact = fal
           imgClassName="w-full h-full object-cover transition-transform duration-500 ease-out hover:scale-[1.04]"
         />
       </Link>
-      <div className={`flex flex-col flex-1 ${compact ? "p-3" : "p-3.5"}`}>
+      <div className={`flex flex-1 flex-col ${compact ? "p-2.5 min-[752px]:p-3" : "p-3 min-[752px]:p-3.5"}`}>
         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">
           <Link
             to={withLocale(lang, catalogPathForCategory(selected.category))}
@@ -750,9 +750,9 @@ export default function ProductCard({ product, onAdd, rank = null, compact = fal
           moreLabel={t("moreOptions", { n: Math.max(members.length - 2, 0) })}
         />
         <ProductMetaChips product={selected} className="mt-2.5" />
-        <div className="mt-auto pt-4">
+        <div className="mt-auto pt-3 min-[752px]:pt-4">
           <ProductPrice product={selected} className="!mt-0" showOfferEnded={showOfferEnded} />
-          <div className="mt-3">
+          <div className="mt-2.5 min-[752px]:mt-3">
             <ProductActions product={selected} onAdd={onAdd} size="card" />
           </div>
         </div>

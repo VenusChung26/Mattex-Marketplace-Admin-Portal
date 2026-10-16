@@ -38,6 +38,7 @@ import {
 } from "../lib/store";
 import CartToast from "../components/CartToast";
 import { ProductSearchBox } from "../components/SearchSuggestions";
+import HowStepGraphic from "../components/HowStepGraphic";
 
 const CATEGORY_PREVIEW_COUNT = 8;
 const SECTION_PREVIEW = 8;
@@ -237,7 +238,7 @@ export default function HomePage() {
   const contentWidth = useContentWidth();
   const phone = contentWidth < 720;
   const categoryCols = phone
-    ? 1
+    ? 2
     : pickFillColumns(visibleCategories.length, contentWidth, { minTile: 132, maxTile: 210, target: 8 });
   const greenCols = phone ? 1 : fitColumns(greens.length, contentWidth, 260);
   const topCols = phone ? 1 : fitColumns(top.length, contentWidth, 260);
@@ -388,9 +389,10 @@ export default function HomePage() {
     setCatalogView(next === "list" ? "list" : "card");
   }
 
-  const suggestionsPool = useMemo(
-    () => getProductsByCategory(selectedCategories),
-    [selectedCategories, catalogEpoch]
+  const suggestionsPool = useMemo(() => getProductsByCategory(), [catalogEpoch]);
+  const browseCategories = useMemo(
+    () => getCategoryDefs().map((category) => [category.name, category.count]),
+    [catalogEpoch]
   );
 
   function scrollToResults() {
@@ -410,7 +412,13 @@ export default function HomePage() {
   }
 
   function openProduct(product) {
-    runCatalogSearch(product.name);
+    if (!product?.id) return;
+    navigate(withLocale(lang, `/details/${product.id}`));
+  }
+
+  function pickSearchCategory(name) {
+    selectCategory(name, { scroll: false });
+    scrollToResults();
   }
 
   function submitNavSearch(event, value) {
@@ -439,6 +447,8 @@ export default function HomePage() {
         searchValue={navQuery}
         onSearchChange={setNavQuery}
         onSearchSubmit={submitNavSearch}
+        onSearchCategory={pickSearchCategory}
+        browseCategories={browseCategories}
         selectedCategories={selectedCategories}
         onSelectCategory={selectCategory}
         onClearFilters={() => {
@@ -488,10 +498,51 @@ export default function HomePage() {
       </div>
 
       <div className="sheet relative z-10">
+        <section id="support" style={{ scrollMarginTop: navHeight }}>
+          <div className="max-w-7xl mx-auto px-4 pb-4 pt-8 sm:pb-6 sm:pt-10">
+            <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-mute">{t("howItWorks")}</p>
+                <h2 className="mt-2 font-display text-3xl font-semibold text-brand-800">{t("howHeadline")}</h2>
+              </div>
+            </div>
+            <ol className="grid grid-cols-1 gap-3 md:grid-cols-5 md:gap-4">
+              {[
+                ["01", "step1Title", "step1Body", "search"],
+                ["02", "step2Title", "step2Body", "quote"],
+                ["03", "step3Title", "step3Body", "buy"],
+                ["04", "step4Title", "step4Body", "cart"],
+                ["05", "step5Title", "step5Body", "spec"],
+              ].map(([n, title, body, art], index, steps) => (
+                <li
+                  key={n}
+                  className="relative flex min-w-0 flex-col overflow-visible rounded-xl border border-line bg-white shadow-[0_1px_0_rgba(16,21,19,0.04)]"
+                >
+                  <div className="overflow-hidden rounded-t-xl">
+                    <HowStepGraphic name={art} />
+                  </div>
+                  <div className="flex flex-1 flex-col px-3.5 pb-4 pt-3">
+                    <p className="text-[11px] font-semibold tracking-[0.16em] text-brand-700">{n}</p>
+                    <p className="mt-1.5 text-sm font-semibold leading-snug text-ink">{t(title)}</p>
+                    <p className="mt-1 text-[13px] leading-relaxed text-mute [text-wrap:pretty]">{t(body)}</p>
+                  </div>
+                  {index < steps.length - 1 ? (
+                    <span
+                      className="absolute left-[calc(100%+0.5rem)] top-14 z-10 hidden h-6 w-6 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-white text-xs text-brand-700 md:flex"
+                      aria-hidden
+                    >
+                      ›
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
         {live && offerBanner ? (
-          <section className="max-w-7xl mx-auto px-4 pt-8 sm:pt-10">
+          <section className="max-w-7xl mx-auto px-4 pt-6 sm:pt-8">
             <div
-              className="relative overflow-hidden border border-line bg-brand-800 max-sm:min-h-[200px]"
+              className="relative overflow-hidden rounded-xl border border-line bg-brand-800 max-sm:min-h-[200px]"
             >
               <Link
                 to={`${withLocale(lang, "/promo")}?banner=${encodeURIComponent(offerBanner.id)}`}
@@ -584,7 +635,7 @@ export default function HomePage() {
         </section>
 
         <section id="green" className="max-w-7xl mx-auto px-4 pt-14 sm:pt-16" style={{ scrollMarginTop: navHeight }}>
-          <div className="relative overflow-hidden bg-brand-800 text-white px-6 py-8 sm:px-9 sm:py-10 mb-7">
+          <div className="relative mb-7 overflow-hidden rounded-xl bg-brand-800 px-6 py-8 text-white sm:px-9 sm:py-10">
             <div
               className="absolute inset-0 opacity-25 bg-cover bg-center"
               style={{ backgroundImage: 'url("/assets/cat-timber.webp")' }}
@@ -716,42 +767,8 @@ export default function HomePage() {
           ) : null}
         </section>
 
-        <section id="support" className="mt-14 sm:mt-16 border-y border-line bg-white/70" style={{ scrollMarginTop: navHeight }}>
-          <div className="max-w-7xl mx-auto px-4 py-8 sm:py-10">
-            <div className="mb-6 max-w-xl">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-mute mb-2">{t("howItWorks")}</p>
-              <h2 className="font-display text-2xl sm:text-3xl font-semibold text-brand-800">
-                {t("howHeadline")}
-              </h2>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 sm:gap-8">
-              <div>
-                <span className="step-num">1</span>
-                <p className="mt-3 font-semibold text-ink">{t("step1Title")}</p>
-                <p className="mt-1.5 text-sm text-mute leading-relaxed">
-                  {t("step1Body")}
-                </p>
-              </div>
-              <div>
-                <span className="step-num">2</span>
-                <p className="mt-3 font-semibold text-ink">{t("step2Title")}</p>
-                <p className="mt-1.5 text-sm text-mute leading-relaxed">
-                  {t("step2Body")}
-                </p>
-              </div>
-              <div>
-                <span className="step-num">3</span>
-                <p className="mt-3 font-semibold text-ink">{t("step3Title")}</p>
-                <p className="mt-1.5 text-sm text-mute leading-relaxed">
-                  {t("step3Body")}
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <section id="custom" className="max-w-7xl mx-auto px-4 pt-14 sm:pt-16" style={{ scrollMarginTop: navHeight }}>
-          <div className="grid overflow-hidden border border-line bg-white lg:grid-cols-[minmax(0,1.25fr)_minmax(16rem,0.75fr)]">
+          <div className="grid overflow-hidden rounded-xl border border-line bg-white lg:grid-cols-[minmax(0,1.25fr)_minmax(16rem,0.75fr)]">
             <div className="relative flex flex-col justify-center bg-brand-50/70 px-6 py-10 sm:px-10 sm:py-12">
               <div className="absolute left-0 top-0 h-full w-1.5 bg-brand-400" aria-hidden />
               <p className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-brand-600">
@@ -832,7 +849,9 @@ export default function HomePage() {
                       onTerm={runCatalogSearch}
                       onSubmit={runCatalogSearch}
                       onProduct={openProduct}
+                      onCategory={pickSearchCategory}
                       products={suggestionsPool}
+                      browseCategories={browseCategories}
                       placeholder={t("searchPlaceholder")}
                       ariaLabel={t("catalog")}
                       className="min-w-0 flex-1"

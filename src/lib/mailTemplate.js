@@ -6,6 +6,13 @@ const LINE = "#e6eaec";
 export const MARKETPLACE_PUBLIC_ORIGIN = "https://marketplace.mattex.com.hk";
 export const ADMIN_PUBLIC_ORIGIN = "https://subbie-admin.mattex.com.hk";
 export const ADMIN_PUBLIC_HOME = `${ADMIN_PUBLIC_ORIGIN}/`;
+
+/** Sales email button: open that purchase order or RFQ in the portal, not the home page. */
+export function adminRecordHref(id) {
+  const value = String(id || "").trim();
+  const key = value.startsWith("PO-") ? "po" : "rfq";
+  return `${ADMIN_PUBLIC_ORIGIN}/?${key}=${encodeURIComponent(value)}`;
+}
 export const MARKETPLACE_PUBLIC_HOME = `${MARKETPLACE_PUBLIC_ORIGIN}/`;
 export const MARKETPLACE_LOGO_URL = `${MARKETPLACE_PUBLIC_ORIGIN}/assets/mattex-logo.webp`;
 
@@ -378,7 +385,7 @@ export function buyerRejectedEmailHtml({ logoUrl, salesEmail, name, company, rea
   });
 }
 
-export function salesNewRfqEmailHtml({ logoUrl, salesEmail, rfqId, buyerName, project, lineCount }) {
+export function salesNewRfqEmailHtml({ logoUrl, salesEmail, rfqId, buyerName, project, lineCount, portalHref }) {
   return renderMattexEmail({
     logoUrl,
     brandName: "Mattex Marketplace Admin Portal",
@@ -394,9 +401,9 @@ export function salesNewRfqEmailHtml({ logoUrl, salesEmail, rfqId, buyerName, pr
       { label: "Lines", value: lineCount != null ? String(lineCount) : "" },
     ],
     buttonLabel: "Open in portal",
-    buttonHref: ADMIN_PUBLIC_HOME,
+    buttonHref: portalHref || adminRecordHref(rfqId),
     footerLinks: [
-      { label: "Sales portal", href: ADMIN_PUBLIC_HOME },
+      { label: "Sales portal", href: portalHref || adminRecordHref(rfqId) },
       { label: "Contact", href: `mailto:${salesEmail}` },
     ],
   });
@@ -411,7 +418,7 @@ function poLineDetails(lines, total) {
   return rows;
 }
 
-export function poReceivedEmailHtml({ logoUrl, salesEmail, name, poId, lines, total, rfqsHref, shopHref, toEmail }) {
+export function poReceivedEmailHtml({ logoUrl, salesEmail, name, poId, lines, total, rfqsHref, posHref, shopHref, toEmail }) {
   return renderMattexEmail({
     logoUrl,
     salesEmail,
@@ -422,16 +429,16 @@ export function poReceivedEmailHtml({ logoUrl, salesEmail, name, poId, lines, to
     detailsTitle: `Purchase order ${poId}`,
     details: poLineDetails(lines, total),
     buttonLabel: "View your order",
-    buttonHref: rfqsHref,
+    buttonHref: posHref || rfqsHref,
     footerLinks: [
-      { label: "My RFQs", href: rfqsHref },
+      { label: "My purchase orders", href: posHref || rfqsHref },
       { label: "Marketplace", href: shopHref },
       { label: "Contact", href: `mailto:${salesEmail}` },
     ],
   });
 }
 
-export function salesNewPoEmailHtml({ logoUrl, salesEmail, poId, buyerName, buyerContact, lines, total }) {
+export function salesNewPoEmailHtml({ logoUrl, salesEmail, poId, buyerName, buyerContact, lines, total, portalHref }) {
   return renderMattexEmail({
     logoUrl,
     brandName: "Mattex Marketplace Admin Portal",
@@ -443,9 +450,9 @@ export function salesNewPoEmailHtml({ logoUrl, salesEmail, poId, buyerName, buye
     detailsTitle: `Purchase order ${poId}`,
     details: [{ label: "Buyer", value: buyerName }, { label: "Contact", value: buyerContact }, ...poLineDetails(lines, total)],
     buttonLabel: "Open in portal",
-    buttonHref: ADMIN_PUBLIC_HOME,
+    buttonHref: portalHref || adminRecordHref(poId),
     footerLinks: [
-      { label: "Sales portal", href: ADMIN_PUBLIC_HOME },
+      { label: "Sales portal", href: portalHref || adminRecordHref(poId) },
       { label: "Contact", href: `mailto:${salesEmail}` },
     ],
   });
@@ -497,7 +504,7 @@ export function rfqNoOfferEmailHtml({ logoUrl, salesEmail, name, rfqId, project,
   });
 }
 
-export function rfqCancelRequestedEmailHtml({ logoUrl, salesEmail, rfqId, buyerName, project }) {
+export function rfqCancelRequestedEmailHtml({ logoUrl, salesEmail, rfqId, buyerName, project, portalHref }) {
   return renderMattexEmail({
     logoUrl,
     brandName: "Mattex Marketplace Admin Portal",
@@ -512,9 +519,9 @@ export function rfqCancelRequestedEmailHtml({ logoUrl, salesEmail, rfqId, buyerN
       { label: "Project", value: project },
     ],
     buttonLabel: "Open in portal",
-    buttonHref: ADMIN_PUBLIC_HOME,
+    buttonHref: portalHref || adminRecordHref(rfqId),
     footerLinks: [
-      { label: "Sales portal", href: ADMIN_PUBLIC_HOME },
+      { label: "Sales portal", href: portalHref || adminRecordHref(rfqId) },
       { label: "Contact", href: `mailto:${salesEmail}` },
     ],
   });
@@ -564,7 +571,7 @@ export function rfqCancelDeclinedEmailHtml({ logoUrl, salesEmail, name, rfqId, p
   });
 }
 
-export function rfqReverseRequestedEmailHtml({ logoUrl, salesEmail, rfqId, buyerName, project }) {
+export function rfqReverseRequestedEmailHtml({ logoUrl, salesEmail, rfqId, buyerName, project, portalHref }) {
   return renderMattexEmail({
     logoUrl,
     brandName: "Mattex Marketplace Admin Portal",
@@ -579,9 +586,9 @@ export function rfqReverseRequestedEmailHtml({ logoUrl, salesEmail, rfqId, buyer
       { label: "Project", value: project },
     ],
     buttonLabel: "Open in portal",
-    buttonHref: ADMIN_PUBLIC_HOME,
+    buttonHref: portalHref || adminRecordHref(rfqId),
     footerLinks: [
-      { label: "Sales portal", href: ADMIN_PUBLIC_HOME },
+      { label: "Sales portal", href: portalHref || adminRecordHref(rfqId) },
       { label: "Contact", href: `mailto:${salesEmail}` },
     ],
   });

@@ -1,15 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { injectPublicDocument } from "../src/lib/ssrHtml.js";
-import { hydrateStore } from "../src/lib/store.js";
-
-let hydrateOnce = null;
-function ensureCatalog() {
-  if (!hydrateOnce) hydrateOnce = hydrateStore().catch((error) => {
-    console.warn("ssr hydrate", error?.message || error);
-  });
-  return hydrateOnce;
-}
+import { ensureSsrCatalog } from "../src/lib/ssrCatalog.js";
 
 async function readTemplate() {
   const candidates = [path.join(process.cwd(), "dist", "index.html"), path.join(process.cwd(), "index.html")];

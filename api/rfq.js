@@ -417,6 +417,43 @@ async function assignRfqAction(body, actor, tries = 3) {
   return { status: 200, body: { ok: true, patch: plan.patch } };
 }
 
+/**
+ * po_assign: Sales give a guest purchase order to a registered member. Staff only.
+ * A guest order keeps its number and status. Only `buyerKind: "guest"` can move, and only once.
+ */
+async function assignPoAction(body, actor, tries = 3) {
+  if (actor.kind !== "staff") return { status: 403, body: { ok: false, error: "staff" } };
+  const id = text(body?.id, 40);
+  const current = await rfqStore().get("po", id, actor);
+  if (!current) return { status: 404, body: { ok: false, error: "not_found" } };
+
+  const email = text(body?.buyer?.email, 160).toLowerCase();
+  if (!EMAIL.test(email)) return { status: 400, body: { ok: false, error: "missing_buyer" } };
+  let buyer = { email, name: text(body?.buyer?.name, 120), phone: text(body?.buyer?.phone, 40) };
+  const found = await lookupBuyerAccount(email);
+  if (found.checked) {
+    if (!found.ok) return { status: 400, body: { ok: false, error: "missing_buyer" } };
+    buyer = found.account;
+  }
+
+  const plan = planAssign(current, { buyer, by: actor.email, at: new Date().toISOString() });
+  if (!plan.ok) return { status: plan.error === "locked" ? 409 : 400, body: { ok: false, error: plan.error } };
+
+  const result = await rfqStore().update(
+    "po",
+    id,
+    current.revision,
+    (record) => {
+      const next = applyDecision(record, plan.patch);
+      return { ...plan.patch.fields, activity: next.activity };
+    },
+    actor,
+  );
+  if (result.error === "conflict" && tries > 1) return assignPoAction(body, actor, tries - 1);
+  if (result.error) return { status: 409, body: { ok: false, error: result.error } };
+  return { status: 200, body: { ok: true, po: view(result.record, actor) } };
+}
+
 function money(value) {
   if (value === "" || value == null) return null;
   const n = Number(value);
@@ -793,6 +830,7 @@ async function routePost(body, request) {
   const actor = actorOf(request);
   if (body?.action === "po_create") return createPo(body, placerOf(request), request);
   if (body?.action === "po_confirm") return confirmPo(body, actor);
+  if (body?.action === "po_assign") return assignPoAction(body, actor);
   if (body?.action === "rfq_decide") return decideRfqAction(body, request);
   if (body?.action === "po_from_quote") return poFromQuoteAction(body, request);
   if (body?.action === "rfq_phone") return phoneAction(body, actor);

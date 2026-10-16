@@ -1,4 +1,5 @@
 import {
+  adminRecordHref,
   MARKETPLACE_LOGO_URL,
   rfqAcceptedEmailHtml,
   rfqCancelAcceptedEmailHtml,
@@ -74,6 +75,7 @@ export function lifecycleMailsFor(event, record, { origin = MARKETPLACE_PUBLIC_O
     lineCount: (record.lines || []).length,
     rfqsHref: `${origin}/zh/rfqs`,
     shopHref: `${origin}/zh`,
+    portalHref: adminRecordHref(record.id),
   };
   const subject = spec.subject(record.id);
   if (spec.to === "sales") {
@@ -91,6 +93,7 @@ export function mailsFor(kind, record, { origin = MARKETPLACE_PUBLIC_ORIGIN, env
     logoUrl: MARKETPLACE_LOGO_URL,
     salesEmail: SALES,
     rfqsHref: `${origin}/zh/rfqs`,
+    posHref: `${origin}/zh/pos`,
     shopHref: `${origin}/zh`,
   };
   const name = String(record.buyerName || "there").trim() || "there";
@@ -102,7 +105,7 @@ export function mailsFor(kind, record, { origin = MARKETPLACE_PUBLIC_ORIGIN, env
         role: "buyer",
         to: buyerTo,
         subject: `We received your order ${record.id}`,
-        innerHtml: poReceivedEmailHtml({ ...base, name, poId: record.id, lines: record.lines, total: record.total, toEmail: buyerTo }),
+        innerHtml: poReceivedEmailHtml({ ...base, name, poId: record.id, lines: record.lines, total: record.total, toEmail: buyerTo, portalHref: adminRecordHref(record.id) }),
       });
     }
     for (const to of salesRecipients(env)) {
@@ -117,6 +120,7 @@ export function mailsFor(kind, record, { origin = MARKETPLACE_PUBLIC_ORIGIN, env
           buyerContact: contactOf(record),
           lines: record.lines,
           total: record.total,
+          portalHref: adminRecordHref(record.id),
         }),
       });
     }

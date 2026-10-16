@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import ProductCard from "../components/ProductCard";
 import { ProductSearchBox } from "../components/SearchSuggestions";
 import SiteFooter from "../components/SiteFooter";
@@ -9,6 +9,7 @@ import Seo, { breadcrumbJsonLd, orgJsonLd } from "../components/Seo";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { catalogGroupIndex, collapseCatalog, useCatalogGroups } from "../lib/catalogGroups";
+import { categoriesInCatalog } from "../lib/searchOptions";
 import { jumpToId } from "../lib/jumpTo";
 import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
@@ -18,20 +19,34 @@ export default function SalesPage() {
   const { t, lang } = useLanguage();
   const { catalogEpoch } = useStore();
   const groupEpoch = useCatalogGroups();
+  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("");
   const [toast, setToast] = useState(null);
   const [catalogShown, setCatalogShown] = useState(24);
 
   const suggestPool = useMemo(() => getSalesProducts(), [catalogEpoch]);
+  const browseCategories = useMemo(() => categoriesInCatalog(suggestPool), [suggestPool]);
   const products = useMemo(() => {
     const q = searchQuery.trim();
-    const list = q ? searchProducts(q).filter((p) => p.sales) : getSalesProducts();
+    let list = q ? searchProducts(q).filter((p) => p.sales) : getSalesProducts();
+    if (selectedCategory) list = list.filter((p) => p.category === selectedCategory);
     return collapseCatalog(list, catalogGroupIndex());
-  }, [searchQuery, catalogEpoch, groupEpoch]);
+  }, [searchQuery, selectedCategory, catalogEpoch, groupEpoch]);
 
   useEffect(() => {
     setCatalogShown(24);
-  }, [searchQuery]);
+  }, [searchQuery, selectedCategory]);
+
+  function openProduct(product) {
+    if (!product?.id) return;
+    navigate(withLocale(lang, `/details/${product.id}`));
+  }
+
+  function pickCategory(name) {
+    setSelectedCategory(name);
+    jumpToId("catalog-results");
+  }
 
   function handleAdd(productId, intent = "quote", qty) {
     const result = addFromStorefront(productId, intent, qty, lang);
@@ -65,6 +80,8 @@ export default function SalesPage() {
           setSearchQuery(value ?? "");
           jumpToId("catalog-results");
         }}
+        onSearchCategory={pickCategory}
+        browseCategories={browseCategories}
         suggestProducts={suggestPool}
       />
 
@@ -102,12 +119,11 @@ export default function SalesPage() {
                 setSearchQuery(term);
                 jumpToId("catalog-results");
               }}
-              onProduct={(product) => {
-                setSearchQuery(product.name);
-                jumpToId("catalog-results");
-              }}
+              onProduct={openProduct}
+              onCategory={pickCategory}
               products={suggestPool}
-              placeholder={t("navSearchPlaceholder")}
+              browseCategories={browseCategories}
+              placeholder={t("searchPlaceholder")}
               ariaLabel={t("search")}
               inputClassName="field-input w-full"
             />

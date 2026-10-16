@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import CategorySideNav from "../components/CategorySideNav";
 import CopyLinkButton from "../components/CopyLinkButton";
 import ProductCard, { ProductCardSkeleton, ProductListRow } from "../components/ProductCard";
@@ -19,6 +19,7 @@ import { seoCopy } from "../lib/seoCopy";
 import {
   getCategoryByName,
   getCategoryBySlug,
+  getCategoryDefs,
   getEffectivePrice,
   getProductsByCategory,
   isHitProduct,
@@ -65,9 +66,11 @@ export default function CatalogPage() {
     }
   }, [catalogView]);
 
-  const suggestionsPool = useMemo(
-    () => (category ? getProductsByCategory(category.name) : []),
-    [category, catalogEpoch]
+  const navigate = useNavigate();
+  const suggestionsPool = useMemo(() => getProductsByCategory(), [catalogEpoch]);
+  const browseCategories = useMemo(
+    () => getCategoryDefs().map((item) => [item.name, item.count]),
+    [catalogEpoch]
   );
 
   const products = useMemo(() => {
@@ -118,6 +121,21 @@ export default function CatalogPage() {
     setCatalogView(next === "list" ? "list" : "card");
   }
 
+  function openProduct(product) {
+    if (!product?.id) return;
+    navigate(withLocale(lang, `/details/${product.id}`));
+  }
+
+  function openCategory(name) {
+    const next = getCategoryByName(name);
+    if (!next) return;
+    if (next.id === category.id) {
+      jumpToId("catalog-results");
+      return;
+    }
+    navigate(withLocale(lang, `/catalog/${next.id}`));
+  }
+
   return (
     <div className="bg-paper min-h-screen">
       <Seo
@@ -136,6 +154,8 @@ export default function CatalogPage() {
           setSearchQuery(value ?? "");
           jumpToId("catalog-results");
         }}
+        onSearchCategory={openCategory}
+        browseCategories={browseCategories}
         suggestProducts={suggestionsPool}
       />
       <main className="mx-auto min-w-0 max-w-7xl px-4 py-10 sm:py-12">
@@ -167,11 +187,10 @@ export default function CatalogPage() {
                       setSearchQuery(term);
                       jumpToId("catalog-results");
                     }}
-                    onProduct={(product) => {
-                      setSearchQuery(product.name);
-                      jumpToId("catalog-results");
-                    }}
+                    onProduct={openProduct}
+                    onCategory={openCategory}
                     products={suggestionsPool}
+                    browseCategories={browseCategories}
                     placeholder={t("searchPlaceholder")}
                     ariaLabel={t("catalog")}
                     className="min-w-0 flex-1"

@@ -336,9 +336,9 @@ function publicSsrHtmlPlugin() {
         if (!ctx.server) return html;
         const url = String(ctx.originalUrl || ctx.path || "/").split("?")[0];
         await import("./src/lib/ssrNodePolyfill.js");
-        const { hydrateStore } = await import("./src/lib/store.js");
+        const { ensureSsrCatalog } = await import("./src/lib/ssrCatalog.js");
         const { injectPublicDocument } = await import("./src/lib/ssrHtml.js");
-        if (!catalogReady) catalogReady = hydrateStore();
+        if (!catalogReady) catalogReady = ensureSsrCatalog();
         await catalogReady;
         return injectPublicDocument(html, url);
       },
@@ -375,11 +375,11 @@ export default defineConfig(({ mode }) => {
   const marketplaceOrigin =
     process.env.VITE_MARKETPLACE_ORIGIN ||
     env.VITE_MARKETPLACE_ORIGIN ||
-    (mode === "production" ? "" : "http://localhost:5178");
+    (mode === "production" ? "https://marketplace.mattex.com.hk" : "http://localhost:5182");
   const adminOrigin =
     process.env.VITE_ADMIN_ORIGIN ||
     env.VITE_ADMIN_ORIGIN ||
-    (mode === "production" ? "" : "http://localhost:5179");
+    (mode === "production" ? "https://subbie-admin.mattex.com.hk" : "http://localhost:5183");
   return {
     plugins: [react(), jsonPlugin(), marketplaceGaHtmlPlugin(), publicSsrHtmlPlugin()],
     define: {

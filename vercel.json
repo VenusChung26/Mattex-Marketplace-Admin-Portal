@@ -57,6 +57,11 @@
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
     }
   ],
+  "functions": {
+    "api/ssr.js": {
+      "includeFiles": "public/catalog.json"
+    }
+  },
   "rewrites": [
     { "source": "/api/catalog-version", "destination": "/api/catalog-snapshot?part=version" },
     { "source": "/api/catalog/commit", "destination": "/api/catalog-snapshot?part=commit" },

@@ -217,21 +217,38 @@ export function planCancelReverse(rfq, kind, { by, at } = {}) {
 
 const GUEST_ADDRESSES = new Set(["", "__guest__", "guest@subbie.store"]);
 
-/** `guest` when the RFQ has no registered owner, otherwise `member`. */
+/**
+ * `guest` when Sales has not given this record to a member account.
+ * A guest who typed a real email is still a guest (`buyerKind: "guest"`). Older records with no kind
+ * fall back to the email shape.
+ */
 export function rfqBuyerKind(rfq) {
+  if (rfq?.buyerKind === "guest") return "guest";
+  if (rfq?.buyerKind === "member") return "member";
   const email = String(rfq?.buyerEmail || "").trim().toLowerCase();
   if (GUEST_ADDRESSES.has(email) || email.startsWith("guest@")) return "guest";
   return "member";
 }
 
 /**
- * Sales give a guest RFQ to a registered member. Only a guest RFQ can be assigned.
+ * A guest record can be given to a member. `buyerKind: "guest"` counts even when the guest typed a
+ * real email (a purchase order always has one). A record already marked `member` cannot move again.
+ * Older RFQs with no kind still use the email shape.
+ */
+function assignableGuest(record) {
+  if (record?.buyerKind === "guest") return true;
+  if (record?.buyerKind === "member") return false;
+  return rfqBuyerKind(record) === "guest";
+}
+
+/**
+ * Sales give a guest RFQ or purchase order to a registered member. Only a guest record can be assigned.
  * `buyer` is the member record the caller already checked ({ email, name, phone }).
  */
 export function planAssign(rfq, { buyer, by, at } = {}) {
   const email = String(buyer?.email || "").trim().toLowerCase();
   if (!email || !email.includes("@")) return { ok: false, error: "missing_buyer" };
-  if (rfqBuyerKind(rfq) === "member") return { ok: false, error: "locked" };
+  if (!assignableGuest(rfq)) return { ok: false, error: "locked" };
   const when = at || new Date().toISOString();
   return {
     ok: true,

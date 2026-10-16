@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import ProductCard from "../components/ProductCard";
 import { ProductSearchBox } from "../components/SearchSuggestions";
 import SupplierLogo from "../components/SupplierLogo";
@@ -10,6 +10,7 @@ import Seo, { breadcrumbJsonLd, orgJsonLd } from "../components/Seo";
 import { useLanguage } from "../i18n";
 import { catalogGroupIndex, collapseCatalog, useCatalogGroups } from "../lib/catalogGroups";
 import { jumpToId } from "../lib/jumpTo";
+import { categoriesInCatalog } from "../lib/searchOptions";
 import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
 import { SHOW_RFQ } from "../lib/flags";
@@ -25,6 +26,7 @@ import {
 
 export default function SupplierPage() {
   const { slug } = useParams();
+  const navigate = useNavigate();
   const supplier = getSupplier(slug);
   const { t, lang } = useLanguage();
   const groupEpoch = useCatalogGroups();
@@ -66,10 +68,7 @@ export default function SupplierPage() {
     });
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [catalog]);
-  const suggestPool = useMemo(
-    () => (selectedCategory ? catalog.filter((product) => product.category === selectedCategory) : catalog),
-    [catalog, selectedCategory]
-  );
+  const browseCategories = useMemo(() => categoriesInCatalog(catalog), [catalog]);
   const searched = useMemo(
     () => (supplier ? searchSupplierProducts(supplier.slug, searchQuery) : []),
     [supplier, searchQuery]
@@ -84,6 +83,16 @@ export default function SupplierPage() {
     if (stockFilter !== "all") list = list.filter((p) => p.stockStatus === stockFilter);
     return collapseCatalog(list, catalogGroupIndex());
   }, [searched, selectedCategory, greenOnly, priceFilter, stockFilter, groupEpoch]);
+
+  function openProduct(product) {
+    if (!product?.id) return;
+    navigate(withLocale(lang, `/details/${product.id}`));
+  }
+
+  function pickCategory(name) {
+    setSelectedCategory(name);
+    jumpToId("supplier-products");
+  }
 
   if (!supplier) {
     return (
@@ -139,7 +148,9 @@ export default function SupplierPage() {
           setSearchQuery(value ?? "");
           jumpToId("supplier-products");
         }}
-        suggestProducts={suggestPool}
+        onSearchCategory={pickCategory}
+        browseCategories={browseCategories}
+        suggestProducts={catalog}
       />
 
       <section className="relative overflow-hidden bg-charcoal text-white min-h-[42vh] flex items-end">
@@ -236,13 +247,10 @@ export default function SupplierPage() {
                       setSearchQuery(term);
                       jumpToId("supplier-products");
                     }}
-                    onProduct={(product) => {
-                      setSearchQuery(product.name);
-                      jumpToId("supplier-products");
-                    }}
-                    products={suggestPool}
-                    placeholder={t("supplierSearchPlaceholder")}
-                    ariaLabel={t("catalog")}
+                    onProduct={openProduct}
+                    onCategory={pickCategory}
+                    products={catalog}
+                    browseCategories={browseCategories}
                     inputClassName="field-input w-full"
                   />
                 </label>

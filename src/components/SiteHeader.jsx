@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import AccountMenu from "./AccountMenu";
 import { FallbackImage } from "./ProductCard";
@@ -63,6 +63,8 @@ export default function SiteHeader({
   onClearFilters,
   onCatalogClick,
   onDraftClick,
+  onSearchCategory,
+  browseCategories,
   suggestProducts,
 } = {}) {
   const { user, cartCount, authModalOpen, catalogEpoch } = useStore();
@@ -70,7 +72,9 @@ export default function SiteHeader({
   const navigate = useNavigate();
   const location = useLocation();
   const categories = useMemo(() => getCategoryDefs(), [catalogEpoch]);
+  const headerRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [lockedHeight, setLockedHeight] = useState(0);
   const [catsOpen, setCatsOpen] = useState(false);
   const [mobileCatsOpen, setMobileCatsOpen] = useState(false);
   const [navSolid, setNavSolid] = useState(!overlay);
@@ -78,6 +82,10 @@ export default function SiteHeader({
   const isHome = stripLocale(location.pathname) === "/";
   const fallbackCatalog = useMemo(() => getProductsByCategory(), [catalogEpoch]);
   const suggestPool = suggestProducts || fallbackCatalog;
+  const browseList = useMemo(() => {
+    if (browseCategories?.length) return browseCategories;
+    return categories.map((category) => [category.name, category.count]);
+  }, [browseCategories, categories]);
   const lp = (path) => withLocale(lang, path);
 
   useEffect(() => {
@@ -96,9 +104,16 @@ export default function SiteHeader({
   }, [overlay]);
 
   useEffect(() => {
-    document.body.style.overflow = menuOpen ? "hidden" : "";
+    if (!menuOpen) return undefined;
+    const block = (event) => {
+      if (event.target instanceof Node && document.getElementById("siteNav")?.contains(event.target)) return;
+      event.preventDefault();
+    };
+    document.addEventListener("wheel", block, { passive: false });
+    document.addEventListener("touchmove", block, { passive: false });
     return () => {
-      document.body.style.overflow = "";
+      document.removeEventListener("wheel", block);
+      document.removeEventListener("touchmove", block);
     };
   }, [menuOpen]);
 
@@ -106,11 +121,11 @@ export default function SiteHeader({
   const showOffer = !ready || live;
   const width = fluid ? "w-full max-w-none" : wide ? "max-w-[100rem]" : "max-w-7xl";
   const navLinks = [
+    { hash: "support", label: t("howItWorks") },
     showOffer ? { to: lp("/promo"), label: t("midAutumnCta") } : null,
     { hash: "green", label: t("green") },
     { hash: "top", label: t("topProducts") },
     { hash: "suppliers", label: t("suppliers") },
-    { hash: "support", label: t("howItWorks") },
     { to: { pathname: lp("/"), hash: "products" }, label: t("catalog"), allProducts: true },
   ].filter(Boolean);
 
@@ -163,7 +178,18 @@ export default function SiteHeader({
   }
 
   function openProduct(product) {
-    pickTerm(product.name);
+    if (!product?.id) return;
+    closeMenu();
+    navigate(lp(`/details/${product.id}`));
+  }
+
+  function pickSearchCategory(name) {
+    closeMenu();
+    if (onSearchCategory) {
+      onSearchCategory(name);
+      return;
+    }
+    navigate(catalogTo({ cat: name }));
   }
 
   function goCatalog(extra = {}) {
@@ -236,10 +262,20 @@ export default function SiteHeader({
     }
   }
 
+  function toggleMenu() {
+    if (!menuOpen && !overlay && headerRef.current) {
+      setLockedHeight(headerRef.current.getBoundingClientRect().height);
+    }
+    setMenuOpen((open) => !open);
+  }
+
   return (
+    <>
+    {menuOpen && !overlay ? <div aria-hidden style={{ height: lockedHeight }} /> : null}
     <header
+      ref={headerRef}
       id="siteNav"
-      className={`nav-glass ${overlay ? "fixed" : "sticky"} top-0 left-0 right-0 z-40 ${navSolid ? "is-solid" : ""}`}
+      className={`nav-glass ${overlay || menuOpen ? "fixed" : "sticky"} top-0 inset-x-0 z-40 ${navSolid || menuOpen ? "is-solid" : ""}`}
     >
       <div className={`${width} mx-auto px-4 sm:px-6 lg:px-8`}>
         <div className="flex items-center gap-2 py-3 lg:gap-4">
@@ -261,22 +297,16 @@ export default function SiteHeader({
               onValue={setSearch}
               onTerm={pickTerm}
               onProduct={openProduct}
+              onCategory={pickSearchCategory}
               products={suggestPool}
-              placeholder={t("navSearchPlaceholder")}
+              browseCategories={browseList}
+              placeholder={t("searchPlaceholder")}
               ariaLabel={t("search")}
               inputClassName="w-full border border-white/20 bg-white/10 px-3.5 py-2 text-sm text-white placeholder:text-white/45"
             />
           </form>
 
           <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
-            <button
-              type="button"
-              className="md:hidden inline-flex h-10 w-10 items-center justify-center border border-white/20 text-white hover:bg-white/10"
-              aria-label={t("search")}
-              onClick={() => goCatalog()}
-            >
-              ⌕
-            </button>
             <button
               type="button"
               onClick={onRfqClick}
@@ -313,12 +343,27 @@ export default function SiteHeader({
               className="lg:hidden inline-flex h-10 w-10 items-center justify-center border border-white/20 text-white hover:bg-white/10"
               aria-label={menuOpen ? t("closeMenu") : t("openMenu")}
               aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((v) => !v)}
+              onClick={toggleMenu}
             >
               <span className="text-lg leading-none">{menuOpen ? "×" : "☰"}</span>
             </button>
           </div>
         </div>
+
+        <form className="pb-3 md:hidden" onSubmit={submitSearch}>
+          <ProductSearchBox
+            value={query}
+            onValue={setSearch}
+            onTerm={pickTerm}
+            onProduct={openProduct}
+            onCategory={pickSearchCategory}
+            products={suggestPool}
+            browseCategories={browseList}
+            placeholder={t("searchPlaceholder")}
+            ariaLabel={t("search")}
+            inputClassName="w-full border border-white/20 bg-white/10 px-3.5 py-2 text-sm text-white placeholder:text-white/45"
+          />
+        </form>
 
         <nav className="hidden lg:flex flex-wrap items-center gap-1 border-t border-white/10 py-1.5 text-sm font-medium text-white/70">
           <div
@@ -388,7 +433,7 @@ export default function SiteHeader({
       </div>
 
       {menuOpen ? (
-        <div className="lg:hidden border-t border-white/10 bg-charcoal/98 px-4 py-4 max-h-[80vh] overflow-y-auto">
+        <div className="absolute inset-x-0 top-full z-40 max-h-[min(70dvh,calc(100dvh-4.5rem))] overflow-y-auto border-t border-white/10 bg-[#101513] px-4 py-4 shadow-[0_18px_40px_rgba(0,0,0,0.35)] lg:hidden">
           <div className="flex flex-col gap-1 text-sm font-medium text-white/80">
             <button
               type="button"
@@ -408,18 +453,6 @@ export default function SiteHeader({
                 pickCategory(c.name);
               }}
             />
-            <form className="mb-2" onSubmit={submitSearch}>
-              <ProductSearchBox
-                value={query}
-                onValue={setSearch}
-                onTerm={pickTerm}
-                onProduct={openProduct}
-                products={suggestPool}
-                placeholder={t("navSearchPlaceholder")}
-                ariaLabel={t("search")}
-                inputClassName="w-full border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/45"
-              />
-            </form>
             {navLinks.map((l) => (
               <Link
                 key={l.to || l.hash}
@@ -481,5 +514,6 @@ export default function SiteHeader({
       ) : null}
       <AuthModal open={Boolean(authModalOpen)} onClose={closeAuthModal} />
     </header>
+    </>
   );
 }
