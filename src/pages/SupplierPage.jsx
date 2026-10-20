@@ -378,7 +378,7 @@ function SupplierCategoryMenu({ t, total, counts, selected, onSelect }) {
               <button
                 type="button"
                 onClick={() => onSelect(item.name)}
-                className={`w-full flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                className={`w-full flex items-center justify-between gap-3 rounded-none px-3 py-2 text-left text-sm transition-colors ${
                   active
                     ? "bg-brand-600 text-white"
                     : "text-ink hover:bg-brand-50"

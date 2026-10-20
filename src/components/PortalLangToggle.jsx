@@ -15,7 +15,7 @@ export default function PortalLangToggle({ tone = "dark" }) {
           key={id}
           type="button"
           aria-pressed={lang === id}
-          className={`rounded-md px-2.5 py-1 ${lang === id ? on : off}`}
+          className={`rounded-none px-2.5 py-1 ${lang === id ? on : off}`}
           onClick={() => setLang(id)}
         >
           {label}

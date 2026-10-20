@@ -1,0 +1,27 @@
+---
+description: Marketplace commits go to the storefront repo; portal commits go to the admin portal repo
+alwaysApply: true
+---
+
+# Split commit destinations
+
+This worktree stays on ports 5182 (marketplace) and 5183 (portal).
+
+- Marketplace commits push to `origin`: `https://github.com/VenusChung26/Mattex-Marketplace-Storefront.git`, branch `mattex-marketplace-dev-2`.
+- Portal commits push to `portal`: `https://github.com/VenusChung26/Mattex-Marketplace-Admin-Portal.git`, branch `mattex-marketplace-dev-2`.
+- Do not push this worktree onto storefront `mattex-marketplace-dev-1` or admin `main`. Do not force-push.
+
+Marketplace paths: buyer pages, `src/components` used by the shop, `vercel.json`, storefront build and prerender.
+
+Portal paths: `src/pages/admin/**`, `vite.admin.config.js`, `vercel.admin.json`, `src/lib/adminCopy.js`.
+
+Shared paths both deploys need (`api/`, `server/`, `src/lib` used by both, `src/App.jsx`, `package.json`) push to **both** remotes in the same commit.
+
+```jsx
+// ❌ BAD — portal page committed only to the storefront repo
+git push origin HEAD
+
+// ✅ GOOD — portal page goes to the admin repo; shared API goes to both
+git push portal HEAD:mattex-marketplace-dev-2
+git push origin HEAD
+```

@@ -6,10 +6,10 @@ import SiteFooter from "../components/SiteFooter";
 import Seo, { breadcrumbJsonLd, orgJsonLd, productJsonLd } from "../components/Seo";
 import ProductPrice from "../components/ProductPrice";
 import ProductRating from "../components/ProductRating";
-import { ProductActions, ProductBadges, ProductImage } from "../components/ProductCard";
+import { FallbackImage, ProductActions, ProductBadges, ProductImage, QtyStepper } from "../components/ProductCard";
 import CartToast from "../components/CartToast";
 import { productImageList } from "../lib/compressImage";
-import { productImageUrl } from "../lib/productFields";
+import { buyerPurposes, displayUnit, isLeadSpec, lowerDeliveryQty, productImageUrl, specParts } from "../lib/productFields";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { bootProduct } from "../lib/bootPage";
@@ -29,6 +29,7 @@ import {
   getProduct,
   isBuyerVisible,
   productSkuId,
+  productDescriptionText,
   specificationRows,
   stockStatusKey,
   supplierDisplayName,
@@ -62,6 +63,15 @@ const STOCK_TONE = {
   made_to_order: "bg-paper text-ink",
   out_of_stock: "bg-[#f8e8e8] text-[#8a2b2b]",
 };
+
+function DetailLine({ label, children, className = "" }) {
+  return (
+    <div className={`col-span-2 grid-cols-subgrid items-start border-t border-line py-2.5 ${className || "grid"}`}>
+      <dt className="text-sm text-mute">{label}</dt>
+      <dd className="min-w-0 text-sm font-medium leading-relaxed text-ink">{children}</dd>
+    </div>
+  );
+}
 
 export default function DetailsPage() {
   const { id } = useParams();
@@ -125,7 +135,9 @@ export default function DetailsPage() {
           ? t("requestQuoteHint")
           : t("requestQuoteOnlyHint");
   const minQty = Math.max(1, Number(product.moq) || 1);
-  const leadTime = displayLeadTime(product) || "—";
+  const leadTime = displayLeadTime(product, lang) || "—";
+  const unitLabel = displayUnit(product.unit || product.salesUnit, lang);
+  const description = productDescriptionText(product);
   const facts = [
     { label: t("productNo"), value: productSkuId(product) || product.id.toUpperCase() },
     {
@@ -134,15 +146,21 @@ export default function DetailsPage() {
       pill: true,
       tone: discontinued ? "bg-[#f8e8e8] text-[#8a2b2b]" : STOCK_TONE[product.stockStatus] || STOCK_TONE.in_stock,
     },
-    { label: t("moq"), value: `${product.moq} ${product.unit}` },
+    { label: t("moq"), value: `${product.moq} ${unitLabel}`.trim() },
+    unitLabel ? { label: t("salesUnit"), value: unitLabel } : null,
     { label: t("leadTime"), value: leadTime },
     { label: t("standard"), value: product.standard },
-  ];
+  ].filter(Boolean);
+  const specRows = specificationRows(product)
+    .filter((row) => row.kind === "cert" || !isLeadSpec(row.text))
+    .map((row) => {
+      if (row.kind === "cert") return { key: "cert", label: t("cert"), value: row.lines };
+      const parts = specParts(row.text, lang);
+      return { key: row.text, label: parts.label, value: parts.value };
+    });
 
-  const purposes = (product.purposes || [])
-    .map((term) => String(term).trim())
-    .filter((term) => term && !/^\d+\.\s/.test(term));
-  const remark = String(product.remark || "").trim();
+  const purposes = buyerPurposes(product, lang);
+  const hasRemark = Boolean(String(product.remark || "").trim());
 
   async function goToRfq(intent, nextQty = qty) {
     if (orderLock.current || offline) return;
@@ -223,7 +241,12 @@ export default function DetailsPage() {
                     }`}
                     onClick={() => setActiveImage(src)}
                   >
-                    <img src={src} alt="" className="h-full w-full object-cover" />
+                    <FallbackImage
+                      src={src}
+                      fallback={src === product.image ? product.imageFallback : ""}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
                   </button>
                 ))}
               </div>
@@ -256,7 +279,7 @@ export default function DetailsPage() {
                         key={member.productId}
                         to={withLocale(lang, `/details/${member.productId}`)}
                         aria-current={selected ? "true" : undefined}
-                        className={`rounded-full border px-3 py-1.5 text-sm ${
+                        className={`rounded-none border px-3 py-1.5 text-sm ${
                           selected
                             ? "border-brand-700 bg-brand-50 font-semibold text-brand-800"
                             : "border-line bg-white text-ink hover:border-brand-400"
@@ -284,24 +307,56 @@ export default function DetailsPage() {
             </p>
             <ProductRating product={product} size="lg" className="mt-2" />
             <ProductPrice product={product} size="detail" />
-            <p className="mt-5 text-sm text-mute leading-relaxed max-w-prose">{product.description}</p>
+            {description ? (
+              <>
+                <h2 className="mt-8 text-sm font-semibold text-ink">{t("description")}</h2>
+                <p className="mt-3 text-sm text-mute leading-relaxed">{description}</p>
+              </>
+            ) : null}
 
-            <dl className="mt-6 divide-y divide-line border-y border-line">
-              {facts.map((row) => (
-                <div key={row.label} className="py-2.5 flex items-start justify-between gap-4">
-                  <dt className="text-sm text-mute shrink-0">{row.label}</dt>
-                  <dd className="text-sm font-medium text-ink text-right">
+            <div className="mt-6 border-y border-line">
+              <div className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6">
+                {specRows.length ? (
+                  <h2 className="col-span-2 py-2.5 text-sm font-semibold text-ink">{t("specifications")}</h2>
+                ) : null}
+                {specRows.map((row) => (
+                  <DetailLine key={row.key} label={row.label}>
+                    {Array.isArray(row.value)
+                      ? row.value.map((line) => (
+                          <span key={line} className="block">
+                            {line}
+                          </span>
+                        ))
+                      : row.value}
+                  </DetailLine>
+                ))}
+                <h2 className={`col-span-2 py-2.5 text-sm font-semibold text-ink ${specRows.length ? "border-t border-line" : ""}`}>
+                  {t("orderDetails")}
+                </h2>
+                {facts.map((row) => (
+                  <DetailLine key={row.label} label={row.label}>
                     {row.pill ? (
-                      <span className={`inline-flex px-2 py-0.5 text-xs font-semibold ${row.tone}`}>
-                        {row.value}
-                      </span>
+                      <span className={`inline-flex px-2 py-0.5 text-xs font-semibold ${row.tone}`}>{row.value}</span>
                     ) : (
                       row.value
                     )}
-                  </dd>
-                </div>
-              ))}
-            </dl>
+                  </DetailLine>
+                ))}
+                {discontinued ? null : (
+                  <div className="col-span-2 hidden border-t border-line py-2.5 lg:block">
+                    <QtyStepper
+                      value={qty}
+                      min={minQty}
+                      unit={product.unit || product.salesUnit}
+                      onChange={setQty}
+                      size="detail"
+                      t={t}
+                      deliveryQty={lowerDeliveryQty(product)}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
 
             <div className="mt-6 hidden lg:block">
               {discontinued ? (
@@ -313,6 +368,7 @@ export default function DetailsPage() {
                   product={product}
                   qty={qty}
                   onQtyChange={setQty}
+                  hideQty
                   disabled={offline}
                   onAdd={(_, intent, nextQty) => goToRfq(intent, nextQty)}
                   size="detail"
@@ -328,28 +384,6 @@ export default function DetailsPage() {
             <div className="mt-4 hidden lg:block">
               <BackToCatalog product={product} />
             </div>
-
-            <h2 className="mt-8 text-sm font-semibold text-ink">{t("specifications")}</h2>
-            <ul className="mt-3 divide-y divide-line border-y border-line">
-              {specificationRows(product).map((row) =>
-                row.kind === "cert" ? (
-                  <li key="cert" className="py-2.5 text-sm text-mute">
-                    <p className="text-xs font-medium text-ink">Cert</p>
-                    <ul className="mt-1.5 space-y-1">
-                      {row.lines.map((line) => (
-                        <li key={line} className="leading-relaxed">
-                          {line}
-                        </li>
-                      ))}
-                    </ul>
-                  </li>
-                ) : (
-                  <li key={row.text} className="py-2.5 text-sm text-mute">
-                    {row.text}
-                  </li>
-                )
-              )}
-            </ul>
 
             {purposes.length ? (
               <>
@@ -374,10 +408,10 @@ export default function DetailsPage() {
               </>
             ) : null}
 
-            {remark ? (
+            {hasRemark ? (
               <>
                 <h2 className="mt-8 text-sm font-semibold text-ink">{t("productRemark")}</h2>
-                <p className="mt-3 whitespace-pre-line text-sm text-mute leading-relaxed max-w-prose">{remark}</p>
+                <p className="mt-3 text-sm text-mute leading-relaxed max-w-prose">{t("provisionalRemark")}</p>
               </>
             ) : null}
           </div>

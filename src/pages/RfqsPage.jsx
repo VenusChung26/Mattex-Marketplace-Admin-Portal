@@ -10,6 +10,7 @@ import Seo from "../components/Seo";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import { SHOW_BUYER_QUOTES } from "../lib/flags";
+import { buyerStatusKey } from "../lib/rfqRules";
 import AttachmentLinks, { linePhotoSrc, PreviewThumb } from "../components/AttachmentLinks";
 import { DEMO_QUOTED_RFQ, buildPrototypeQuotes, buildSalesQuote } from "./rfqs-prototype/quoteMocks";
 import QuoteVariant from "./rfqs-prototype/QuoteCompareVariantA";
@@ -293,18 +294,9 @@ function rfqListSubtotal(rfq) {
 
 function rfqDocStatus(rfq, acceptedByRfq) {
   if (!rfq) return "";
-  if (rfq.cancelStatus === "accepted" || rfq.reviewStatus === "cancelled") return "cancelled";
-  if (rfq.cancelStatus === "requested") return "cancel_requested";
-  if (rfq.reverseStatus === "requested") return "reverse_requested";
-  if (rfq.reviewStatus === "revising") return "revising";
-  if (acceptedByRfq?.[rfq.id]) return "accepted";
   if (rfq.id === DEMO_QUOTED_RFQ.id) return "quoted";
-  if (rfq.reviewStatus === "quoted") return "quoted";
-  if (rfq.reviewStatus === "accepted") return "accepted";
-  if (rfq.reviewStatus === "rejected" || rfq.reviewStatus === "no_offer") return "rejected";
-  if (rfq.reviewStatus === "returned") return "returned";
-  if (rfq.reviewStatus) return "submitted";
-  return buildPrototypeQuotes(rfq).length ? "quoted" : rfq.status || "";
+  if (SHOW_BUYER_QUOTES && acceptedByRfq?.[rfq.id]) return "accepted";
+  return buyerStatusKey(rfq);
 }
 
 function rfqDocStatusLabel(status, t) {
@@ -312,10 +304,12 @@ function rfqDocStatusLabel(status, t) {
   if (status === "reverse_requested") return t("rfqReverseRequested");
   if (status === "revising") return t("rfqRevising");
   if (status === "cancelled") return t("rfqCancelled");
-  if (status === "quoted") return SHOW_BUYER_QUOTES ? t("docFilterQuoted") : t("rfqStatusInReview");
-  if (status === "accepted") return SHOW_BUYER_QUOTES ? t("docFilterAccepted") : t("rfqStatusInReview");
+  if (status === "quoted") return t("docFilterQuoted");
+  if (status === "accepted") return t("docFilterAccepted");
+  if (status === "in_review") return t("rfqStatusInReview");
   if (status === "submitted") return t("docFilterSubmitted");
   if (status === "rejected") return t("rfqStatusRejected");
+  if (status === "returned") return t("rfqStatusReturned");
   return status;
 }
 
@@ -381,12 +375,13 @@ function RfqDocSwitcher({ list, selectedId, onSelect, onViewQuote, acceptedByRfq
   }, [listOpen]);
 
   const counts = useMemo(() => {
-    const next = { all: list.length, quoted: 0, submitted: 0, accepted: 0 };
+    const next = { all: list.length, quoted: 0, submitted: 0, accepted: 0, in_review: 0 };
     for (const rfq of list) {
       const status = rfqDocStatus(rfq, acceptedByRfq);
-      if (status === "accepted") next.accepted += 1;
+      if (status === "accepted" || status === "in_review") next.accepted += 1;
       else if (status === "quoted") next.quoted += 1;
-      else next.submitted += 1;
+      else if (status === "submitted") next.submitted += 1;
+      if (status === "in_review") next.in_review += 1;
     }
     return next;
   }, [list, acceptedByRfq]);
@@ -435,14 +430,14 @@ function RfqDocSwitcher({ list, selectedId, onSelect, onViewQuote, acceptedByRfq
     { id: "all", label: t("docFilterAll"), count: counts.all },
     ...(SHOW_BUYER_QUOTES ? [{ id: "quoted", label: t("docFilterQuoted"), count: counts.quoted }] : []),
     { id: "submitted", label: t("docFilterSubmitted"), count: counts.submitted },
-    { id: "accepted", label: SHOW_BUYER_QUOTES ? t("docFilterAccepted") : t("rfqStatusInReview"), count: counts.accepted },
+    { id: SHOW_BUYER_QUOTES ? "accepted" : "in_review", label: SHOW_BUYER_QUOTES ? t("docFilterAccepted") : t("rfqStatusInReview"), count: counts.accepted },
   ];
   const selectedStatus = rfqDocStatus(selected, acceptedByRfq);
   return (
     <div ref={rootRef} className="relative mb-3 lg:sticky lg:top-28 lg:mb-0 lg:max-h-[calc(100vh-8rem)] lg:overflow-auto">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-3 rounded-xl border border-line bg-white px-3 py-2.5 text-left lg:hidden"
+        className="flex w-full items-center justify-between gap-3 rounded-none border border-line bg-white px-3 py-2.5 text-left lg:hidden"
         aria-expanded={listOpen}
         onClick={() => setListOpen((open) => !open)}
       >
@@ -524,7 +519,7 @@ function RfqDocSwitcher({ list, selectedId, onSelect, onViewQuote, acceptedByRfq
                 key={filter.id}
                 type="button"
                 onClick={() => setStatusFilter(filter.id)}
-                className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
+                className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-none ${
                   active
                     ? "border-brand-600 bg-brand-50 text-brand-800"
                     : "border-line bg-white text-mute hover:border-brand-300"
@@ -1001,12 +996,13 @@ export default function RfqsPage() {
                         </button>
                         <button
                           type="button"
-                          className="rounded-lg bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white"
+                          className="rounded-none bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white"
                           onClick={async () => {
                             setConfirmReverse(false);
                             const result = await requestRfqReverseRemote(selected.id);
                             if (result?.ok && result.rfq?.reviewStatus === "revising") setCancelFlash(t("rfqReverseCopied"));
                             else if (result?.ok) setCancelFlash(t("rfqReverseNotified"));
+                            else setCancelFlash(t("rfqActionFailed"));
                           }}
                         >
                           {t("rfqReverseConfirm")}
@@ -1023,7 +1019,7 @@ export default function RfqsPage() {
                         </button>
                         <button
                           type="button"
-                          className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-semibold text-white"
+                          className="rounded-none bg-red-700 px-3 py-1.5 text-xs font-semibold text-white"
                           onClick={async () => {
                             setConfirmCancel(false);
                             const result = await requestRfqCancelRemote(selected.id);

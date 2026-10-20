@@ -149,7 +149,7 @@
       <div class="mattex-boot-orb" aria-hidden="true">
         <img class="mattex-boot-logo" src="/assets/mattex-logo.webp" alt="" />
       </div>
-      <p class="mattex-boot-copy">工程產品，即時報價。</p>
+      <p class="mattex-boot-copy">工程產品，問價或購買。</p>
       <div class="mattex-boot-bar" aria-hidden="true"><span></span></div>
       <p class="mattex-boot-status">載入目錄</p>
       <script>
@@ -157,7 +157,7 @@
           var en = location.pathname === "/en" || location.pathname.indexOf("/en/") === 0;
           var copy = document.querySelector(".mattex-boot-copy");
           var status = document.querySelector(".mattex-boot-status");
-          if (copy) copy.textContent = en ? "Engineering products, ready to quote." : "工程產品，即時報價。";
+          if (copy) copy.textContent = en ? "Engineering products, ask or buy." : "工程產品，問價或購買。";
           if (status) status.textContent = en ? "Loading catalog" : "載入目錄";
         })();
       </script>

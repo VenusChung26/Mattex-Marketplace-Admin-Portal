@@ -6,6 +6,7 @@ import { useStore } from "../hooks/useStore";
 import { usePurchaseOrders } from "../hooks/usePurchaseOrders";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
+import { displayUnit } from "../lib/productFields";
 
 const COPY = {
   zh: {
@@ -183,7 +184,7 @@ export default function PurchaseOrdersPage() {
               {selected ? (
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between gap-3 rounded-xl border border-line bg-white px-3 py-2.5 text-left lg:hidden"
+                  className="flex w-full items-center justify-between gap-3 rounded-none border border-line bg-white px-3 py-2.5 text-left lg:hidden"
                   aria-expanded={listOpen}
                   onClick={() => setListOpen((open) => !open)}
                 >
@@ -306,7 +307,7 @@ export default function PurchaseOrdersPage() {
                               <span className="font-medium text-ink">{line.name}</span>
                               <span className="block text-xs text-mute">{line.sku}</span>
                             </td>
-                            <td className="py-2 pr-3 text-right tabular-nums">{line.qty} {line.unit}</td>
+                            <td className="py-2 pr-3 text-right tabular-nums">{line.qty} {displayUnit(line.unit, lang)}</td>
                             <td className="py-2 pr-3 text-right tabular-nums">{money(line.unitPrice)}</td>
                             <td className="py-2 text-right font-semibold tabular-nums">{money(line.lineTotal)}</td>
                           </tr>

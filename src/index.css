@@ -433,7 +433,7 @@ body {
   align-items: center;
   gap: 0.65rem;
   padding: 0.55rem 0.6rem;
-  border-radius: 0.5rem;
+  border-radius: 0;
   color: rgba(255, 255, 255, 0.78);
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -610,4 +610,16 @@ body {
     text-overflow: clip;
     white-space: normal;
   }
+}
+
+button {
+  border-radius: 0 !important;
+}
+
+html[data-surface="admin"] button {
+  border-radius: 0.5rem !important;
+}
+
+.fab-round {
+  border-radius: 9999px !important;
 }

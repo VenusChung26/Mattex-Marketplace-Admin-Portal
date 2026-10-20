@@ -6,6 +6,7 @@ import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import { buildQuotePdf, downloadBlob } from "../lib/quotePdf";
 import { getPublicQuote } from "../lib/remote";
+import { displayUnit } from "../lib/productFields";
 import { formatPrice, getGuestQuoteSnapshot, pullQuoteSnapshots, snapshotQuotePdfItems } from "../lib/store";
 
 export default function PublicQuotePage() {
@@ -100,7 +101,7 @@ export default function PublicQuotePage() {
                       {line.productNo ? <span className="mt-0.5 block text-xs text-mute">{line.productNo}</span> : null}
                       <span className="mt-0.5 block text-xs text-mute">
                         × {line.qty}
-                        {line.unit ? ` ${line.unit}` : ""}
+                        {line.unit ? ` ${displayUnit(line.unit, lang)}` : ""}
                       </span>
                     </span>
                     <span className="shrink-0 text-right">

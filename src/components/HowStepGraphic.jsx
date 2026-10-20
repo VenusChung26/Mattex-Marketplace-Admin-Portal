@@ -80,6 +80,84 @@ function SpecArt() {
   );
 }
 
+const stroke = {
+  stroke: "currentColor",
+  strokeWidth: 1.75,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+};
+
+function StepIcon({ children }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+      {children}
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <StepIcon>
+      <circle cx="10.5" cy="10.5" r="5.25" {...stroke} />
+      <path d="m14.6 14.6 3.9 3.9" {...stroke} />
+    </StepIcon>
+  );
+}
+
+function QuoteIcon() {
+  return (
+    <StepIcon>
+      <path d="M6 6.5h11.2A1.6 1.6 0 0 1 18.8 8.1v6.2a1.6 1.6 0 0 1-1.6 1.6H10l-2.4 2.5V15.9H6A1.6 1.6 0 0 1 4.4 14.3V8.1A1.6 1.6 0 0 1 6 6.5z" {...stroke} />
+      <path d="M8.2 10.4h6.6M8.2 13.1h4.2" {...stroke} />
+    </StepIcon>
+  );
+}
+
+function BuyIcon() {
+  return (
+    <StepIcon>
+      <path d="M7.2 8.2h9.6l-.7 8.6a1.4 1.4 0 0 1-1.4 1.3H9.3a1.4 1.4 0 0 1-1.4-1.3l-.7-8.6z" {...stroke} />
+      <path d="M9.6 8.2V7a2.4 2.4 0 0 1 4.8 0v1.2" {...stroke} />
+    </StepIcon>
+  );
+}
+
+function CartIcon() {
+  return (
+    <StepIcon>
+      <path d="M4.2 6.2h2.1l1.2 8.1a1.5 1.5 0 0 0 1.5 1.2h7.2a1.5 1.5 0 0 0 1.5-1.2L19.2 8.4H7.4" {...stroke} />
+      <circle cx="10" cy="18.4" r="1.15" fill="currentColor" />
+      <circle cx="16" cy="18.4" r="1.15" fill="currentColor" />
+    </StepIcon>
+  );
+}
+
+function SpecIcon() {
+  return (
+    <StepIcon>
+      <path d="M8 4.8h5.2L18 9.4V18.6A1.4 1.4 0 0 1 16.6 20H8.4A1.4 1.4 0 0 1 7 18.6V6.2A1.4 1.4 0 0 1 8.4 4.8H8z" {...stroke} />
+      <path d="M13 4.8V9.2h4.8M9.4 12.6h5.4M9.4 15.6h3.4" {...stroke} />
+    </StepIcon>
+  );
+}
+
+const ICONS = {
+  search: SearchIcon,
+  quote: QuoteIcon,
+  buy: BuyIcon,
+  cart: CartIcon,
+  spec: SpecIcon,
+};
+
+export function HowStepIcon({ name }) {
+  const Icon = ICONS[name] || SearchIcon;
+  return (
+    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-800 text-white">
+      <Icon />
+    </span>
+  );
+}
+
 const ARTS = {
   search: SearchArt,
   quote: QuoteArt,

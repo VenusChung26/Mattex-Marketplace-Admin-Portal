@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { applyDecision, planAssign } from "../src/lib/rfqRules.js";
-import { createStore, memoryAdapter, takeNumber, emptyState } from "./rfq-core.js";
+import { createStore, memoryAdapter, formatDocNo, takeNumber, emptyState } from "./rfq-core.js";
 
 const staff = { kind: "staff", email: "sales@mattex.com.hk" };
 const alice = { kind: "buyer", email: "Alice@Example.com" };

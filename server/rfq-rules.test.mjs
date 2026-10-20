@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyDecision, planDecision } from "../src/lib/rfqRules.js";
+import { applyDecision, buyerStatusKey, planDecision, planLoadQuoteVersion, quoteWorksheet, salesInboxTabs, salesRfqLabel, salesRfqTab } from "../src/lib/rfqRules.js";
 
 const base = { id: "RFQ-26000001", reviewStatus: "received", lines: [{ productId: "a", quotedUnitPrice: 5 }] };
 const at = "2026-10-14T10:00:00.000Z";
@@ -330,6 +330,105 @@ test("a PO from a quote uses only the effective version's priced lines", () => {
   assert.equal(plan.lines.length, 1);
   assert.equal(plan.total, 31.5);
   assert.equal(plan.lines[0].sku, "MKT-A");
+});
+
+test("buyer and sales read the same RFQ through one projection", () => {
+  assert.equal(buyerStatusKey({ reviewStatus: "received" }), "submitted");
+  assert.equal(buyerStatusKey({ reviewStatus: "accepted" }), "in_review");
+  assert.equal(buyerStatusKey({ reviewStatus: "quoted" }), "in_review");
+  assert.equal(buyerStatusKey({ reviewStatus: "no_offer" }), "rejected");
+  assert.equal(buyerStatusKey({ reviewStatus: "returned" }), "returned");
+  assert.equal(buyerStatusKey({ reviewStatus: "accepted", cancelStatus: "requested" }), "cancel_requested");
+
+  const accepted = { reviewStatus: "accepted" };
+  assert.equal(salesRfqLabel(accepted), "Accepted");
+  assert.equal(salesRfqTab(accepted), "accepted");
+  const quoted = { reviewStatus: "quoted" };
+  assert.equal(salesRfqLabel(quoted), "Quoted");
+  assert.equal(salesRfqTab(quoted), "accepted");
+  const returned = { reviewStatus: "returned" };
+  assert.equal(salesRfqLabel(returned), "Returned");
+  assert.equal(salesRfqTab(returned), "returned");
+});
+
+test("the sales inbox keeps Returned and hides the quoting tabs", () => {
+  const tabs = salesInboxTabs();
+  const ids = tabs.map((tab) => tab.id);
+  assert.ok(ids.includes("returned"));
+  assert.equal(tabs.find((tab) => tab.id === "accepted").label, "In review");
+  for (const hidden of ["reviewing", "tms", "revising", "quoted"]) {
+    assert.equal(ids.includes(hidden), false);
+  }
+});
+
+test("the quote worksheet reads a version and plans a draft load", () => {
+  const rfq = {
+    reviewStatus: "quoted",
+    quoteEffectiveVersion: 2,
+    quoteNote: "live note",
+    lines: [
+      { productId: "a", qty: 1, quotedUnitPrice: 10, remark: "" },
+      { productId: "b", qty: 1, quotedUnitPrice: 4, remark: "" },
+    ],
+    quoteVersions: [
+      {
+        version: 1,
+        quoteNote: "v1 note",
+        lines: [
+          { productId: "a", qty: 2, quotedUnitPrice: 8, remark: "frozen", noOffer: false },
+          { productId: "c", qty: 1, quotedUnitPrice: 1, remark: "" },
+        ],
+      },
+      {
+        version: 2,
+        lines: [
+          { productId: "a", qty: 2, quotedUnitPrice: 9, remark: "n" },
+          { productId: "b", qty: 1, quotedUnitPrice: 4, remark: "" },
+        ],
+      },
+    ],
+  };
+
+  const draft = quoteWorksheet(rfq, "draft");
+  assert.equal(draft.mode, "draft");
+  assert.equal(draft.readOnly, false);
+  assert.equal(draft.dirty, true);
+  assert.equal(draft.lines[0].quotedUnitPrice, 10);
+
+  const viewed = quoteWorksheet(rfq, "1");
+  assert.equal(viewed.mode, "version");
+  assert.equal(viewed.version, 1);
+  assert.equal(viewed.readOnly, true);
+  assert.equal(viewed.dirty, true);
+  assert.equal(viewed.lines.find((line) => line.productId === "a").quotedUnitPrice, 8);
+  assert.equal(viewed.lines.find((line) => line.productId === "b").noOffer, true);
+  assert.equal(viewed.lines.find((line) => line.productId === "b").quotedUnitPrice, null);
+  assert.equal(viewed.lines.some((line) => line.productId === "c"), true);
+
+  const none = quoteWorksheet({ lines: [{ productId: "a", qty: 1 }] }, "3");
+  assert.equal(none.mode, "draft");
+  assert.equal(none.readOnly, false);
+  assert.equal(none.dirty, false);
+
+  const plan = planLoadQuoteVersion(rfq, 1);
+  assert.equal(plan.ok, true);
+  assert.equal(plan.quoteNote, "v1 note");
+  assert.equal(plan.lines.length, 2);
+  assert.equal(plan.lines[0].salesQty, 2);
+  assert.equal(plan.lines[0].quotedUnitPrice, 8);
+  assert.equal(plan.lines[0].salesRemark, "frozen");
+  assert.equal(plan.lines[1].productId, "b");
+  assert.equal(plan.lines[1].quotedUnitPrice, 4);
+  assert.equal(plan.reviewStatus, undefined);
+  assert.equal(planLoadQuoteVersion(rfq, 9).error, "missing_version");
+
+  const clean = quoteWorksheet({
+    quoteEffectiveVersion: 1,
+    lines: [{ productId: "a", qty: 2, quotedUnitPrice: 9, remark: "n" }],
+    quoteVersions: [{ version: 1, lines: [{ productId: "a", qty: 2, quotedUnitPrice: 9, remark: "n" }] }],
+  }, "1");
+  assert.equal(clean.dirty, false);
+  assert.equal(clean.readOnly, true);
 });
 
 test("a PO from a quote needs a delivered quote, an open RFQ, and is made once", () => {

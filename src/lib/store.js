@@ -5,10 +5,10 @@ import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedSto
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
 import { SHOW_TMS_LINK } from "./flags.js";
 import { activeOfferPrice } from "./offer.js";
-import { activityDedupeKey, applyDecision, applyDeliveredQuoteVersion, buildDeliveredQuoteVersion, freezeQuoteLines, nextQuoteVersionNo, planQuoteSubmit, quoteVersionList, snapshotLineImage, canBuyerRequestCancel, canBuyerReverse, inboxStatus, planAssign, planCancelReverse, planDecision, mergeOwned, draftPricesOf, deliveredLinePrices, salesLine, planPoFromQuote, rfqBuyerKind, pushRfqActivity, rfqNeedsSalesReverse } from "./rfqRules.js";
+import { activityDedupeKey, applyDecision, applyDeliveredQuoteVersion, buildDeliveredQuoteVersion, freezeQuoteLines, nextQuoteVersionNo, planLoadQuoteVersion, planQuoteSubmit, quoteDraftIsDirty, quoteEffectiveVersionNo, quoteVersionLines, quoteVersionList, snapshotLineImage, canBuyerRequestCancel, canBuyerReverse, getQuoteVersion, inboxStatus, planAssign, planCancelReverse, planDecision, mergeOwned, draftPricesOf, deliveredLinePrices, salesLine, planPoFromQuote, rfqBuyerKind, pushRfqActivity, rfqNeedsSalesReverse } from "./rfqRules.js";
 import { adoptGuestSpecMatch } from "./specMatchSession.js";
 import { foldHan } from "./han.js";
-import { displaySku, isTailorMade, orderMinimum, productImageUrl, sellingAmount } from "./productFields.js";
+import { displaySku, isTailorMade, localizeLeadTime, orderMinimum, productImageUrl, sellingAmount } from "./productFields.js";
 import { contactFormFromAccount, normalizeRoles } from "./phone.js";
 import {
   accountCreatedEmailHtml,
@@ -265,13 +265,32 @@ function certificationLines(product) {
   return lines;
 }
 
+function specBody(value) {
+  return String(value || "")
+    .replace(/^(packing|size|sales unit|moq|unit\s*\/\s*pallet|units per pallet|pallet)\s*:\s*/i, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
 function specificationRows(product) {
   const rows = [];
+  const seen = new Set();
   for (const spec of product?.specs || []) {
-    const text = String(spec);
+    const text = String(spec).trim();
+    if (!text) continue;
+    if (/^(sales unit|moq|unit\s*\/\s*pallet|units per pallet|pallet)\s*:/i.test(text)) continue;
+    const body = specBody(text);
+    if (!body || seen.has(body)) continue;
+    seen.add(body);
     if (/^Cert:\s*/i.test(text)) {
-      const lines = certificationLines(product);
-      if (lines.length > 1) {
+      const fromField = certificationLines(product);
+      const fromSpec = text
+        .replace(/^Cert:\s*/i, "")
+        .split(/\n+/)
+        .map((line) => readableCertLine(line))
+        .filter(Boolean);
+      const lines = fromField.length ? fromField : fromSpec;
+      if (lines.length) {
         rows.push({ kind: "cert", lines });
         continue;
       }
@@ -279,6 +298,24 @@ function specificationRows(product) {
     rows.push({ kind: "line", text });
   }
   return rows;
+}
+
+function productDescriptionText(product) {
+  const description = String(product?.description || "").trim();
+  if (!description) return "";
+  const body = specBody(description);
+  const repeated = (product?.specs || []).some((line) => specBody(line) === body);
+  return repeated ? "" : description;
+}
+
+function unitsPerPallet(product) {
+  const direct = Number(product?.unitsPerPallet);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  for (const line of product?.specs || []) {
+    const match = String(line).match(/^(?:unit\s*\/\s*pallet|units per pallet|pallet)\s*:\s*(\d+(?:\.\d+)?)/i);
+    if (match) return Number(match[1]);
+  }
+  return null;
 }
 
 function purposesFromProduct(product) {
@@ -1684,17 +1721,18 @@ function formatPrice(price) {
   );
 }
 
-function displayLeadTime(product) {
+function displayLeadTime(product, lang) {
   const official = String(product?.lead_time || "").trim();
-  if (official) return official;
   const label = String(product?.leadTimeLabel || "").trim();
-  if (label) return label;
-  const lead = product?.leadTime;
-  if (!lead || (lead.min == null && lead.max == null)) return "";
-  const min = lead.min ?? lead.max;
-  const max = lead.max ?? lead.min;
-  if (min === max) return `${min} days`;
-  return `${min}–${max} days`;
+  let text = official || label;
+  if (!text) {
+    const lead = product?.leadTime;
+    if (!lead || (lead.min == null && lead.max == null)) return "";
+    const min = lead.min ?? lead.max;
+    const max = lead.max ?? lead.min;
+    text = min === max ? `${min} days` : `${min}–${max} days`;
+  }
+  return localizeLeadTime(text, lang);
 }
 
 function getProduct(id) {
@@ -2661,18 +2699,6 @@ function draftTotals(draft, productIds) {
   };
 }
 
-function nextRfqId() {
-  const seq = Number(localStorage.getItem(SEQ_KEY) || "1000") + 1;
-  try {
-    localStorage.setItem(SEQ_KEY, String(seq));
-  } catch {
-    /* ignore quota */
-  }
-  persistKv(SEQ_KEY, seq);
-  persistShared(SEQ_KEY, seq);
-  return `RFQ-${seq}`;
-}
-
 function recencyMs(value) {
   if (value == null || value === "") return 0;
   if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
@@ -2763,7 +2789,7 @@ async function publishStoredRfqMedia(email, rfq) {
   emitStoreChange();
 }
 
-/** The server issues the number, time and owner. `legacy` means this deployment has no RFQ store yet. */
+/** The server issues the number, time and owner. If it cannot, submit fails. */
 async function issueRfqNumber(rfq) {
   const issued = await registerRfq({
     kind: "rfq",
@@ -2786,7 +2812,6 @@ async function issueRfqNumber(rfq) {
     serverHeldIds.add(issued.id);
     return { id: issued.id, at: issued.createdAt, mailed: Boolean(issued.mailed) };
   }
-  if (issued.legacy) return { id: nextRfqId(), at: "", mailed: false };
   return null;
 }
 
@@ -5636,51 +5661,16 @@ function setRfqLineNoOffer(id, productId, noOffer = true) {
   const held = serverHeldIds.has(id);
   const status = inboxStatus(current);
   if (status === "cancelled") return { ok: true, rfq: current };
-  /* The server holds the decision. A "no offer" decision on the whole RFQ is not undone from a single line. */
   if (held && status === "no_offer" && !noOffer) return { ok: false, error: "no_offer_locked" };
-  let becameAllNoOffer = false;
-  const patched = patchRfqById(id, (rfq) => {
-    const lines = (rfq.lines || []).map((line) =>
+  const patched = patchRfqById(id, (rfq) => ({
+    ...rfq,
+    lines: (rfq.lines || []).map((line) =>
       String(line.productId) === String(productId)
         ? { ...line, noOffer: Boolean(noOffer), quotedUnitPrice: Boolean(noOffer) ? null : line.quotedUnitPrice }
         : line
-    );
-    const allNoOffer = lines.length > 0 && lines.every((line) => line.noOffer);
-    if (held) {
-      becameAllNoOffer = allNoOffer && inboxStatus(rfq) !== "no_offer";
-      return { ...rfq, lines };
-    }
-    const wasNoOffer = inboxStatus(rfq) === "no_offer";
-    const reason = allNoOffer ? rfq.reason || "No offer" : rfq.reason;
-    const next = {
-      ...rfq,
-      lines,
-      reviewStatus: allNoOffer ? "no_offer" : rfq.reviewStatus === "no_offer" ? "accepted" : rfq.reviewStatus,
-      reason,
-    };
-    if (allNoOffer && !wasNoOffer) {
-      const at = new Date().toISOString();
-      return pushRfqActivity({ ...next, noOfferAt: at }, "no_offer", {
-        at,
-        detail: reason,
-        by: gate.account.email,
-      });
-    }
-    return next;
-  });
-  if (!patched.ok) return patched;
-  if (held) {
-    if (becameAllNoOffer) {
-      /* Every line has no offer: the server makes it a no-offer RFQ (status, time, mail). */
-      draftTimers.set(id, 0);
-      saveQuoteDraft(id, draftPricesOf(patched.rfq.lines)).finally(() => {
-        draftTimers.delete(id);
-        decideRfqRemote(id, { decision: "no_offer", reason: "No offer" }).finally(() => syncServerRfqs());
-      });
-    } else {
-      queueQuoteDraft(id);
-    }
-  }
+    ),
+  }));
+  if (patched.ok) queueQuoteDraft(id);
   return patched;
 }
 
@@ -5709,17 +5699,9 @@ function findAssignable(buyerEmail) {
   return listAssignableBuyers().find((b) => normalizeEmail(b.email) === normalizeEmail(buyerEmail));
 }
 
-/** Local rules only. Fallback when the server cannot take the assignment. */
-function assignRfqToBuyer(id, buyerEmail) {
-  const gate = requireStaff();
-  if (!gate.ok) return gate;
-  const buyer = findAssignable(buyerEmail);
-  if (!buyer) return { ok: false, error: "missing_buyer" };
-  const found = getAllRfqs().find((r) => r.id === id);
-  if (!found) return { ok: false, error: "missing" };
-  const plan = planAssign(found, { buyer, by: gate.account.email });
-  if (!plan.ok) return plan;
-  return moveRfqToMember(id, buyer, plan.patch);
+/** The server assigns. This no longer writes the 詢價狀態 in the browser. */
+function assignRfqToBuyer() {
+  return { ok: false, error: "server" };
 }
 
 /** Assign a guest RFQ to a member, decided by the server. */
@@ -5733,7 +5715,7 @@ async function assignRfqToBuyerRemote(id, buyerEmail) {
   const plan = planAssign(found, { buyer });
   if (!plan.ok) return plan;
   const remote = await assignRfqOnServer(id, { email: buyer.email, name: buyer.name, phone: buyer.phone });
-  if (remote.legacy) return assignRfqToBuyer(id, buyerEmail);
+  if (remote.legacy) return { ok: false, error: "server" };
   if (!remote.ok) return { ok: false, error: remote.error || "server" };
   return moveRfqToMember(id, buyer, remote.patch);
 }
@@ -5867,19 +5849,6 @@ function applyRfqRequestVersion(rfq, versionNo) {
     acceptSubstitutes: snap.acceptSubstitutes,
     lines: snap.lines,
   };
-}
-
-function quoteEffectiveVersionNo(rfq) {
-  const listed = quoteVersionList(rfq);
-  const stored = Number(rfq?.quoteEffectiveVersion);
-  if (Number.isFinite(stored) && stored > 0 && listed.some((row) => Number(row.version) === stored)) return stored;
-  return listed.length ? Number(listed[listed.length - 1].version) || 0 : 0;
-}
-
-function getQuoteVersion(rfq, versionNo) {
-  const n = Number(versionNo);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return quoteVersionList(rfq).find((row) => Number(row.version) === n) || null;
 }
 
 function getEffectiveQuoteVersion(rfq) {
@@ -6090,58 +6059,8 @@ function formatQuoteVersionOption(version, { effectiveVersion, currentLabel = "C
   return `v${version.version} · ${formatQuoteVersionStamp(version.createdAt)}${current}`;
 }
 
-function quoteLineKey(line) {
-  return String(line?.productId ?? "");
-}
-
-function quoteLinePrice(line) {
-  if (line?.noOffer) return null;
-  const n = Number(line?.quotedUnitPrice);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-function quoteLinesDiffer(liveLines, frozenLines) {
-  const frozen = new Map((frozenLines || []).map((line) => [quoteLineKey(line), line]));
-  const live = liveLines || [];
-  if (live.length !== (frozenLines || []).length) {
-    const liveKeys = new Set(live.map(quoteLineKey));
-    for (const key of frozen.keys()) {
-      if (!liveKeys.has(key)) return true;
-    }
-  }
-  for (const rawLine of live) {
-    const line = salesLine(rawLine);
-    const other = frozen.get(quoteLineKey(rawLine));
-    if (!other) return true;
-    if (Boolean(line.noOffer) !== Boolean(other.noOffer)) return true;
-    if (quoteLinePrice(line) !== quoteLinePrice(other)) return true;
-    if ((Number(line.qty) || 0) !== (Number(other.qty) || 0)) return true;
-    if (String(line.remark || "") !== String(other.remark || "")) return true;
-  }
-  return false;
-}
-
-function quoteDraftIsDirty(rfq) {
-  const effective = getEffectiveQuoteVersion(rfq);
-  if (!effective) return false;
-  return quoteLinesDiffer(rfq?.lines, effective.lines);
-}
-
 function rfqLinesForQuoteVersion(rfq, versionNo) {
-  const snap = getQuoteVersion(rfq, versionNo);
-  if (!snap) return rfq?.lines || [];
-  const frozenById = new Map((snap.lines || []).map((line) => [quoteLineKey(line), line]));
-  const seen = new Set();
-  const merged = (rfq?.lines || []).map((line) => {
-    const frozen = frozenById.get(quoteLineKey(line));
-    seen.add(quoteLineKey(line));
-    if (!frozen) return { ...line, quotedUnitPrice: null, noOffer: true };
-    return { ...line, ...frozen, image: line.image || frozen.image };
-  });
-  (snap.lines || []).forEach((frozen) => {
-    if (!seen.has(quoteLineKey(frozen))) merged.push(frozen);
-  });
-  return merged;
+  return quoteVersionLines(rfq, versionNo);
 }
 
 function loadQuoteVersionIntoDraft(id, versionNo) {
@@ -6149,25 +6068,12 @@ function loadQuoteVersionIntoDraft(id, versionNo) {
   if (!gate.ok) return gate;
   const current = getAllRfqs().find((r) => r.id === id);
   if (!current) return { ok: false, error: "missing" };
-  const snap = getQuoteVersion(current, versionNo);
-  if (!snap) return { ok: false, error: "missing_version" };
+  const plan = planLoadQuoteVersion(current, versionNo);
+  if (!plan.ok) return plan;
   const loaded = patchRfqById(id, (rfq) => {
-    const frozenById = new Map((snap.lines || []).map((line) => [quoteLineKey(line), line]));
-    return {
-      ...rfq,
-      quoteNote: snap.quoteNote || rfq.quoteNote,
-      lines: (rfq.lines || []).map((line) => {
-        const frozen = frozenById.get(quoteLineKey(line));
-        if (!frozen) return line;
-        return {
-          ...line,
-          salesQty: frozen.qty != null ? frozen.qty : line.salesQty,
-          quotedUnitPrice: frozen.quotedUnitPrice,
-          noOffer: Boolean(frozen.noOffer),
-          salesRemark: frozen.remark != null ? frozen.remark : line.salesRemark,
-        };
-      }),
-    };
+    const next = planLoadQuoteVersion(rfq, versionNo);
+    if (!next.ok) return rfq;
+    return { ...rfq, quoteNote: next.quoteNote, lines: next.lines };
   });
   if (loaded.ok) queueQuoteDraft(id);
   return loaded;
@@ -6238,61 +6144,12 @@ function rfqCanSendWhatsappQuote(rfq) {
   return { ok: true };
 }
 
-function createGuestQuoteSnapshot(id) {
-  const gate = requireStaff();
-  if (!gate.ok) return gate;
-  const current = getAllRfqs().find((r) => r.id === id);
-  if (!current) return { ok: false, error: "missing" };
-  const ready = rfqCanSendWhatsappQuote(current);
-  if (!ready.ok) return { ok: false, error: ready.reason };
-  const token = newGuestQuoteToken();
-  const snapshot = { token, ...freezeGuestQuotePayload(current) };
-  const map = getQuoteSnapshots();
-  map[token] = snapshot;
-  setQuoteSnapshots(map);
-  const patched = patchRfqById(id, (rfq) => ({
-    ...rfq,
-    quotePublicToken: token,
-    quotePublicTokens: [...new Set([...(rfq.quotePublicTokens || []), token])],
-  }));
-  const url = guestQuotePublicUrl(token, "zh");
-  const href = buyerWhatsappHref(current.buyerPhone, guestQuoteWhatsappText(patched.rfq || current, url));
-  return { ...patched, token, snapshot, url, href };
+function createGuestQuoteSnapshot() {
+  return { ok: false, error: "server" };
 }
 
-function markGuestQuoteWhatsappSent(id) {
-  const gate = requireStaff();
-  if (!gate.ok) return gate;
-  const current = getAllRfqs().find((r) => r.id === id);
-  if (!current) return { ok: false, error: "missing" };
-  return patchRfqById(id, (rfq) => {
-    const sentAt = new Date().toISOString();
-    const token = String(rfq.quotePublicToken || "").trim();
-    const already = token && quoteVersionList(rfq).some((row) => row.token && row.token === token);
-    const base = {
-      ...rfq,
-      quoteDelivery: "whatsapp",
-      quoteDeliveredAt: sentAt,
-    };
-    if (already) {
-      return pushRfqActivity(base, "whatsapp_quote", { at: sentAt, by: gate.account.email });
-    }
-    const snapshot = token ? getGuestQuoteSnapshot(token) : null;
-    const version = snapshot
-      ? buildDeliveredQuoteVersion(rfq, {
-          channel: "whatsapp",
-          token,
-          lines: snapshot.lines,
-          note: snapshot.quoteNote,
-          createdAt: sentAt,
-        })
-      : buildDeliveredQuoteVersion(rfq, { channel: "whatsapp", token, createdAt: sentAt });
-    return pushRfqActivity(applyDeliveredQuoteVersion(base, version), "whatsapp_quote", {
-      at: sentAt,
-      detail: `v${version.version}`,
-      by: gate.account.email,
-    });
-  });
+function markGuestQuoteWhatsappSent() {
+  return { ok: false, error: "server" };
 }
 
 /** Freeze the quote for WhatsApp, decided by the server. The frozen copy and public token live on the server. */
@@ -6305,7 +6162,7 @@ async function createGuestQuoteSnapshotRemote(id) {
   if (!ready.ok) return { ok: false, error: ready.reason };
 
   const remote = await freezeWhatsappQuoteOnServer(id, { lines: worksheetPayload(current.lines), phone: current.buyerPhone });
-  if (remote.legacy) return createGuestQuoteSnapshot(id);
+  if (remote.legacy) return { ok: false, error: "server" };
   if (!remote.ok) return { ok: false, error: remote.error || "server" };
   const patched = patchRfqById(id, (rfq) => applyDecision(rfq, withoutPatchLines(remote.patch)));
   const url = guestQuotePublicUrl(remote.token, "zh");
@@ -6322,7 +6179,7 @@ async function markGuestQuoteWhatsappSentRemote(id) {
   const remote = await markWhatsappSentOnServer(id, {
     knownVersion: quoteVersionList(current).reduce((max, row) => Math.max(max, Number(row?.version) || 0), 0),
   });
-  if (remote.legacy) return markGuestQuoteWhatsappSent(id);
+  if (remote.legacy) return { ok: false, error: "server" };
   if (!remote.ok) return { ok: false, error: remote.error || "server" };
   return patchRfqById(id, (rfq) => applyDecision(rfq, remote.patch));
 }
@@ -6442,21 +6299,9 @@ function storeFrozenQuote(version, rfq, quoteNote) {
   setQuoteSnapshots(map);
 }
 
-/** Local rules only. Fallback when the server cannot take the quote (Vercel, old RFQs, stale copy). */
-function quoteRfqToBuyer(id, { linePrices, note } = {}) {
-  const gate = requireStaff();
-  if (!gate.ok) return gate;
-  const current = getAllRfqs().find((r) => r.id === id);
-  if (!current) return { ok: false, error: "missing" };
-  const plan = planQuoteSubmit(current, {
-    draftLines: worksheetLines(current, linePrices),
-    note,
-    by: gate.account.email,
-    token: newGuestQuoteToken(),
-  });
-  if (!plan.ok) return plan;
-  storeFrozenQuote(plan.patch.version, current, plan.patch.fields.quoteNote);
-  return patchRfqById(id, (rfq) => applyDecision(rfq, plan.patch));
+/** The server freezes the quote. The browser does not write the 詢價狀態. */
+function quoteRfqToBuyer() {
+  return { ok: false, error: "server" };
 }
 
 /**
@@ -6478,32 +6323,20 @@ async function quoteRfqToBuyerRemote(id, { linePrices, note } = {}) {
     note,
     knownVersion: quoteVersionList(current).reduce((max, row) => Math.max(max, Number(row?.version) || 0), 0),
   });
-  if (remote.legacy) return quoteRfqToBuyer(id, { linePrices, note });
+  if (remote.legacy) return { ok: false, error: "server" };
   if (!remote.ok) return { ok: false, error: remote.error || "server" };
   return patchRfqById(id, (rfq) => applyDecision(rfq, withoutPatchLines(remote.patch)));
 }
 
-/** Local rules only. Used as the fallback when the server cannot take the decision (Vercel, old RFQs). */
-function decideRfq(id, { decision, reason } = {}) {
-  const gate = requireStaff();
-  if (!gate.ok) return gate;
-  let failure = null;
-  const result = patchRfqById(id, (rfq) => {
-    const plan = planDecision(rfq, { decision, reason, by: gate.account.email });
-    if (!plan.ok) {
-      failure = plan;
-      return rfq;
-    }
-    return plan.noop ? rfq : applyDecision(rfq, plan.patch);
-  });
-  return failure || result;
+/** The server accepts or rejects. The browser does not write the 詢價狀態. */
+function decideRfq() {
+  return { ok: false, error: "server" };
 }
 
 /**
- * Accept / no offer, decided by the server. The browser checks the rules on its own copy first (it
- * still holds cancel and revise state in this bridge), then the server decides, stamps the time and
- * the staff member, and the browser only applies what the server returned.
- * Falls back to the local rules when the server does not hold this RFQ.
+ * Accept / no offer, decided by the server. The browser checks the rules on its own copy first,
+ * then the server decides, stamps the time and the staff member, and the browser only applies
+ * what the server returned. If the server does not hold this RFQ, the action fails.
  */
 async function decideRfqRemote(id, { decision, reason } = {}) {
   const gate = requireStaff();
@@ -6515,7 +6348,7 @@ async function decideRfqRemote(id, { decision, reason } = {}) {
   if (plan.noop) return { ok: true, rfq: local, changed: false };
 
   const remote = await decideRfqOnServer(id, { decision, reason });
-  if (remote.legacy) return decideRfq(id, { decision, reason });
+  if (remote.legacy) return { ok: false, error: "server" };
   if (!remote.ok) return { ok: false, error: remote.error === "staff" ? "staff" : remote.error || "server" };
   if (remote.noop) {
     const synced = patchRfqById(id, (rfq) => applyDecision(rfq, remote.patch || null));
@@ -6589,21 +6422,6 @@ function sendBuyerRequestNotices(notify, before, after, { serverMailed = false }
   }
 }
 
-/** Buyer asks to cancel or reverse. `kind` is `buyer_cancel` or `buyer_reverse`. Local rules only (fallback). */
-function runBuyerRequestLocal(id, kind) {
-  const user = getUser();
-  if (!user?.email) return { ok: false, error: "auth" };
-  const current = getAllRfqs().find((r) => r.id === id);
-  if (!current) return { ok: false, error: "missing" };
-  if (normalizeEmail(current.buyerEmail) !== normalizeEmail(user.email)) return { ok: false, error: "auth" };
-  const plan = planCancelReverse(current, kind);
-  if (!plan.ok) return plan;
-  if (plan.noop) return { ok: true, rfq: current, changed: false };
-  const result = patchRfqById(id, (rfq) => applyTransitionPatch(rfq, plan.patch));
-  if (result.ok) sendBuyerRequestNotices(plan.notify, current, result.rfq);
-  return result.ok ? { ...result, changed: true } : result;
-}
-
 /**
  * Buyer cancel / reverse decided by the server. The browser checks its own copy first (it still holds
  * quote and PO state in this bridge), the server stamps the time, the browser applies what came back.
@@ -6619,7 +6437,7 @@ async function runBuyerRequestRemote(id, kind) {
   if (plan.noop) return { ok: true, rfq: current, changed: false };
 
   const remote = await decideRfqOnServer(id, { decision: kind });
-  if (remote.legacy) return runBuyerRequestLocal(id, kind);
+  if (remote.legacy) return { ok: false, error: "server" };
   if (!remote.ok) return { ok: false, error: remote.error === "locked" ? "locked" : remote.error || "server" };
   const result = patchRfqById(id, (rfq) => applyTransitionPatch(rfq, remote.patch));
   if (!result.ok) return result;
@@ -6628,12 +6446,12 @@ async function runBuyerRequestRemote(id, kind) {
   return { ...result, changed: true };
 }
 
-function requestRfqReverse(id) {
-  return runBuyerRequestLocal(id, "buyer_reverse");
+function requestRfqReverse() {
+  return { ok: false, error: "server" };
 }
 
-function requestRfqCancel(id) {
-  return runBuyerRequestLocal(id, "buyer_cancel");
+function requestRfqCancel() {
+  return { ok: false, error: "server" };
 }
 
 function requestRfqReverseRemote(id) {
@@ -6642,22 +6460,6 @@ function requestRfqReverseRemote(id) {
 
 function requestRfqCancelRemote(id) {
   return runBuyerRequestRemote(id, "buyer_cancel");
-}
-
-/** Sales answer to a buyer's cancel / reverse request. Local rules only (fallback). */
-function decideCancelReverseLocal(id, kind) {
-  const gate = requireStaff();
-  if (!gate.ok) return gate;
-  let failure = null;
-  const result = patchRfqById(id, (rfq) => {
-    const plan = planCancelReverse(rfq, kind, { by: gate.account.email });
-    if (!plan.ok) {
-      failure = plan;
-      return rfq;
-    }
-    return plan.noop ? rfq : applyTransitionPatch(rfq, plan.patch);
-  });
-  return failure || result;
 }
 
 async function decideCancelReverseRemote(id, kind) {
@@ -6669,18 +6471,18 @@ async function decideCancelReverseRemote(id, kind) {
   if (!plan.ok) return plan;
   if (plan.noop) return { ok: true, rfq: local, changed: false };
   const remote = await decideRfqOnServer(id, { decision: kind });
-  if (remote.legacy) return decideCancelReverseLocal(id, kind);
+  if (remote.legacy) return { ok: false, error: "server" };
   if (!remote.ok) return { ok: false, error: remote.error === "staff" ? "staff" : remote.error || "server" };
   const applied = patchRfqById(id, (rfq) => applyTransitionPatch(rfq, remote.patch));
   return applied.ok ? { ...applied, changed: !remote.noop, mail: remote.mail || { ok: true, event: "" } } : applied;
 }
 
-function decideRfqReverse(id, { accept } = {}) {
-  return decideCancelReverseLocal(id, accept ? "reverse_accept" : "reverse_decline");
+function decideRfqReverse() {
+  return { ok: false, error: "server" };
 }
 
-function decideRfqCancel(id, { accept } = {}) {
-  return decideCancelReverseLocal(id, accept ? "cancel_accept" : "cancel_decline");
+function decideRfqCancel() {
+  return { ok: false, error: "server" };
 }
 
 function decideRfqReverseRemote(id, { accept } = {}) {
@@ -8474,6 +8276,8 @@ export {
   productSkuId,
   certificationLines,
   specificationRows,
+  productDescriptionText,
+  unitsPerPallet,
   holdAdminProduct,
   softDeleteAdminProduct,
   hardDeleteAdminProduct,

@@ -110,7 +110,7 @@ export function SelectedCategoryChips({ selected, onChange, tone = "dark" }) {
           type="button"
           title={name}
           onClick={() => onChange(selectedNames.filter((item) => item !== name))}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-full border ${
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-none border ${
             dark ? "border-white/40 bg-white/10 text-white" : "border-line bg-white text-ink"
           }`}
         >

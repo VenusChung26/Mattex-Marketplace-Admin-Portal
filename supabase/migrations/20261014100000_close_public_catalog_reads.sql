@@ -1,4 +1,4 @@
--- Close anonymous reads on catalog tables. NOT APPLIED. Review with the programmer, back up first.
+-- Close anonymous reads on catalog tables. Applied on the project database.
 --
 -- Why: `products.payload` holds the full product (refPrice, deliveryFee, sourceUrl, import notes in remark).
 -- `suppliers` and `supplier_metrics` hold rating, completion rate, on-time rate, search and RFQ counts.

@@ -10,6 +10,10 @@ import "./index.css";
 import App from "./App.jsx";
 import { hydrateStore, startSharedStoreSync } from "./lib/store";
 
+if (import.meta.env.VITE_SURFACE === "admin") {
+  document.documentElement.dataset.surface = "admin";
+}
+
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <App />

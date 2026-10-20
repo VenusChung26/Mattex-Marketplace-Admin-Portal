@@ -38,10 +38,9 @@ import {
 } from "../lib/store";
 import CartToast from "../components/CartToast";
 import { ProductSearchBox } from "../components/SearchSuggestions";
-import HowStepGraphic from "../components/HowStepGraphic";
-
 const CATEGORY_PREVIEW_COUNT = 8;
 const SECTION_PREVIEW = 8;
+const GREEN_PREVIEW = 4;
 const SUPPLIER_PREVIEW_COUNT = 9;
 const CATALOG_BATCH = 24;
 const CATALOG_VIEW_KEY = "subbie_catalog_view";
@@ -227,7 +226,7 @@ export default function HomePage() {
     [catalogEpoch, groupEpoch]
   );
   const greens = useMemo(
-    () => collapseCatalog(getGreenProducts(), catalogGroupIndex()).slice(0, SECTION_PREVIEW),
+    () => collapseCatalog(getGreenProducts(), catalogGroupIndex()).slice(0, GREEN_PREVIEW),
     [catalogEpoch, groupEpoch]
   );
   const suppliers = useMemo(() => getSuppliers(), [catalogEpoch]);
@@ -240,7 +239,7 @@ export default function HomePage() {
   const categoryCols = phone
     ? 2
     : pickFillColumns(visibleCategories.length, contentWidth, { minTile: 132, maxTile: 210, target: 8 });
-  const greenCols = phone ? 1 : fitColumns(greens.length, contentWidth, 260);
+  const greenCols = phone ? 1 : contentWidth < 992 ? 2 : 4;
   const topCols = phone ? 1 : fitColumns(top.length, contentWidth, 260);
 
   const products = useMemo(() => {
@@ -470,7 +469,12 @@ export default function HomePage() {
               {t("heroHeadline")}
             </h1>
             <p className="reveal reveal-delay-2 mt-4 text-base sm:text-lg text-white/65 max-w-lg leading-relaxed">
-              {t("heroSupport")}
+              <strong className="font-semibold text-white">{t("heroPoint1")}</strong>
+              {t("heroPoint1Rest")}
+              <strong className="font-semibold text-white">{t("heroPoint2")}</strong>
+              {t("heroPoint2Rest")}
+              <strong className="font-semibold text-white">{t("heroPoint3")}</strong>
+              {t("heroPoint3Rest")}
             </p>
             <div className="reveal reveal-delay-2 mt-8 flex flex-wrap gap-3">
               <a
@@ -506,34 +510,18 @@ export default function HomePage() {
                 <h2 className="mt-2 font-display text-3xl font-semibold text-brand-800">{t("howHeadline")}</h2>
               </div>
             </div>
-            <ol className="grid grid-cols-1 gap-3 md:grid-cols-5 md:gap-4">
+            <ol className="grid grid-cols-1 overflow-hidden rounded-xl border border-line bg-white shadow-[0_1px_0_rgba(16,21,19,0.04)] md:grid-cols-5">
               {[
-                ["01", "step1Title", "step1Body", "search"],
-                ["02", "step2Title", "step2Body", "quote"],
-                ["03", "step3Title", "step3Body", "buy"],
-                ["04", "step4Title", "step4Body", "cart"],
-                ["05", "step5Title", "step5Body", "spec"],
-              ].map(([n, title, body, art], index, steps) => (
-                <li
-                  key={n}
-                  className="relative flex min-w-0 flex-col overflow-visible rounded-xl border border-line bg-white shadow-[0_1px_0_rgba(16,21,19,0.04)]"
-                >
-                  <div className="overflow-hidden rounded-t-xl">
-                    <HowStepGraphic name={art} />
-                  </div>
-                  <div className="flex flex-1 flex-col px-3.5 pb-4 pt-3">
-                    <p className="text-[11px] font-semibold tracking-[0.16em] text-brand-700">{n}</p>
-                    <p className="mt-1.5 text-sm font-semibold leading-snug text-ink">{t(title)}</p>
-                    <p className="mt-1 text-[13px] leading-relaxed text-mute [text-wrap:pretty]">{t(body)}</p>
-                  </div>
-                  {index < steps.length - 1 ? (
-                    <span
-                      className="absolute left-[calc(100%+0.5rem)] top-14 z-10 hidden h-6 w-6 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-white text-xs text-brand-700 md:flex"
-                      aria-hidden
-                    >
-                      ›
-                    </span>
-                  ) : null}
+                ["01", "step1Title", "step1Body"],
+                ["02", "step2Title", "step2Body"],
+                ["03", "step3Title", "step3Body"],
+                ["04", "step4Title", "step4Body"],
+                ["05", "step5Title", "step5Body"],
+              ].map(([n, title, body]) => (
+                <li key={n} className="border-t border-line px-4 py-4 first:border-t-0 md:border-l md:border-t-0 md:px-5 md:first:border-l-0">
+                  <p className="font-display text-2xl font-semibold tracking-[0.08em] text-brand-800">{n}</p>
+                  <p className="mt-2 text-sm font-semibold leading-snug text-ink">{t(title)}</p>
+                  <p className="mt-1 text-[13px] leading-relaxed text-mute [text-wrap:pretty]">{t(body)}</p>
                 </li>
               ))}
             </ol>
@@ -882,7 +870,7 @@ export default function HomePage() {
                       key={id}
                       type="button"
                       onClick={() => setPriceFilter(id)}
-                      className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
+                      className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-none ${
                         priceFilter === id
                           ? "bg-white text-charcoal border-white"
                           : "border-white/30 text-white/75 hover:bg-white/10"
@@ -896,7 +884,7 @@ export default function HomePage() {
                     type="button"
                     onClick={() => setGreenOnly((prev) => !prev)}
                     aria-pressed={greenOnly}
-                    className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
+                    className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-none ${
                       greenOnly
                         ? "bg-white text-charcoal border-white"
                         : "border-white/30 text-white/75 hover:bg-white/10"
@@ -908,7 +896,7 @@ export default function HomePage() {
                     type="button"
                     onClick={() => setPriceFilter((prev) => (prev === "hot" ? "all" : "hot"))}
                     aria-pressed={priceFilter === "hot"}
-                    className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-full ${
+                    className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-none ${
                       priceFilter === "hot"
                         ? "bg-white text-charcoal border-white"
                         : "border-white/30 text-white/75 hover:bg-white/10"
@@ -917,7 +905,7 @@ export default function HomePage() {
                     {t("priceFilterHot")}
                   </button>
                   {SHOW_SPEC_MATCH ? (
-                    <SpecMatchLaunch className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wide bg-white text-charcoal rounded-full">
+                    <SpecMatchLaunch className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wide bg-white text-charcoal rounded-none">
                       {t("uploadSpecMatch")}
                     </SpecMatchLaunch>
                   ) : null}

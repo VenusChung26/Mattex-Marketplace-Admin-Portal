@@ -19,13 +19,18 @@ function yearDigits(now) {
   return String(new Date(now).getUTCFullYear()).slice(-2);
 }
 
-/** `PREFIX-YY######`, counter restarts each year, e.g. RFQ-26000001. Old ids such as RFQ-1001 are never rewritten. */
+/** `PREFIX-YY######`, e.g. RFQ-26000001. The counter stays with each adapter. Old ids are never rewritten. */
+export function formatDocNo(prefix, yy, n) {
+  return `${prefix}-${yy}${String(n).padStart(6, "0")}`;
+}
+
+/** Next file-store number. The counter restarts each UTC year. */
 export function takeNumber(state, prefix, now = Date.now()) {
   const yy = yearDigits(now);
   const key = `${prefix}-${yy}`;
   const next = (Number(state.counters[key]) || 0) + 1;
   state.counters[key] = next;
-  return `${prefix}-${yy}${String(next).padStart(6, "0")}`;
+  return formatDocNo(prefix, yy, next);
 }
 
 function isStaff(actor) {

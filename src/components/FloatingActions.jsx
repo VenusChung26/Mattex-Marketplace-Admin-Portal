@@ -16,7 +16,7 @@ export default function FloatingActions() {
         href={WHATSAPP_HREF}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex h-16 w-16 items-center justify-center rounded-full bg-[#25D366] text-white shadow-[0_10px_28px_rgba(16,21,19,0.32)] hover:bg-[#1ebe57] transition-colors"
+        className="fab-round flex h-16 w-16 items-center justify-center rounded-full bg-[#25D366] text-white shadow-[0_10px_28px_rgba(16,21,19,0.32)] hover:bg-[#1ebe57] transition-colors"
         aria-label={`${t("whatsapp")} ${WHATSAPP_DISPLAY}`}
         title={`${t("whatsapp")} ${WHATSAPP_DISPLAY}`}
       >
@@ -27,7 +27,7 @@ export default function FloatingActions() {
       <button
         type="button"
         onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-charcoal text-white shadow-[0_8px_20px_rgba(16,21,19,0.28)] hover:bg-brand-800 transition-colors"
+        className="fab-round flex h-12 w-12 items-center justify-center rounded-full bg-charcoal text-white shadow-[0_8px_20px_rgba(16,21,19,0.28)] hover:bg-brand-800 transition-colors"
         aria-label={t("backToTop")}
       >
         <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">

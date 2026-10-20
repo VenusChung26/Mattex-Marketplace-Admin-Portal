@@ -17,16 +17,13 @@ import PurchaseOrdersPage from "./pages/PurchaseOrdersPage";
 import WhatsappPage from "./pages/WhatsappPage";
 import WhatsappChatPage from "./pages/WhatsappChatPage";
 import SupplierPage from "./pages/SupplierPage";
-import AdminPortal from "./pages/admin/AdminPortal";
-import StaffSetPasswordPage from "./pages/admin/StaffSetPasswordPage";
-import StaffForgotPasswordPage from "./pages/admin/StaffForgotPasswordPage";
 import PublicQuotePage from "./pages/PublicQuotePage";
 import SpecMatchPage from "./pages/SpecMatchPage";
 import MidAutumnPage from "./pages/MidAutumnPage";
 import CatalogUpdateBanner from "./components/CatalogUpdateBanner";
 import FloatingActions from "./components/FloatingActions";
 import { getCategoryByName, ensureBuyerSession } from "./lib/store";
-import { adminOrigin, isAdminSurface } from "./lib/origins";
+import { adminOrigin } from "./lib/origins";
 import { preferredLocale, withLocale } from "./lib/locale";
 import { useStore } from "./hooks/useStore";
 
@@ -128,22 +125,6 @@ function BootGate() {
 }
 
 export default function App() {
-  if (isAdminSurface()) {
-    return (
-      <BrowserRouter>
-        <LanguageProvider>
-          <BootGate />
-          <ScrollToTop />
-          <Routes>
-            <Route path="/set-password" element={<StaffSetPasswordPage />} />
-            <Route path="/forgot-password" element={<StaffForgotPasswordPage />} />
-            <Route path="*" element={<AdminPortal />} />
-          </Routes>
-        </LanguageProvider>
-      </BrowserRouter>
-    );
-  }
-
   return (
     <BrowserRouter>
       <LanguageProvider>

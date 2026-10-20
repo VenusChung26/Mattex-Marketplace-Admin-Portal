@@ -100,7 +100,7 @@ export default function MobileCategoryTabs({ categories, activeSlug = "", filter
   }, [categories, activeSlug]);
 
   const chip = (active) =>
-    `shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-sm ${
+    `shrink-0 whitespace-nowrap rounded-none border px-3.5 py-1.5 text-sm ${
       active ? "border-brand-600 bg-brand-600 font-semibold text-white" : "border-line bg-white text-ink"
     }`;
 

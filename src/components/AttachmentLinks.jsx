@@ -39,7 +39,7 @@ export function FilePreviewOverlay({ src, name, file, onClose }) {
       <div className="relative max-h-[90vh] w-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
         <button
           type="button"
-          className="absolute -right-2 -top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg leading-none text-ink shadow"
+          className="absolute -right-2 -top-2 z-10 flex h-8 w-8 items-center justify-center rounded-none bg-white text-lg leading-none text-ink shadow"
           onClick={onClose}
           aria-label="Close"
         >
@@ -72,7 +72,7 @@ export function PreviewThumb({ src, name, className = "h-10 w-10" }) {
     <>
       <button
         type="button"
-        className={`${className} shrink-0 overflow-hidden rounded-md border border-line bg-paper`}
+        className={`${className} shrink-0 overflow-hidden rounded-none border border-line bg-paper`}
         onClick={(e) => {
           e.stopPropagation();
           e.preventDefault();
@@ -104,7 +104,7 @@ export default function AttachmentLinks({ files, className = "mt-0.5 text-xs tex
               {image ? (
                 <button
                   type="button"
-                  className="h-10 w-10 shrink-0 overflow-hidden rounded-md border border-line bg-paper"
+                  className="h-10 w-10 shrink-0 overflow-hidden rounded-none border border-line bg-paper"
                   onClick={(e) => {
                     e.stopPropagation();
                     e.preventDefault();

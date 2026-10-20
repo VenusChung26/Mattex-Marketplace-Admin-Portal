@@ -12,7 +12,7 @@ import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
 import { uploadSpecFile } from "../lib/rfqBlob";
 import { clearSpecFiles, loadSpecFiles, saveSpecFile } from "../lib/specMatchFiles";
-import { formatUnitPrice } from "../lib/productFields";
+import { displayUnit, formatUnitPrice, localizeSpecLine } from "../lib/productFields";
 import { scrollNodeIntoView } from "../lib/scrollInto";
 import { commitSpecMatch, displayLeadTime, formatQuoteDate, getEffectivePrice, getProduct, isLoggedIn, matchSpecToCatalog, productSkuId, requireBuyerAuth, specificationRows, stockStatusKey, WHATSAPP_HREF } from "../lib/store";
 import { productImageList } from "../lib/compressImage";
@@ -1164,7 +1164,7 @@ export default function SpecMatchPage() {
             {scrolled ? (
               <button
                 type="button"
-                className="flex h-12 w-12 items-center justify-center rounded-full bg-charcoal text-white"
+                className="flex h-12 w-12 items-center justify-center rounded-none bg-charcoal text-white"
                 aria-label={t("backToTop")}
                 onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
               >
@@ -1273,7 +1273,7 @@ export default function SpecMatchPage() {
               </div>
             </div>
             <div className="mt-3 min-h-0 flex-1 overflow-auto">
-              {preview.kind === "image" && preview.url ? <img src={preview.url} alt="" className="mx-auto max-h-[70vh] object-contain" /> : null}
+              {preview.kind === "image" && preview.url ? <img src={preview.url} alt="" className="mx-auto max-h-[70vh] object-contain" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : null}
               {preview.kind === "pdf" && preview.url ? <iframe title={preview.name} src={preview.url} className="h-[70vh] w-full border border-line" /> : null}
               {preview.kind === "word" && preview.readable ? (
                 <div className="space-y-3 text-sm text-ink">
@@ -1558,7 +1558,7 @@ function SuggestionLine({ match, t, onPick, onOpen }) {
     <div className="flex items-center gap-3 px-3 py-2.5">
       <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={onPick}>
         {match.image ? (
-          <img src={match.image} alt="" className="h-10 w-10 shrink-0 border border-line bg-paper object-cover" />
+          <img src={match.image} alt="" className="h-10 w-10 shrink-0 border border-line bg-paper object-cover" onError={(event) => { event.currentTarget.style.display = "none"; }} />
         ) : null}
         <span className="min-w-0">
           <span className="flex flex-wrap items-center gap-1.5">
@@ -1579,7 +1579,7 @@ function MatchFace({ match, current = false, selected = false, t, promo, lang, o
   return (
     <div className="flex items-start gap-3 border border-line bg-white p-3">
       {match.image ? (
-        <img src={match.image} alt="" className="h-12 w-12 shrink-0 border border-line bg-paper object-cover" />
+        <img src={match.image} alt="" className="h-12 w-12 shrink-0 border border-line bg-paper object-cover" onError={(event) => { event.currentTarget.style.display = "none"; }} />
       ) : null}
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-3">
@@ -1609,6 +1609,7 @@ function MatchFace({ match, current = false, selected = false, t, promo, lang, o
 }
 
 function ProductDetailDialog({ productId, match, t, onClose }) {
+  const { lang } = useLanguage();
   const product = getProduct(productId);
   const gallery = product ? productImageList(product) : match?.image ? [match.image] : [];
   const [active, setActive] = useState(gallery[0] || "");
@@ -1625,21 +1626,21 @@ function ProductDetailDialog({ productId, match, t, onClose }) {
           <button type="button" className="btn-soft shrink-0 !px-3 !py-1.5" onClick={onClose}>{t("specMatchClose")}</button>
         </div>
         {description ? <p className="mt-3 text-sm leading-6 text-mute">{description}</p> : null}
-        {active ? <img src={active} alt="" className="mt-4 max-h-72 w-full border border-line object-contain bg-paper" /> : null}
+        {active ? <img src={active} alt="" className="mt-4 max-h-72 w-full border border-line object-contain bg-paper" onError={(event) => { event.currentTarget.style.display = "none"; }} /> : null}
         {gallery.length > 1 ? (
           <div className="mt-2 flex gap-2 overflow-x-auto">
             {gallery.map((src) => (
               <button key={src} type="button" className={`h-14 w-14 shrink-0 border ${src === active ? "border-brand-600" : "border-line"}`} onClick={() => setActive(src)}>
-                <img src={src} alt="" className="h-full w-full object-cover" />
+                <img src={src} alt="" className="h-full w-full object-cover" onError={(event) => { event.currentTarget.style.display = "none"; }} />
               </button>
             ))}
           </div>
         ) : null}
         <dl className="mt-4 divide-y divide-line border-y border-line text-sm">
           {sku ? <div className="flex justify-between gap-4 py-2"><dt className="text-mute">{t("productNo")}</dt><dd className="font-medium text-ink">{sku}</dd></div> : null}
-          {product ? <div className="flex justify-between gap-4 py-2"><dt className="text-mute">{t("moq")}</dt><dd className="font-medium text-ink">{product.moq} {product.unit}</dd></div> : null}
+          {product ? <div className="flex justify-between gap-4 py-2"><dt className="text-mute">{t("moq")}</dt><dd className="font-medium text-ink">{product.moq} {displayUnit(product.unit, lang)}</dd></div> : null}
           {product ? <div className="flex justify-between gap-4 py-2"><dt className="text-mute">{t("stockStatus")}</dt><dd className="font-medium text-ink">{product.discontinued ? t("discontinued") : t(stockStatusKey(product.stockStatus))}</dd></div> : null}
-          {product && displayLeadTime(product) ? <div className="flex justify-between gap-4 py-2"><dt className="text-mute">{t("leadTime")}</dt><dd className="font-medium text-ink">{displayLeadTime(product)}</dd></div> : null}
+          {product && displayLeadTime(product, lang) ? <div className="flex justify-between gap-4 py-2"><dt className="text-mute">{t("leadTime")}</dt><dd className="font-medium text-ink">{displayLeadTime(product, lang)}</dd></div> : null}
         </dl>
         {product ? <div className="mt-4"><ProductPrice product={product} size="detail" /></div> : null}
         {specs.length ? (
@@ -1648,7 +1649,7 @@ function ProductDetailDialog({ productId, match, t, onClose }) {
             <ul className="mt-2 divide-y divide-line border-y border-line">
               {specs.map((row) => (
                 <li key={row.kind === "cert" ? "cert" : row.text} className="py-2 text-sm text-mute">
-                  {row.kind === "cert" ? row.lines.join(" ") : row.text}
+                  {row.kind === "cert" ? row.lines.join(" ") : localizeSpecLine(row.text, lang)}
                 </li>
               ))}
             </ul>

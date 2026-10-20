@@ -4,6 +4,10 @@
  * supplies `at` and `by` for real; the browser only displays what the server decided.
  */
 
+import { SHOW_BUYER_QUOTES, SHOW_RFQ_PRICING, SHOW_RFQ_QUOTES, SHOW_TMS_LINK } from "./flags.js";
+
+const QUOTING = SHOW_RFQ_QUOTES && SHOW_RFQ_PRICING;
+
 /** Inbox status of an RFQ, whatever shape of status fields it carries. */
 export function inboxStatus(rfq) {
   if (rfq?.cancelStatus === "accepted" || rfq?.reviewStatus === "cancelled") return "cancelled";
@@ -14,6 +18,93 @@ export function inboxStatus(rfq) {
     return rfq.status === "rejected" ? "no_offer" : rfq.status;
   }
   return "received";
+}
+
+/** What the buyer reads. A key, not a sentence. Demo records stay outside. */
+export function buyerStatusKey(rfq) {
+  if (!rfq) return "";
+  if (rfq.cancelStatus === "accepted" || rfq.reviewStatus === "cancelled") return "cancelled";
+  if (rfq.cancelStatus === "requested") return "cancel_requested";
+  if (rfq.reverseStatus === "requested") return "reverse_requested";
+  if (rfq.reviewStatus === "revising") return "revising";
+  if (rfq.reviewStatus === "returned") return "returned";
+  if (rfq.reviewStatus === "quoted") return SHOW_BUYER_QUOTES ? "quoted" : "in_review";
+  if (rfq.reviewStatus === "accepted") return SHOW_BUYER_QUOTES ? "accepted" : "in_review";
+  if (rfq.reviewStatus === "rejected" || rfq.reviewStatus === "no_offer") return "rejected";
+  if (rfq.reviewStatus) return "submitted";
+  return "submitted";
+}
+
+/** Sales chip. The English phrase is the key the portal already translates. */
+export function salesRfqLabel(rfq) {
+  const status = inboxStatus(rfq);
+  if (rfq?.reverseStatus === "requested") return "Reverse requested";
+  if (rfq?.cancelStatus === "requested") return "Cancel requested";
+  if (status === "revising") return "Revising";
+  if (status === "cancelled") return "Cancelled";
+  if (status === "no_offer" || status === "rejected") return "No Offer Rejected";
+  if (status === "accepted" && String(rfq?.quoteDelivery || "") === "whatsapp" && SHOW_RFQ_QUOTES) return "WhatsApp quote";
+  if (status === "accepted" && rfq?.tmsDocumentNo && SHOW_RFQ_QUOTES) return "iRFQ created";
+  if (status === "accepted") return SHOW_RFQ_QUOTES ? "Accepted" : "In review";
+  if (status === "returned") return "Returned";
+  if (status === "reviewing") return "Reviewing";
+  if (status === "quoted") return SHOW_RFQ_QUOTES ? "Quoted" : "In review";
+  return "Received";
+}
+
+/** Which inbox tab this RFQ belongs in. */
+export function salesRfqTab(rfq) {
+  if (rfq?.reverseStatus === "requested") return "reverse";
+  if (rfq?.cancelStatus === "requested") return "cancel";
+  const status = inboxStatus(rfq);
+  if (status === "revising") return "revising";
+  if (status === "no_offer" || status === "rejected") return "rejected";
+  if (status === "accepted" || status === "quoted") {
+    if (!QUOTING) return "accepted";
+    if (status === "quoted") return "quoted";
+    return rfq?.tmsDocumentNo ? "accepted" : "tms";
+  }
+  if (["received", "reviewing", "returned", "cancelled"].includes(status)) return status;
+  return "received";
+}
+
+const SALES_TABS_FULL = [
+  { id: "action", label: "Pending" },
+  { id: "all", label: "All" },
+  { id: "received", label: "Received" },
+  { id: "reviewing", label: "Reviewing" },
+  { id: "reverse", label: "Reverse requested" },
+  { id: "cancel", label: "Cancel requested" },
+  { id: "tms", label: "Accepted" },
+  { id: "accepted", label: "iRFQ created" },
+  { id: "revising", label: "Revising" },
+  { id: "returned", label: "Returned" },
+  { id: "quoted", label: "Quoted" },
+  { id: "rejected", label: "No Offer Rejected" },
+  { id: "cancelled", label: "Cancelled" },
+];
+
+/** Tabs on screen while pricing is off. Returned stays. The accepted bucket is titled In review. */
+const SALES_TABS_WHILE_NOT_QUOTING = [
+  { id: "action", label: "Pending" },
+  { id: "all", label: "All" },
+  { id: "received", label: "Received" },
+  { id: "reverse", label: "Reverse requested" },
+  { id: "cancel", label: "Cancel requested" },
+  { id: "accepted", label: "In review" },
+  { id: "returned", label: "Returned" },
+  { id: "rejected", label: "No Offer Rejected" },
+  { id: "cancelled", label: "Cancelled" },
+];
+
+/** Which inbox tabs are shown. Labels are the portal's existing phrases. */
+export function salesInboxTabs() {
+  if (!QUOTING) return SALES_TABS_WHILE_NOT_QUOTING;
+  if (!SHOW_RFQ_QUOTES) {
+    return SALES_TABS_WHILE_NOT_QUOTING;
+  }
+  if (SHOW_TMS_LINK) return SALES_TABS_FULL;
+  return SALES_TABS_FULL.filter((tab) => tab.id !== "accepted");
 }
 
 export function activityDedupeKey(entry) {
@@ -340,6 +431,120 @@ export function applyDeliveredQuoteVersion(rfq, version, extra = {}) {
     quotedSubtotal: version.quotedSubtotal,
     ...extra,
   };
+}
+
+function quoteLineKey(line) {
+  return String(line?.productId ?? "");
+}
+
+function quoteLinePrice(line) {
+  if (line?.noOffer) return null;
+  const n = Number(line?.quotedUnitPrice);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** The delivered version a purchase order may use. Falls back to the last frozen version. */
+export function quoteEffectiveVersionNo(rfq) {
+  const listed = quoteVersionList(rfq);
+  const stored = Number(rfq?.quoteEffectiveVersion);
+  if (Number.isFinite(stored) && stored > 0 && listed.some((row) => Number(row.version) === stored)) return stored;
+  return listed.length ? Number(listed[listed.length - 1].version) || 0 : 0;
+}
+
+export function getQuoteVersion(rfq, versionNo) {
+  const n = Number(versionNo);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return quoteVersionList(rfq).find((row) => Number(row.version) === n) || null;
+}
+
+function quoteLinesDiffer(liveLines, frozenLines) {
+  const frozen = new Map((frozenLines || []).map((line) => [quoteLineKey(line), line]));
+  const live = liveLines || [];
+  if (live.length !== (frozenLines || []).length) {
+    const liveKeys = new Set(live.map(quoteLineKey));
+    for (const key of frozen.keys()) {
+      if (!liveKeys.has(key)) return true;
+    }
+  }
+  for (const rawLine of live) {
+    const line = salesLine(rawLine);
+    const other = frozen.get(quoteLineKey(rawLine));
+    if (!other) return true;
+    if (Boolean(line.noOffer) !== Boolean(other.noOffer)) return true;
+    if (quoteLinePrice(line) !== quoteLinePrice(other)) return true;
+    if ((Number(line.qty) || 0) !== (Number(other.qty) || 0)) return true;
+    if (String(line.remark || "") !== String(other.remark || "")) return true;
+  }
+  return false;
+}
+
+/** Worksheet differs from the effective delivered version. No delivered version means not dirty. */
+export function quoteDraftIsDirty(rfq) {
+  const effective = getQuoteVersion(rfq, quoteEffectiveVersionNo(rfq));
+  if (!effective) return false;
+  return quoteLinesDiffer(rfq?.lines, effective.lines);
+}
+
+/** Lines shown while viewing a frozen version. Unmatched live lines become no-offer; extra frozen lines are appended. */
+export function quoteVersionLines(rfq, versionNo) {
+  const snap = getQuoteVersion(rfq, versionNo);
+  if (!snap) return rfq?.lines || [];
+  const frozenById = new Map((snap.lines || []).map((line) => [quoteLineKey(line), line]));
+  const seen = new Set();
+  const merged = (rfq?.lines || []).map((line) => {
+    const frozen = frozenById.get(quoteLineKey(line));
+    seen.add(quoteLineKey(line));
+    if (!frozen) return { ...line, quotedUnitPrice: null, noOffer: true };
+    return { ...line, ...frozen, image: line.image || frozen.image };
+  });
+  (snap.lines || []).forEach((frozen) => {
+    if (!seen.has(quoteLineKey(frozen))) merged.push(frozen);
+  });
+  return merged;
+}
+
+/**
+ * What the portal quote dropdown is looking at. `selection` is "draft" or a version number.
+ * With no delivered version, the worksheet is always the draft. Dirty is against the effective version.
+ * readOnly is only for a frozen quote version; request history stays with the page.
+ */
+export function quoteWorksheet(rfq, selection) {
+  const versions = quoteVersionList(rfq);
+  const selected = selection == null || selection === "" ? "draft" : String(selection);
+  const viewingDraft = selected === "draft" || !versions.length;
+  const dirty = quoteDraftIsDirty(rfq);
+  if (viewingDraft) {
+    return { mode: "draft", version: null, lines: rfq?.lines || [], readOnly: false, dirty };
+  }
+  return {
+    mode: "version",
+    version: Number(selected),
+    lines: quoteVersionLines(rfq, selected),
+    readOnly: true,
+    dirty,
+  };
+}
+
+/**
+ * What Load into draft writes onto the worksheet. Matching lines take the frozen qty, price,
+ * no-offer flag and remark. Unmatched live lines stay. Does not change status or the effective version.
+ */
+export function planLoadQuoteVersion(rfq, versionNo) {
+  const snap = getQuoteVersion(rfq, versionNo);
+  if (!snap) return { ok: false, error: "missing_version" };
+  const frozenById = new Map((snap.lines || []).map((line) => [quoteLineKey(line), line]));
+  const lines = (rfq?.lines || []).map((line) => {
+    const frozen = frozenById.get(quoteLineKey(line));
+    if (!frozen) return line;
+    return {
+      ...line,
+      salesQty: frozen.qty != null ? frozen.qty : line.salesQty,
+      quotedUnitPrice: frozen.quotedUnitPrice,
+      noOffer: Boolean(frozen.noOffer),
+      salesRemark: frozen.remark != null ? frozen.remark : line.salesRemark,
+    };
+  });
+  return { ok: true, quoteNote: snap.quoteNote || rfq?.quoteNote, lines };
 }
 
 /**

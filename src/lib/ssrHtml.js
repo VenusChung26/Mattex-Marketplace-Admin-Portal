@@ -1,6 +1,7 @@
 import "./ssrNodePolyfill.js";
 import { absAsset, absUrl, siteOrigin, stripLocale, withLocale } from "./locale.js";
 import { OG_HEIGHT, OG_WIDTH, categoryOgPath, isSizedOgImage, ogImagePath } from "./ogImage.js";
+import { buyerPurposes, displayUnit, isLeadSpec, localizeLeadTime, specParts, lowerDeliveryQty } from "./productFields.js";
 import { seoCopy } from "./seoCopy.js";
 import { breadcrumbJsonLd, orgJsonLd, productJsonLd } from "./seoJsonLd.js";
 import {
@@ -17,6 +18,7 @@ import {
   isBuyerVisible,
   isDiscontinued,
   searchProducts,
+  productDescriptionText,
   specificationRows,
   supplierDisplayName,
   supplierPath,
@@ -269,12 +271,12 @@ function paragraphs(value) {
 
 const HOME_COPY = {
   en: {
-    heroHeadline: "Engineering products, ready to quote",
-    heroSupport: "Catalog SKUs or your own spec — both go to the same WhatsApp quote.",
+    heroHeadline: "Engineering products, ask or buy",
+    heroSupport: "No price: request a quotation on WhatsApp. Listed price: purchase from stock on WhatsApp. Several products: add to the cart first.",
     browseCatalog: "Browse catalog",
     materialCategories: "Material categories",
     greenHeadline: "Lower-impact picks for greener builds",
-    greenSupport: "FSC timber, high-R insulation, recycled aggregate, and low-VOC boards — ready to quote.",
+    greenSupport: "Ask for a quote, or buy from stock when a price is shown.",
     topProducts: "Hit products",
     supplierCompanies: "Supplier companies",
     supplierSupport: "Open a company page for hit products and a searchable catalog",
@@ -290,17 +292,17 @@ const HOME_COPY = {
     step5Title: "Not in the catalog",
     step5Body: "Add a tailor-made product, or upload a specification to match.",
     customPitchTitle: "Not in the catalog? Still quote it.",
-    customPitchBody: "Name the material, attach drawings or spec files, and drop it in the same cart as listed SKUs.",
+    customPitchBody: "Name the material, attach drawings or a specification, and place it in the same cart as catalog products.",
     allProductsTitle: "All products",
     searchHint: "Search by spec, size, material, SKU, supplier, or description",
   },
   zh: {
-    heroHeadline: "工程產品，即時報價",
-    heroSupport: "目錄 SKU 或你自己的規格，都經同一條 WhatsApp 問價。",
+    heroHeadline: "工程產品，問價或購買",
+    heroSupport: "未標價以 WhatsApp 詢問報價。已標價以 WhatsApp 購買現貨。數項產品可先放入購物車。",
     browseCatalog: "瀏覽目錄",
     materialCategories: "物料分類",
     greenHeadline: "較低碳影響的建材選擇",
-    greenSupport: "FSC 木材、高 R 值隔熱、再生骨料、低 VOC 板材 — 可直接問價。",
+    greenSupport: "可問價，已標價亦可購買現貨。",
     topProducts: "熱門產品",
     supplierCompanies: "供應商公司",
     supplierSupport: "進入公司頁查看熱門產品與可搜尋目錄",
@@ -316,28 +318,42 @@ const HOME_COPY = {
     step5Title: "目錄未有",
     step5Body: "新增度身訂造產品，或上傳規格配對。",
     customPitchTitle: "目錄沒有，一樣可以問價",
-    customPitchBody: "寫物料名稱、上傳圖則或規格附件，同目錄 SKU 放喺同一個購物車。",
+    customPitchBody: "填寫物料名稱，附上圖則或規格，與目錄產品放入同一個購物車。",
     allProductsTitle: "全部產品",
     searchHint: "用規格、尺寸、物料、SKU、供應商或描述搜尋",
   },
 };
 
+function buyerSpecHtml(lang, product) {
+  return specificationRows(product)
+    .filter((row) => row.kind === "cert" || !isLeadSpec(row.text))
+    .map((row) =>
+      row.kind === "cert"
+        ? `<li>${lang === "zh" ? "認證" : "Cert"} ${row.lines.map((line) => esc(line)).join(" ")}</li>`
+        : (() => {
+            const parts = specParts(row.text, lang);
+            return parts.label ? `<li>${esc(parts.label)} ${esc(parts.value)}</li>` : `<li>${esc(parts.value)}</li>`;
+          })()
+    )
+    .join("");
+}
+
+function buyerPurposeHtml(lang, product) {
+  return buyerPurposes(product, lang)
+    .map((term) => `<li>${esc(term)}</li>`)
+    .join("");
+}
+
+function buyerRemarkText(lang) {
+  return lang === "zh" ? "暫定編號，規格以報價確認為準。" : "Provisional number. Specifications are confirmed on the quote.";
+}
+
 function productBlock(lang, product) {
   const href = withLocale(lang, `/details/${product.id}`);
   const categoryHref = withLocale(lang, catalogPathForCategory(product.category));
   const supplierHref = product.supplier ? withLocale(lang, supplierPath(product.supplier)) : "";
-  const specs = specificationRows(product)
-    .map((row) =>
-      row.kind === "cert"
-        ? `<li>Cert<ul>${row.lines.map((line) => `<li>${esc(line)}</li>`).join("")}</ul></li>`
-        : `<li>${esc(row.text)}</li>`
-    )
-    .join("");
-  const purposes = (product.purposes || [])
-    .map((line) => String(line).trim())
-    .filter((line) => line && !/^\d+\.\s/.test(line))
-    .map((line) => `<li>${esc(line)}</li>`)
-    .join("");
+  const specs = buyerSpecHtml(lang, product);
+  const purposes = buyerPurposeHtml(lang, product);
   return `<article>
         <p><a href="${esc(categoryHref)}">${esc(product.category)}</a></p>
         <h3><a href="${esc(href)}">${esc(product.name)}</a></h3>
@@ -350,7 +366,7 @@ function productBlock(lang, product) {
           [
             product.unit ? `Unit ${product.unit}` : "",
             product.moq != null ? `MOQ ${product.moq}` : "",
-            product.leadTimeLabel || "",
+            localizeLeadTime(product.leadTimeLabel || "", lang),
             product.standard || "",
           ]
             .filter(Boolean)
@@ -362,7 +378,7 @@ function productBlock(lang, product) {
         ${paragraphs(product.certifications)}
         ${specs ? `<ul>${specs}</ul>` : ""}
         ${purposes ? `<ul>${purposes}</ul>` : ""}
-        ${paragraphs(product.remark)}
+        ${String(product.remark || "").trim() ? paragraphs(buyerRemarkText(lang)) : ""}
       </article>`;
 }
 
@@ -389,23 +405,30 @@ function pageContent(page) {
     const image = safeImage(product.image);
     const images = (product.images || []).map((src) => safeImage(src)).filter(Boolean);
     const gallery = images.length ? images : image ? [image] : [];
-    const specs = specificationRows(product)
-      .map((row) =>
-        row.kind === "cert"
-          ? `<li>Cert<ul>${row.lines.map((line) => `<li>${esc(line)}</li>`).join("")}</ul></li>`
-          : `<li>${esc(row.text)}</li>`
-      )
-      .join("");
-    const purposes = (product.purposes || [])
-      .map((term) => String(term).trim())
-      .filter((term) => term && !/^\d+\.\s/.test(term))
-      .map((term) => `<li>${esc(term)}</li>`)
-      .join("");
-    const lead = product.leadTime
-      ? product.leadTime.min === product.leadTime.max
-        ? String(product.leadTime.min)
-        : `${product.leadTime.min}–${product.leadTime.max}`
-      : product.leadTimeLabel || "";
+    const specs = buyerSpecHtml(lang, product);
+    const purposes = buyerPurposeHtml(lang, product);
+    const deliveryQty = lowerDeliveryQty(product);
+    const deliveryLine = deliveryQty
+      ? `<p>${esc(
+          lang === "zh"
+            ? `一次購買 ${deliveryQty} ${displayUnit(product.unit, lang)}或以上，運費較低。`
+            : `Delivery is lower on one order of ${deliveryQty} ${
+                Number(deliveryQty) === 1
+                  ? displayUnit(product.unit, lang)
+                  : { bag: "bags", sheet: "sheets", pail: "pails", pc: "pcs" }[String(product.unit || "").toLowerCase()] ||
+                    displayUnit(product.unit, lang)
+              } or more.`,
+        )}</p>`
+      : "";
+    const lead = localizeLeadTime(
+      product.leadTimeLabel ||
+        (product.leadTime
+          ? product.leadTime.min === product.leadTime.max
+            ? `${product.leadTime.min} days`
+            : `${product.leadTime.min}–${product.leadTime.max} days`
+          : ""),
+      lang,
+    );
     return `<article class="mattex-ssr">
       <nav>
         <a href="${esc(withLocale(lang, "/"))}">${lang === "zh" ? "產品目錄" : "Catalog"}</a>
@@ -420,24 +443,27 @@ function pageContent(page) {
           ? `<a href="${esc(withLocale(lang, supplierPath(product.supplier)))}">${esc(supplierDisplayName(product.supplier))}</a>`
           : "Mattex"
       }</p>
-      ${paragraphs(product.description)}
+      ${(() => {
+        const description = productDescriptionText(product);
+        if (!description) return "";
+        return `<h2>${lang === "zh" ? "描述" : "Description"}</h2>\n${paragraphs(description)}`;
+      })()}
+      ${specs ? `<h2>${lang === "zh" ? "規格" : "Specifications"}</h2><ul>${specs}</ul>` : ""}
+      <h2>${lang === "zh" ? "訂購" : "Order"}</h2>
       <dl>
-        <dt>${lang === "zh" ? "產品編號" : "Product no."}</dt><dd>${esc(product.productNo || product.id)}</dd>
-        <dt>MOQ</dt><dd>${esc(product.moq)} ${esc(product.unit)}</dd>
-        <dt>${lang === "zh" ? "交貨期" : "Lead time"}</dt><dd>${esc(lead)} ${lang === "zh" ? "日" : "days"}</dd>
-        <dt>${lang === "zh" ? "標準" : "Standard"}</dt><dd>${esc(product.standard)}</dd>
+        <dt>${lang === "zh" ? "臨時 SKU ID" : "Provisional SKU ID"}</dt><dd>${esc(product.productNo || product.id)}</dd>
+        <dt>${lang === "zh" ? "最低訂購量" : "Min. order qty"}</dt><dd>${esc(product.moq)} ${esc(displayUnit(product.unit, lang))}</dd>
+        ${product.unit ? `<dt>${lang === "zh" ? "單位" : "Unit"}</dt><dd>${esc(displayUnit(product.unit, lang))}</dd>` : ""}
+        <dt>${lang === "zh" ? "送貨" : "Delivery"}</dt><dd>${esc(lead)}${/天|日|day|week/i.test(lead) ? "" : lang === "zh" ? " 日" : " days"}</dd>
+        <dt>${lang === "zh" ? "文件列明標準" : "Documented standard"}</dt><dd>${esc(product.standard)}</dd>
       </dl>
-      ${paragraphs(product.sizeDesc)}
-      ${paragraphs(product.primarySpec)}
-      ${paragraphs(product.certifications)}
-      <h2>${lang === "zh" ? "規格" : "Specifications"}</h2>
-      ${specs ? `<ul>${specs}</ul>` : ""}
+      ${deliveryLine}
       ${
         purposes
           ? `<h2>${lang === "zh" ? "用途" : "Purposes"}</h2><ul>${purposes}</ul>`
           : ""
       }
-      ${product.remark ? `<h2>${lang === "zh" ? "備註" : "Remark"}</h2>${paragraphs(product.remark)}` : ""}
+      ${String(product.remark || "").trim() ? `<h2>${lang === "zh" ? "備註" : "Remark"}</h2>${paragraphs(buyerRemarkText(lang))}` : ""}
     </article>`;
   }
   if (page.kind === "catalog" && page.category) {

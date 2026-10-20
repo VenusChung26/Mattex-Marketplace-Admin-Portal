@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { displayLeadTime, getProduct, isBuyerVisible, isHitProduct, productSkuId, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, requireBuyerAuth, catalogPathForCategory, canDirectBuy } from "../lib/store";
-import { orderMinimum, productImageUrl } from "../lib/productFields";
+import { displayUnit, lowerDeliveryQty, orderMinimum, productImageUrl } from "../lib/productFields";
 import { groupOf, useCatalogGroups } from "../lib/catalogGroups";
 import { usePromo } from "../lib/promo";
 import { useStore } from "../hooks/useStore";
@@ -13,16 +13,23 @@ import CustomProductModal from "./CustomProductModal";
 
 export function FallbackImage({ src, fallback = "", alt = "", ...rest }) {
   const [current, setCurrent] = useState(src);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     setCurrent(src);
+    setFailed(false);
   }, [src]);
+  if (failed || !String(current || "").trim()) return null;
   return (
     <img
       {...rest}
       src={current}
       alt={alt}
       onError={() => {
-        if (fallback && current !== fallback) setCurrent(fallback);
+        if (fallback && current !== fallback) {
+          setCurrent(fallback);
+          return;
+        }
+        setFailed(true);
       }}
     />
   );
@@ -55,15 +62,15 @@ function TickIcon({ className = "h-3.5 w-3.5" }) {
   );
 }
 
-function shopLeadTime(product) {
-  return displayLeadTime(product) || "—";
+function shopLeadTime(product, lang) {
+  return displayLeadTime(product, lang) || "—";
 }
 
 const ACTION_BTN =
   "w-full min-h-[2.5rem] !px-2 !py-2 !text-xs leading-tight text-center whitespace-normal";
 
 const TAG_PILL =
-  "inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 tracking-[0.08em] uppercase";
+  "inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 tracking-[0.08em]";
 
 function EmptyImage({ compact }) {
   const { t } = useLanguage();
@@ -178,7 +185,7 @@ export function ProductTagPills({ product, className = "" }) {
 const META_CHIP = "inline-flex items-center whitespace-nowrap bg-paper text-[10px] px-1.5 py-0.5";
 
 export function ProductMetaChips({ product, className = "", showTags = false }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const stockKey = stockStatusKey(product.stockStatus);
   const inStock = product.stockStatus === "in_stock";
   return (
@@ -191,10 +198,10 @@ export function ProductMetaChips({ product, className = "", showTags = false }) 
         {t(stockKey)}
       </span>
       <span className={`${META_CHIP} font-medium text-mute`}>
-        {t("moq")} {product.moq} {product.unit}
+        {t("moq")} {product.moq} {displayUnit(product.unit, lang)}
       </span>
       <span className={`${META_CHIP} font-medium text-mute`}>
-        {shopLeadTime(product)}
+        {shopLeadTime(product, lang)}
       </span>
       {showTags ? <ProductTagPills product={product} /> : null}
     </div>
@@ -241,7 +248,14 @@ function clampQty(value, min) {
   return Math.max(min, Number.isFinite(n) ? n : min);
 }
 
-export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card", t }) {
+function deliveryUnit(qty, unit, shownUnit, lang) {
+  if (lang !== "en" || Number(qty) === 1) return shownUnit;
+  return { bag: "bags", sheet: "sheets", pail: "pails", pc: "pcs" }[String(unit || "").toLowerCase()] || shownUnit;
+}
+
+export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card", t, deliveryQty = null }) {
+  const { lang } = useLanguage();
+  const shownUnit = displayUnit(unit, lang);
   const compact = size === "card" || size === "row" || size === "bar";
   const stretch = size !== "bar";
   const [draft, setDraft] = useState(String(value));
@@ -295,76 +309,85 @@ export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card",
     onChange(n);
   }
 
+  const control = (
+    <div
+      className={`flex items-stretch overflow-hidden border bg-white ${
+        stretch ? "w-full" : "w-fit max-w-full"
+      } ${underMin ? "border-amber-400" : "border-line"}`}
+    >
+      <span
+        className={`flex shrink-0 items-center border-r px-2.5 font-medium text-mute ${
+          underMin ? "border-amber-200" : "border-line"
+        } ${compact ? "text-[11px]" : "text-xs"}`}
+      >
+        {t("qty")}
+      </span>
+      <button
+        type="button"
+        className={btn}
+        aria-label="−"
+        disabled={atMin}
+        onClick={() => {
+          setUnderMin(false);
+          onChange(clampQty(value - 1, min));
+        }}
+      >
+        −
+      </button>
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        autoComplete="off"
+        spellCheck={false}
+        aria-label={t("qty")}
+        value={draft}
+        onChange={(e) => handleInput(e.target.value)}
+        onBlur={() => commit(draft)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
+        className={`${valueBox} bg-transparent px-1 text-center font-semibold tabular-nums text-ink outline-none ${
+          stretch ? "min-w-0 flex-1" : "w-12 shrink-0"
+        }`}
+      />
+      <button
+        type="button"
+        className={btn}
+        aria-label="+"
+        onClick={() => {
+          setUnderMin(false);
+          onChange(clampQty(value + 1, min));
+        }}
+      >
+        +
+      </button>
+      {unit ? (
+        <span
+          className={`flex shrink-0 items-center border-l px-2.5 text-mute ${
+            underMin ? "border-amber-200" : "border-line"
+          } ${compact ? "text-sm font-semibold text-ink" : "text-base font-semibold text-ink"}`}
+        >
+          {shownUnit}
+        </span>
+      ) : null}
+    </div>
+  );
+
   return (
     <div className={stretch ? "w-full min-w-0" : "w-fit max-w-full"}>
-      <div
-        className={`flex items-stretch overflow-hidden rounded-md border bg-white ${
-          stretch ? "w-full" : "w-fit max-w-full"
-        } ${underMin ? "border-amber-400" : "border-line"}`}
-      >
-        <span
-          className={`flex shrink-0 items-center border-r px-2.5 font-medium text-mute ${
-            underMin ? "border-amber-200" : "border-line"
-          } ${compact ? "text-[11px]" : "text-xs"}`}
-        >
-          {t("qty")}
-        </span>
-        <button
-          type="button"
-          className={btn}
-          aria-label="−"
-          disabled={atMin}
-          onClick={() => {
-            setUnderMin(false);
-            onChange(clampQty(value - 1, min));
-          }}
-        >
-          −
-        </button>
-        <input
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          autoComplete="off"
-          spellCheck={false}
-          aria-label={t("qty")}
-          value={draft}
-          onChange={(e) => handleInput(e.target.value)}
-          onBlur={() => commit(draft)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
-          }}
-          className={`${valueBox} bg-transparent px-1 text-center font-semibold tabular-nums text-ink outline-none ${
-            stretch ? "min-w-0 flex-1" : "w-12 shrink-0"
-          }`}
-        />
-        <button
-          type="button"
-          className={btn}
-          aria-label="+"
-          onClick={() => {
-            setUnderMin(false);
-            onChange(clampQty(value + 1, min));
-          }}
-        >
-          +
-        </button>
-        {unit ? (
-          <span
-            className={`flex shrink-0 items-center border-l px-2.5 text-mute ${
-              underMin ? "border-amber-200" : "border-line"
-            } ${compact ? "text-sm font-semibold text-ink" : "text-base font-semibold text-ink"}`}
-          >
-            {unit}
-          </span>
-        ) : null}
-      </div>
+      {control}
       {underMin ? (
         <p className={`mt-1 text-amber-800 ${compact ? "text-[10px] leading-snug" : "text-[11px]"}`} role="alert">
-          {t("qtyUnderMin", { n: `${min} ${unit}`.trim() })}
+          {t("qtyUnderMin", { n: `${min} ${shownUnit}`.trim() })}
         </p>
       ) : size === "detail" ? (
-        <p className="mt-1 text-[11px] text-mute">{t("qtyMinMoq", { n: `${min} ${unit}`.trim() })}</p>
+        <p className="mt-1 text-[11px] text-mute">{t("qtyMinMoq", { n: `${min} ${shownUnit}`.trim() })}</p>
+      ) : null}
+      {deliveryQty ? (
+        <p className={`text-mute ${compact ? "mt-1 text-[10px] leading-snug" : "mt-1 text-[11px]"}`}>
+          {t("lowerDelivery", { n: `${deliveryQty} ${deliveryUnit(deliveryQty, unit, shownUnit, lang)}`.trim() })}
+        </p>
       ) : null}
     </div>
   );
@@ -459,7 +482,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
   const addClass = `${softClass} ${count > 0 ? "btn-added" : ""}`;
 
   const stepper = hideQty ? null : (
-    <QtyStepper value={qty} min={minQty} unit={product.unit} onChange={setQty} size={size} t={t} />
+    <QtyStepper value={qty} min={minQty} unit={product.unit} onChange={setQty} size={size === "bar" ? "sticky" : size} t={t} deliveryQty={lowerDeliveryQty(product)} />
   );
 
   const primaryBtn = (
@@ -612,7 +635,7 @@ function VariantChips({ members, selectedId, onSelect, moreHref, moreLabel }) {
   const rest = overflow ? members.filter((member) => member.productId !== selected.productId) : [];
   const visible = overflow ? [selected, rest[0]].filter(Boolean) : members;
   const chipClass = (on) =>
-    `rounded-full border px-2.5 py-1 text-xs ${
+    `rounded-none border px-2.5 py-1 text-xs ${
       on ? "border-brand-700 bg-brand-50 font-semibold text-brand-800" : "border-line bg-white text-ink hover:border-brand-400"
     }`;
   return (

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { emptyState, formatDocNo, takeNumber } from "./rfq-core.js";
 import { createSupabaseStore } from "./rfq-supabase.js";
 
 const staff = { kind: "staff", email: "sales@mattex.com.hk" };
@@ -65,7 +66,7 @@ function fakeClient() {
         const key = `${prefix}-${yy}`;
         const n = (counters.get(key) || 0) + 1;
         counters.set(key, n);
-        const id = `${key}${String(n).padStart(6, "0")}`;
+        const id = formatDocNo(prefix, yy, n);
         const record = { ...args.p_input, id, revision: 1, createdAt: stamp(args.p_at), updatedAt: stamp(args.p_at), createdBy: args.p_by };
         tables[kindOf[args.p_kind]].set(id, { id, buyer_email: String(record.buyerEmail || "").trim().toLowerCase(), visitor: record.visitor || "", record });
         return { data: record, error: null };
@@ -94,6 +95,8 @@ test("create asks Postgres for the number; the caller cannot choose id, revision
   const store = createSupabaseStore(client, { now: at("2026-10-14T09:00:00Z") });
   const { record } = await store.create("rfq", { id: "RFQ-1", revision: 9, buyerEmail: "alice@example.com" }, alice);
   assert.equal(record.id, "RFQ-26000001");
+  assert.equal(record.id, takeNumber(emptyState(), "RFQ", new Date("2026-10-14T09:00:00Z").getTime()));
+  assert.equal(record.id, formatDocNo("RFQ", "26", 1));
   assert.equal(record.revision, 1);
   assert.equal(record.createdAt, "2026-10-14T09:00:00.000Z");
   assert.equal(record.createdBy, "buyer");

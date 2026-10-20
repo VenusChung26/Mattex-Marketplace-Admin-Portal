@@ -61,6 +61,17 @@ function localRequest(req, path) {
   });
 }
 
+function stripSupabaseFromClient() {
+  return {
+    name: "strip-supabase-from-client",
+    configResolved(config) {
+      for (const key of Object.keys(config.env)) {
+        if (/SUPABASE|SERVICE_ROLE|ANON|SECRET|BLOB_|RESEND_|OPENAI|SESSION/i.test(key)) delete config.env[key];
+      }
+    },
+  };
+}
+
 function jsonPlugin() {
   return {
     name: "subbie-local-api",
@@ -360,16 +371,7 @@ export default defineConfig(({ mode }) => {
     env.SUPABASE_URL ||
     env.NEXT_PUBLIC_SUPABASE_URL ||
     "";
-  const supabaseAnon =
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    env.VITE_SUPABASE_ANON_KEY ||
-    env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    env.SUPABASE_ANON_KEY ||
-    env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    "";
   if (supabaseUrl) process.env.VITE_SUPABASE_URL = supabaseUrl;
-  if (supabaseAnon) process.env.VITE_SUPABASE_ANON_KEY = supabaseAnon;
   const gaMeasurementId =
     process.env.VITE_GA_MEASUREMENT_ID || env.VITE_GA_MEASUREMENT_ID || GA_MEASUREMENT_ID;
   const marketplaceOrigin =
@@ -381,10 +383,14 @@ export default defineConfig(({ mode }) => {
     env.VITE_ADMIN_ORIGIN ||
     (mode === "production" ? "https://subbie-admin.mattex.com.hk" : "http://localhost:5183");
   return {
-    plugins: [react(), jsonPlugin(), marketplaceGaHtmlPlugin(), publicSsrHtmlPlugin()],
+    plugins: [stripSupabaseFromClient(), react(), jsonPlugin(), marketplaceGaHtmlPlugin(), publicSsrHtmlPlugin()],
+    envPrefix: "MM_PUBLIC_",
     define: {
       "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(""),
       "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify(""),
+      "import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY": JSON.stringify(""),
+      "import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY": JSON.stringify(""),
+      "import.meta.env.NEXT_PUBLIC_SUPABASE_URL": JSON.stringify(""),
       "import.meta.env.VITE_SURFACE": JSON.stringify("marketplace"),
       "import.meta.env.VITE_MARKETPLACE_ORIGIN": JSON.stringify(marketplaceOrigin),
       "import.meta.env.VITE_ADMIN_ORIGIN": JSON.stringify(adminOrigin),
