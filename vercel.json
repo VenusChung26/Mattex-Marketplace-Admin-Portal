@@ -1,77 +1,23 @@
 {
-  "redirects": [
-    { "source": "/green", "destination": "/en/green", "statusCode": 301 },
-    { "source": "/sales", "destination": "/en", "statusCode": 301 },
-    { "source": "/en/sales", "destination": "/en", "statusCode": 301 },
-    { "source": "/zh/sales", "destination": "/zh", "statusCode": 301 },
-    { "source": "/catalog", "destination": "/en", "statusCode": 301 },
-    { "source": "/catalog/:slug", "destination": "/en/catalog/:slug", "statusCode": 301 },
-    { "source": "/login", "destination": "/en/login", "statusCode": 301 },
-    { "source": "/signup", "destination": "/en/signup", "statusCode": 301 },
-    { "source": "/forgot-password", "destination": "/en/forgot-password", "statusCode": 301 },
-    { "source": "/reset-password", "destination": "/en/reset-password", "statusCode": 301 },
-    { "source": "/rfq", "destination": "/en/rfq", "statusCode": 301 },
-    { "source": "/rfqs", "destination": "/en/rfqs", "statusCode": 301 },
-    { "source": "/whatsapp", "destination": "/en/whatsapp", "statusCode": 301 },
-    { "source": "/whatsapp-chat", "destination": "/en/whatsapp-chat", "statusCode": 301 },
-    { "source": "/details/:id", "destination": "/en/details/:id", "statusCode": 301 },
-    { "source": "/supplier/:slug", "destination": "/en/supplier/:slug", "statusCode": 301 },
-    { "source": "/whatsapp/:id", "destination": "/en/whatsapp/:id", "statusCode": 301 },
-    { "source": "/whatsapp-chat/:rfqId", "destination": "/en/whatsapp-chat/:rfqId", "statusCode": 301 },
-    { "source": "/email-sent/:rfqId", "destination": "/en/email-sent/:rfqId", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Reinforcement Mesh" }], "destination": "/:lang/catalog/reinforcement-mesh", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Dense Mesh Flame Retardant Safety Net" }], "destination": "/:lang/catalog/safety-net", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Gypsum Block" }], "destination": "/:lang/catalog/gypsum-block", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "XPS Foam Board" }], "destination": "/:lang/catalog/xps-foam-board", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Tiles" }], "destination": "/:lang/catalog/tiles", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Vinyl" }], "destination": "/:lang/catalog/vinyl", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Precasted Concrete" }], "destination": "/:lang/catalog/precasted-concrete", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Cat Ladder" }], "destination": "/:lang/catalog/cat-ladder", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Logistics Storage Platform & Steel Shelving" }], "destination": "/:lang/catalog/steel-shelving", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Handrails" }], "destination": "/:lang/catalog/handrails", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Balustrades" }], "destination": "/:lang/catalog/balustrades", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Forge-welded Grating" }], "destination": "/:lang/catalog/forge-welded-grating", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Press-Lock Grating" }], "destination": "/:lang/catalog/press-lock-grating", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "GU Type Drainage Gratings" }], "destination": "/:lang/catalog/gu-gratings", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "GT Type Drainage Gratings" }], "destination": "/:lang/catalog/gt-gratings", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Gypsum Board" }], "destination": "/:lang/catalog/gypsum-board", "statusCode": 301 },
-    { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Software" }], "destination": "/:lang/catalog/software", "statusCode": 301 },
-    { "source": "/en/catalog", "destination": "/en", "statusCode": 301 },
-    { "source": "/zh/catalog", "destination": "/zh", "statusCode": 301 }
-  ],
+  "framework": "vite",
+  "buildCommand": "npm run build:admin",
+  "outputDirectory": "dist",
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
+        { "key": "X-Frame-Options", "value": "DENY" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
       ]
-    },
-    {
-      "source": "/:lang(en|zh)/:page(login|signup|forgot-password|reset-password|rfq|rfqs|whatsapp|whatsapp-chat|email-sent|quote)/:rest*",
-      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
-    },
-    {
-      "source": "/:lang(en|zh)/:page(login|signup|forgot-password|reset-password|rfq|rfqs|whatsapp|whatsapp-chat|email-sent|quote)",
-      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
     }
   ],
-  "functions": {
-    "api/ssr.js": {
-      "includeFiles": "public/catalog.json"
-    }
-  },
   "rewrites": [
     { "source": "/api/catalog-version", "destination": "/api/catalog-snapshot?part=version" },
     { "source": "/api/catalog/commit", "destination": "/api/catalog-snapshot?part=commit" },
     { "source": "/api/catalog", "destination": "/api/catalog-snapshot?part=get" },
     { "source": "/api/catalog-groups", "destination": "/api/catalog-snapshot?part=groups" },
-    { "source": "/:lang(en|zh)", "destination": "/api/ssr?p=/:lang" },
-    { "source": "/:lang(en|zh)/green", "destination": "/api/ssr?p=/:lang/green" },
-    { "source": "/:lang(en|zh)/catalog/:slug", "destination": "/api/ssr?p=/:lang/catalog/:slug" },
-    { "source": "/:lang(en|zh)/details/:id", "destination": "/api/ssr?p=/:lang/details/:id" },
-    { "source": "/:lang(en|zh)/supplier/:slug", "destination": "/api/ssr?p=/:lang/supplier/:slug" },
     { "source": "/((?!api/|assets/|og/|og-default\\.webp|robots\\.txt|sitemap\\.xml).*)", "destination": "/index.html" }
   ]
 }
