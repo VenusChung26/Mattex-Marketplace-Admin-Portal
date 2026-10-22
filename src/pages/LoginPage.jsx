@@ -13,6 +13,15 @@ import ProjectListEditor from "../components/ProjectListEditor";
 import { BuyerContactFields } from "../components/BuyerContactFields";
 import { composePhone, contactFormFromAccount, contactPayload, formatPhoneLine, normalizeRoles } from "../lib/phone";
 
+function readLoginFields(form, email, password) {
+  const emailValue = form?.querySelector('input[type="email"]')?.value;
+  const passwordValue = form?.querySelector('input[name="password"]')?.value;
+  return {
+    email: String(emailValue ?? email ?? ""),
+    password: String(passwordValue ?? password ?? ""),
+  };
+}
+
 function roleLabel(roles, t) {
   return normalizeRoles(roles)
     .map((role) => (role === "contractor" ? t("roleContractor") : t("roleBuyer")))
@@ -81,9 +90,12 @@ export default function LoginPage() {
   async function onSubmit(e) {
     e.preventDefault();
     if (busy) return;
+    const fields = readLoginFields(e.currentTarget, email, password);
+    if (fields.email !== email) setEmail(fields.email);
+    if (fields.password !== password) setPassword(fields.password);
     const nextErrors = {};
-    if (!String(email || "").trim()) nextErrors.email = t("signupFixRequired");
-    if (!String(password || "").trim()) nextErrors.password = t("signupFixRequired");
+    if (!String(fields.email || "").trim()) nextErrors.email = t("signupFixRequired");
+    if (!String(fields.password || "").trim()) nextErrors.password = t("signupFixRequired");
     if (Object.keys(nextErrors).length) {
       setFieldErrors(nextErrors);
       setError(t("signupFixAlert"));
@@ -93,7 +105,7 @@ export default function LoginPage() {
     setBusy(true);
     let result;
     try {
-      result = await loginUser({ email, password });
+      result = await loginUser({ email: fields.email, password: fields.password });
     } catch {
       result = { ok: false, error: "network" };
     } finally {
@@ -119,7 +131,13 @@ export default function LoginPage() {
       revealIssue();
       return;
     }
-    navigate(withLocale(lang, consumePendingAfterAuth() || "/"));
+    let next = "/";
+    try {
+      next = consumePendingAfterAuth() || "/";
+    } catch {
+      next = "/";
+    }
+    navigate(withLocale(lang, next));
   }
 
   async function onSaveProfile(e) {
@@ -378,7 +396,7 @@ export default function LoginPage() {
                   />
                 </AccountField>
                 <button type="submit" disabled={busy} className="btn-primary w-full !py-3 disabled:opacity-60">
-                  {t("login")}
+                  {busy ? `${t("login")}…` : t("login")}
                 </button>
               </form>
               <p className="mt-3 text-sm">

@@ -10,6 +10,15 @@ import { PasswordInput, RequiredMark } from "./AccountForm";
 import { BuyerPhoneFields } from "./BuyerContactFields";
 import { contactPayload } from "../lib/phone";
 
+function readLoginFields(form, email, password) {
+  const emailValue = form?.querySelector('input[type="email"]')?.value;
+  const passwordValue = form?.querySelector('input[name="password"]')?.value;
+  return {
+    email: String(emailValue ?? email ?? ""),
+    password: String(passwordValue ?? password ?? ""),
+  };
+}
+
 const EMPTY_PHONE = {
   phoneRegion: "852",
   phoneOtherCode: "",
@@ -120,10 +129,13 @@ export default function AuthModal({ open, onClose }) {
   async function onSubmit(e) {
     e.preventDefault();
     if (busy) return;
+    const fields = readLoginFields(e.currentTarget, email, password);
+    if (fields.email !== email) setEmail(fields.email);
+    if (fields.password !== password) setPassword(fields.password);
     setBusy(true);
     let result;
     try {
-      result = await loginUser({ email, password });
+      result = await loginUser({ email: fields.email, password: fields.password });
     } catch {
       result = { ok: false, error: "network" };
     } finally {
@@ -272,7 +284,7 @@ export default function AuthModal({ open, onClose }) {
                 />
               </label>
               <button type="submit" disabled={busy} className="btn-primary w-full !py-2.5 disabled:opacity-60">
-                {t("login")}
+                {busy ? `${t("login")}…` : t("login")}
               </button>
             </form>
           )}

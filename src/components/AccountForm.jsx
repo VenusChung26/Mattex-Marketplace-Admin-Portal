@@ -39,7 +39,7 @@ export function PasswordInput({
     <div className="relative">
       <input
         id={id}
-        name={name}
+        name={name || "password"}
         type={visible ? "text" : "password"}
         value={value}
         onChange={onChange}

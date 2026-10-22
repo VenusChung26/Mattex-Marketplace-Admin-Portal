@@ -9,7 +9,31 @@ export { collapseCatalog };
 let groups = [];
 let byProduct = new Map();
 let source = "auto";
+let remoteLoad = null;
+let autoKey = null;
 const listeners = new Set();
+
+function loadGroupsOnce() {
+  if (source === "saved") return Promise.resolve(groups);
+  if (!remoteLoad) {
+    remoteLoad = loadRemoteCatalogGroups()
+      .then((data) => {
+        if (Array.isArray(data?.groups)) publish(data.groups, "saved");
+        return groups;
+      })
+      .catch(() => {
+        remoteLoad = null;
+        return groups;
+      });
+  }
+  return remoteLoad;
+}
+
+function ensureAutoGroups(epoch) {
+  if (source === "saved" || autoKey === epoch) return;
+  autoKey = epoch;
+  publish(buildAutoGroups(searchProducts("")), "auto");
+}
 
 function publish(next, nextSource) {
   groups = Array.isArray(next) ? next : [];
@@ -41,18 +65,14 @@ export function useCatalogGroups() {
   }, []);
 
   useEffect(() => {
-    if (source === "saved") return;
-    publish(buildAutoGroups(searchProducts("")), "auto");
+    ensureAutoGroups(catalogEpoch);
   }, [catalogEpoch]);
 
   useEffect(() => {
     let cancel = false;
-    loadRemoteCatalogGroups()
-      .then((data) => {
-        if (cancel || !Array.isArray(data?.groups)) return;
-        publish(data.groups, "saved");
-      })
-      .catch(() => {});
+    loadGroupsOnce().then(() => {
+      if (!cancel) setEpoch((value) => value + 1);
+    });
     return () => {
       cancel = true;
     };

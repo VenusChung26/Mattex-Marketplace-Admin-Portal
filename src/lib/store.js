@@ -3507,7 +3507,15 @@ async function loginUser({ email, password }) {
   } catch {
     /* the server cookie is already set; local bookkeeping must not show a login error */
   }
-  return { ok: true, user };
+  if (!normalizeEmail(getUser()?.email)) {
+    try {
+      setSessionUser(user);
+    } catch {
+      return { ok: false, error: "server" };
+    }
+  }
+  if (!normalizeEmail(getUser()?.email)) return { ok: false, error: "server" };
+  return { ok: true, user: getUser() };
 }
 
 async function verifyBuyerSession() {
