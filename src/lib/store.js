@@ -3232,6 +3232,7 @@ function restoreSessionBuyerAccount() {
 }
 
 function setSessionUser(user) {
+  buyerSessionEpoch += 1;
   const previous = getUser();
   const prevEmail = previous ? normalizeEmail(previous.email) : null;
   const nextEmail = normalizeEmail(user.email);
@@ -3355,13 +3356,17 @@ async function registerUser(profile) {
     /* ignore */
   }
   mergeGuestCartIntoUser();
-  notifyAdmins({
-    kind: "buyer",
-    title: "New marketplace buyer — review",
-    body: `${account.companyName || "Company"} · ${account.name || ""} · ${account.email}`.replace(/ · $/, ""),
-    href: `${adminOrigin()}/?buyer=${encodeURIComponent(account.email)}`,
-  });
-  deliverAccountCreatedEmail(account);
+  try {
+    notifyAdmins({
+      kind: "buyer",
+      title: "New marketplace buyer — review",
+      body: `${account.companyName || "Company"} · ${account.name || ""} · ${account.email}`.replace(/ · $/, ""),
+      href: `${adminOrigin()}/?buyer=${encodeURIComponent(account.email)}`,
+    });
+    deliverAccountCreatedEmail(account);
+  } catch {
+    /* the account is already open; a mail or alert failure must not block sign-in */
+  }
   return { ok: true, pending: false, loggedIn: true, email };
 }
 
@@ -3508,19 +3513,17 @@ async function loginUser({ email, password }) {
 async function verifyBuyerSession() {
   const local = getUser();
   if (!local?.email) return false;
+  const epoch = buyerSessionEpoch;
   const result = await authApi("session", { kind: "buyer" });
-  if (result.error === "network") return true;
-  if (result.ok && normalizeEmail(result.account?.email) === normalizeEmail(local.email)) return true;
+  if (epoch !== buyerSessionEpoch) return false;
   if (result.error === "disabled" || result.error === "rejected") {
     localStorage.removeItem(AUTH_KEY);
     emitStoreChange();
     return false;
   }
-  // A missing cookie must not wipe a sign-in the server just accepted.
-  if (!result.ok && !result.error) return true;
-  localStorage.removeItem(AUTH_KEY);
-  emitStoreChange();
-  return false;
+  if (result.ok) return true;
+  // A missing cookie or a server error must not undo a sign-in the server just accepted.
+  return true;
 }
 
 /** Signing out drops the server-held RFQs this tab was showing. */
@@ -3533,6 +3536,7 @@ function clearServerRfqCache() {
 }
 
 function logoutUser() {
+  buyerSessionEpoch += 1;
   authApi("logout", { kind: "buyer" });
   localStorage.removeItem(AUTH_KEY);
   clearServerRfqCache();
@@ -7727,6 +7731,7 @@ async function pullQuoteSnapshots(token) {
 
 let rfqRefreshChain = Promise.resolve();
 let rfqStamp = null;
+let buyerSessionEpoch = 0;
 
 function refreshRemoteRfqs() {
   if (shouldUseLocalSharedStore()) return pullSharedStore();
