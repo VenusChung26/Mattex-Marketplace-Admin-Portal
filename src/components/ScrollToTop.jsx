@@ -1,7 +1,10 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
+import { startLiveCatalogRefresh } from "../lib/catalogLive";
 import { jumpToId, scrollToTopNow } from "../lib/jumpTo";
 import { stripLocale } from "../lib/locale";
+
+startLiveCatalogRefresh();
 
 if (typeof window !== "undefined" && "scrollRestoration" in window.history) {
   window.history.scrollRestoration = "manual";

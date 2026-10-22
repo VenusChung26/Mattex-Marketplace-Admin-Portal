@@ -327,7 +327,6 @@ function jsonPlugin() {
 
 function publicSsrHtmlPlugin() {
   let surface = "marketplace";
-  let catalogReady;
   return {
     name: "mattex-public-ssr-html",
     configResolved(config) {
@@ -349,8 +348,7 @@ function publicSsrHtmlPlugin() {
         await import("./src/lib/ssrNodePolyfill.js");
         const { ensureSsrCatalog } = await import("./src/lib/ssrCatalog.js");
         const { injectPublicDocument } = await import("./src/lib/ssrHtml.js");
-        if (!catalogReady) catalogReady = ensureSsrCatalog();
-        await catalogReady;
+        await ensureSsrCatalog();
         return injectPublicDocument(html, url);
       },
     },

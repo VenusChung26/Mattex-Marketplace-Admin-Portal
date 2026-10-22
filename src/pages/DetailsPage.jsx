@@ -13,6 +13,7 @@ import { buyerPurposes, displayUnit, isLeadSpec, lowerDeliveryQty, productImageU
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { bootProduct } from "../lib/bootPage";
+import { staffCertText, staffPrimaryText, staffRemarkText, staffSizeText } from "../lib/editedProductText";
 import { groupOf, useCatalogGroups } from "../lib/catalogGroups";
 import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
@@ -149,8 +150,11 @@ export default function DetailsPage() {
     { label: t("moq"), value: `${product.moq} ${unitLabel}`.trim() },
     unitLabel ? { label: t("salesUnit"), value: unitLabel } : null,
     { label: t("leadTime"), value: leadTime },
-    { label: t("standard"), value: product.standard },
+    { label: t("standard"), value: staffCertText(product) || product.standard },
   ].filter(Boolean);
+  const sizeText = staffSizeText(product);
+  const primaryText = staffPrimaryText(product);
+  const remarkText = staffRemarkText(product);
   const specRows = specificationRows(product)
     .filter((row) => row.kind === "cert" || !isLeadSpec(row.text))
     .map((row) => {
@@ -160,7 +164,6 @@ export default function DetailsPage() {
     });
 
   const purposes = buyerPurposes(product, lang);
-  const hasRemark = Boolean(String(product.remark || "").trim());
 
   async function goToRfq(intent, nextQty = qty) {
     if (orderLock.current || offline) return;
@@ -313,6 +316,18 @@ export default function DetailsPage() {
                 <p className="mt-3 text-sm text-mute leading-relaxed">{description}</p>
               </>
             ) : null}
+            {sizeText ? (
+              <>
+                <h2 className="mt-8 text-sm font-semibold text-ink">{lang === "zh" ? "尺寸／說明" : "Size / description"}</h2>
+                <p className="mt-3 text-sm text-mute leading-relaxed whitespace-pre-line">{sizeText}</p>
+              </>
+            ) : null}
+            {primaryText ? (
+              <>
+                <h2 className="mt-8 text-sm font-semibold text-ink">{lang === "zh" ? "主要規格" : "Primary spec"}</h2>
+                <p className="mt-3 text-sm text-mute leading-relaxed whitespace-pre-line">{primaryText}</p>
+              </>
+            ) : null}
 
             <div className="mt-6 border-y border-line">
               <div className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6">
@@ -408,10 +423,10 @@ export default function DetailsPage() {
               </>
             ) : null}
 
-            {hasRemark ? (
+            {remarkText ? (
               <>
                 <h2 className="mt-8 text-sm font-semibold text-ink">{t("productRemark")}</h2>
-                <p className="mt-3 text-sm text-mute leading-relaxed max-w-prose">{t("provisionalRemark")}</p>
+                <p className="mt-3 text-sm text-mute leading-relaxed max-w-prose whitespace-pre-line">{remarkText}</p>
               </>
             ) : null}
           </div>

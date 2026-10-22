@@ -35,6 +35,11 @@ export async function GET(request) {
   const html = await handleSsr(request);
   return new Response(html, {
     status: 200,
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" },
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "private, no-store",
+      "cdn-cache-control": "no-store",
+      "vercel-cdn-cache-control": "no-store",
+    },
   });
 }

@@ -1,6 +1,7 @@
 import "./ssrNodePolyfill.js";
 import { absAsset, absUrl, siteOrigin, stripLocale, withLocale } from "./locale.js";
 import { OG_HEIGHT, OG_WIDTH, categoryOgPath, isSizedOgImage, ogImagePath } from "./ogImage.js";
+import { staffCertText, staffPrimaryText, staffRemarkText, staffSizeText } from "./editedProductText.js";
 import { buyerPurposes, displayUnit, isLeadSpec, localizeLeadTime, specParts, lowerDeliveryQty } from "./productFields.js";
 import { seoCopy } from "./seoCopy.js";
 import { breadcrumbJsonLd, orgJsonLd, productJsonLd } from "./seoJsonLd.js";
@@ -344,10 +345,6 @@ function buyerPurposeHtml(lang, product) {
     .join("");
 }
 
-function buyerRemarkText(lang) {
-  return lang === "zh" ? "暫定編號，規格以報價確認為準。" : "Provisional number. Specifications are confirmed on the quote.";
-}
-
 function productBlock(lang, product) {
   const href = withLocale(lang, `/details/${product.id}`);
   const categoryHref = withLocale(lang, catalogPathForCategory(product.category));
@@ -378,7 +375,7 @@ function productBlock(lang, product) {
         ${paragraphs(product.certifications)}
         ${specs ? `<ul>${specs}</ul>` : ""}
         ${purposes ? `<ul>${purposes}</ul>` : ""}
-        ${String(product.remark || "").trim() ? paragraphs(buyerRemarkText(lang)) : ""}
+        ${staffRemarkText(product) ? paragraphs(staffRemarkText(product)) : ""}
       </article>`;
 }
 
@@ -445,8 +442,13 @@ function pageContent(page) {
       }</p>
       ${(() => {
         const description = productDescriptionText(product);
-        if (!description) return "";
-        return `<h2>${lang === "zh" ? "描述" : "Description"}</h2>\n${paragraphs(description)}`;
+        const size = staffSizeText(product);
+        const primary = staffPrimaryText(product);
+        return [
+          description ? `<h2>${lang === "zh" ? "描述" : "Description"}</h2>\n${paragraphs(description)}` : "",
+          size ? `<h2>${lang === "zh" ? "尺寸／說明" : "Size / description"}</h2>\n${paragraphs(size)}` : "",
+          primary ? `<h2>${lang === "zh" ? "主要規格" : "Primary spec"}</h2>\n${paragraphs(primary)}` : "",
+        ].filter(Boolean).join("\n");
       })()}
       ${specs ? `<h2>${lang === "zh" ? "規格" : "Specifications"}</h2><ul>${specs}</ul>` : ""}
       <h2>${lang === "zh" ? "訂購" : "Order"}</h2>
@@ -455,7 +457,7 @@ function pageContent(page) {
         <dt>${lang === "zh" ? "最低訂購量" : "Min. order qty"}</dt><dd>${esc(product.moq)} ${esc(displayUnit(product.unit, lang))}</dd>
         ${product.unit ? `<dt>${lang === "zh" ? "單位" : "Unit"}</dt><dd>${esc(displayUnit(product.unit, lang))}</dd>` : ""}
         <dt>${lang === "zh" ? "送貨" : "Delivery"}</dt><dd>${esc(lead)}${/天|日|day|week/i.test(lead) ? "" : lang === "zh" ? " 日" : " days"}</dd>
-        <dt>${lang === "zh" ? "文件列明標準" : "Documented standard"}</dt><dd>${esc(product.standard)}</dd>
+        <dt>${lang === "zh" ? "文件列明標準" : "Documented standard"}</dt><dd>${esc(staffCertText(product) || product.standard || "")}</dd>
       </dl>
       ${deliveryLine}
       ${
@@ -463,7 +465,7 @@ function pageContent(page) {
           ? `<h2>${lang === "zh" ? "用途" : "Purposes"}</h2><ul>${purposes}</ul>`
           : ""
       }
-      ${String(product.remark || "").trim() ? `<h2>${lang === "zh" ? "備註" : "Remark"}</h2>${paragraphs(buyerRemarkText(lang))}` : ""}
+      ${staffRemarkText(product) ? `<h2>${lang === "zh" ? "備註" : "Remark"}</h2>${paragraphs(staffRemarkText(product))}` : ""}
     </article>`;
   }
   if (page.kind === "catalog" && page.category) {
