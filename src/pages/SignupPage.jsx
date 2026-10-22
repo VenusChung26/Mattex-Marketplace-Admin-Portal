@@ -112,12 +112,18 @@ export default function SignupPage() {
     }
     setBusy(true);
     const contact = contactPayload(form);
-    const result = await registerUser({
-      ...form,
-      ...contact,
-      roles: normalizeRoles(form.roles),
-    });
-    setBusy(false);
+    let result;
+    try {
+      result = await registerUser({
+        ...form,
+        ...contact,
+        roles: normalizeRoles(form.roles),
+      });
+    } catch {
+      result = { ok: false, error: "server" };
+    } finally {
+      setBusy(false);
+    }
     if (!result.ok) {
       const fieldMap = {
         email: "email",
