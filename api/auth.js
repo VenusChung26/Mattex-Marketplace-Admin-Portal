@@ -495,12 +495,12 @@ const actions = {
       }
       if (error?.message === "auth_not_configured" && kind === "buyer" && localBuyersEnabled()) {
         const account = readLocalBuyers()[session.email]?.account;
-        if (!account?.enabled) return { cookie: clearCookie(kind), body: { ok: false } };
+        if (!account?.enabled) return { cookie: clearCookie(kind), body: { ok: false, error: "disabled" } };
         return { body: { ok: true, account } };
       }
       throw error;
     }
-    if (!account?.enabled) return { cookie: clearCookie(kind), body: { ok: false } };
+    if (!account?.enabled) return { cookie: clearCookie(kind), body: { ok: false, error: "disabled" } };
     return { body: { ok: true, account } };
   },
 
@@ -510,11 +510,30 @@ const actions = {
   },
 };
 
+/** HttpOnly session cookies are dropped by the browser on http://localhost when they are marked Secure. */
+export function secureSessionCookie(cookie, request) {
+  if (!cookie) return cookie;
+  const forwarded = request?.headers?.get?.("x-forwarded-proto") || "";
+  const proto = forwarded ? forwarded.split(",")[0].trim() : "";
+  let secure = proto === "https";
+  if (!proto) {
+    try {
+      secure = new URL(request?.url || "").protocol === "https:";
+    } catch {
+      secure = Boolean(process.env.VERCEL);
+    }
+  }
+  const bare = String(cookie).replace(/;\s*Secure/gi, "");
+  return secure ? `${bare}; Secure` : bare;
+}
+
 export async function handleAuth(body, request) {
   const action = actions[body?.action];
   if (!action) return { status: 400, body: { ok: false, error: "invalid" } };
   try {
-    return await action(body, request);
+    const result = await action(body, request);
+    if (result?.cookie) result.cookie = secureSessionCookie(result.cookie, request);
+    return result;
   } catch (error) {
     console.error("auth", body?.action, error?.message || error);
     return { status: 500, body: { ok: false, error: error?.message === "auth_not_configured" ? "not_configured" : "server" } };

@@ -361,7 +361,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   if (env.BLOB_READ_WRITE_TOKEN) process.env.BLOB_READ_WRITE_TOKEN = env.BLOB_READ_WRITE_TOKEN;
   for (const [key, value] of Object.entries(env)) {
-    if (key.startsWith("TMS_") || key.startsWith("RESEND_") || key.startsWith("RFQ_") || key === "SUPABASE_SERVICE_ROLE_KEY" || key === "SESSION_SECRET" || key === "OPENAI_API_KEY" || key === "SPEC_MATCH_API_KEY" || key === "LOCAL_STAFF_EMAIL" || key === "LOCAL_STAFF_PASSWORD") {
+    if (key.startsWith("TMS_") || key.startsWith("RESEND_") || key.startsWith("RFQ_") || key === "SUPABASE_URL" || key === "SUPABASE_PUBLISHABLE_KEY" || key === "SUPABASE_SERVICE_ROLE_KEY" || key === "SESSION_SECRET" || key === "OPENAI_API_KEY" || key === "SPEC_MATCH_API_KEY" || key === "LOCAL_STAFF_EMAIL" || key === "LOCAL_STAFF_PASSWORD") {
       process.env[key] = value;
     }
   }

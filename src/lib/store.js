@@ -3246,7 +3246,11 @@ function setSessionUser(user) {
   } catch {
     /* a full browser store must not leave the sign-in button stuck */
   }
-  if (!prevEmail && nextEmail) adoptGuestSpecMatch(nextEmail);
+  try {
+    if (!prevEmail && nextEmail) adoptGuestSpecMatch(nextEmail);
+  } catch {
+    /* the spec draft can be larger than the browser allows; sign-in still stands */
+  }
   emitStoreChange();
 }
 
@@ -3491,9 +3495,14 @@ async function loginUser({ email, password }) {
   map[nextEmail] = account;
   setAccountsMap(map);
   authModalOpen = false;
-  setSessionUser(publicUserFromAccount(account));
-  mergeGuestCartIntoUser();
-  return { ok: true, user: publicUserFromAccount(account) };
+  const user = publicUserFromAccount(account);
+  try {
+    setSessionUser(user);
+    mergeGuestCartIntoUser();
+  } catch {
+    /* the server cookie is already set; local bookkeeping must not show a login error */
+  }
+  return { ok: true, user };
 }
 
 async function verifyBuyerSession() {
@@ -3502,6 +3511,13 @@ async function verifyBuyerSession() {
   const result = await authApi("session", { kind: "buyer" });
   if (result.error === "network") return true;
   if (result.ok && normalizeEmail(result.account?.email) === normalizeEmail(local.email)) return true;
+  if (result.error === "disabled" || result.error === "rejected") {
+    localStorage.removeItem(AUTH_KEY);
+    emitStoreChange();
+    return false;
+  }
+  // A missing cookie must not wipe a sign-in the server just accepted.
+  if (!result.ok && !result.error) return true;
   localStorage.removeItem(AUTH_KEY);
   emitStoreChange();
   return false;
@@ -7862,17 +7878,47 @@ function raiseServerAlerts(entries, knownIds, map) {
   alertBaseline = newest;
 }
 
+function adoptPortalRfqs(entries, previousIds) {
+  const nextMap = {};
+  for (const entry of entries || []) {
+    const row = rfqFromServerEntry(entry);
+    if (!row?.id) continue;
+    serverHeldIds.add(row.id);
+    const key = normalizeEmail(row.buyerEmail) || GUEST_KEY;
+    (nextMap[key] ||= []).push(row);
+  }
+  if (!Object.keys(nextMap).length) return false;
+  memoryRfqMap = nextMap;
+  writeLocalOnly(RFQS_KEY, {});
+  raiseServerAlerts(entries, previousIds, nextMap);
+  emitStoreChange();
+  return true;
+}
+
 async function syncServerRfqs() {
-  if (typeof window === "undefined" || serverSyncBusy || serverWritesInFlight > 0 || draftTimers.size > 0) return;
+  if (typeof window === "undefined" || serverSyncBusy) return;
   const portal = isPortalSurface();
   if (portal ? !getStaffSession()?.email : !getUser()?.email) return;
+  const inboxEmpty = portal && getAllRfqs().length === 0;
+  if (!inboxEmpty && (serverWritesInFlight > 0 || draftTimers.size > 0)) return;
   serverSyncBusy = true;
   try {
     const map = getRfqsMap();
     const known = [];
     Object.values(map || {}).forEach((list) => (Array.isArray(list) ? list : []).forEach((rfq) => rfq?.id && known.push(rfq.id)));
     const res = await syncRfqsFromServer({ as: portal ? "staff" : "buyer", known });
-    if (!res.ok || serverWritesInFlight > 0 || draftTimers.size > 0) return;
+    if (!res.ok || (!inboxEmpty && (serverWritesInFlight > 0 || draftTimers.size > 0))) return;
+    const adopted = portal && adoptPortalRfqs(res.rfqs, known);
+    if (adopted) {
+      for (const entry of res.rfqs) {
+        const id = entry?.owned?.id;
+        if (!id || entry.owned.draft || draftMigrated.has(id)) continue;
+        draftMigrated.add(id);
+        const local = getAllRfqs().find((row) => row.id === id);
+        if ((local?.lines || []).some((line) => line.noOffer || Number(line.quotedUnitPrice) > 0)) queueQuoteDraft(id);
+      }
+      return;
+    }
     const latest = getRfqsMap();
     let changed = false;
     for (const entry of res.rfqs) {
@@ -7890,7 +7936,7 @@ async function syncServerRfqs() {
         }
       }
       const current = foundIdx >= 0 ? latest[foundKey][foundIdx] : null;
-      if (!current && !entry.payload) continue;
+      if (!current && !entry.payload && !(Array.isArray(entry.lines) && entry.lines.length)) continue;
       const next = current ? mergeOwned(current, entry.owned) : rfqFromServerEntry(entry);
       const nextKey = normalizeEmail(next.buyerEmail) || GUEST_KEY;
       if (current && nextKey === foundKey && JSON.stringify(next) === JSON.stringify(current)) continue;

@@ -35,14 +35,53 @@ export function createSupabaseStore(client, { now = () => Date.now() } = {}) {
     return { ok: true, record: data };
   }
 
+  function legacyRecord(payload) {
+    if (!payload || typeof payload !== "object" || !payload.id) return null;
+    const lines = Array.isArray(payload.lines) ? payload.lines : [];
+    return {
+      ...payload,
+      id: String(payload.id),
+      revision: Number(payload.revision) || 1,
+      lines,
+      payload: { ...payload, lines },
+      reviewStatus: payload.reviewStatus || payload.status || "received",
+      createdAt: payload.createdAt || payload.submittedAt || "",
+    };
+  }
+
+  async function fetchLegacy(id) {
+    const { data, error } = await client.from("rfqs").select("payload").eq("id", String(id)).maybeSingle();
+    if (error) throw fail(error);
+    return legacyRecord(data?.payload);
+  }
+
+  async function saveLegacy(record) {
+    const payload = { ...(record.payload || {}) };
+    for (const [key, value] of Object.entries(record)) {
+      if (key !== "payload") payload[key] = value;
+    }
+    const { error } = await client.from("rfqs").update({
+      payload,
+      updated_at: new Date(now()).toISOString(),
+    }).eq("id", record.id);
+    if (error) throw fail(error);
+    return legacyRecord(payload);
+  }
+
   async function update(kind, id, expectedRevision, change, actor) {
     if (!PREFIXES[kind]) return { error: "kind" };
-    const current = await fetchRow(kind, id);
+    let current = await fetchRow(kind, id);
+    let legacy = false;
+    if (!current && kind === "rfq" && actor?.kind === "staff") {
+      current = await fetchLegacy(id);
+      legacy = Boolean(current);
+    }
     if (!current || !canSee(current, actor)) return { error: "not_found" };
     if (Number(expectedRevision) !== current.revision) return { error: "conflict", current };
     const result = await change(current);
     if (result?.error) return { error: result.error, current };
-    const next = { ...current, ...result, id };
+    const next = { ...current, ...result, id, revision: legacy ? current.revision + 1 : current.revision };
+    if (legacy) return { ok: true, record: await saveLegacy(next) };
     const { data, error } = await client.rpc("update_doc", {
       p_kind: kind,
       p_id: id,
@@ -58,7 +97,12 @@ export function createSupabaseStore(client, { now = () => Date.now() } = {}) {
   async function get(kind, id, actor) {
     if (!PREFIXES[kind]) return null;
     const record = await fetchRow(kind, id);
-    return record && canSee(record, actor) ? record : null;
+    if (record && canSee(record, actor)) return record;
+    if (kind === "rfq" && actor?.kind === "staff") {
+      const legacy = await fetchLegacy(id);
+      return legacy && canSee(legacy, actor) ? legacy : null;
+    }
+    return null;
   }
 
   async function list(kind, actor) {
@@ -75,6 +119,22 @@ export function createSupabaseStore(client, { now = () => Date.now() } = {}) {
       if ((data || []).length < PAGE) break;
     }
     return rows.filter((record) => canSee(record, actor));
+  }
+
+  /** Sales inbox before rfq_records: one row per RFQ in public.rfqs. Staff only; the caller checks the actor. */
+  async function listLegacy() {
+    const rows = [];
+    for (let from = 0; from < MAX_ROWS; from += PAGE) {
+      const { data, error } = await client
+        .from("rfqs")
+        .select("payload")
+        .order("updated_at", { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (error) throw fail(error);
+      rows.push(...(data || []).map((row) => row.payload));
+      if ((data || []).length < PAGE) break;
+    }
+    return rows;
   }
 
   async function countPosByVisitor(visitor, sinceMs) {
@@ -94,5 +154,5 @@ export function createSupabaseStore(client, { now = () => Date.now() } = {}) {
     return data || null;
   }
 
-  return { create, update, get, list, countPosByVisitor, findRfqBySnapshot };
+  return { create, update, get, list, listLegacy, countPosByVisitor, findRfqBySnapshot };
 }

@@ -13,6 +13,8 @@ const execFileAsync = promisify(execFile);
 
 const COOKIE = "mm_spec_uses";
 const DAILY_LIMIT = 3;
+const SPEC_FETCH_MAX = 20 * 1024 * 1024;
+const SPEC_BLOB_HOST = /(^|\.)blob\.vercel-storage\.com$/i;
 const SNAPSHOT_FILE = path.join(process.cwd(), "data", "catalog-snapshot.json");
 const SEED_FILE = path.join(process.cwd(), "public", "catalog.json");
 
@@ -318,14 +320,13 @@ function rowsFromBuyerLines(items, index) {
   }));
 }
 
-function buyerItems(text, pictured) {
+function buyerItems(text) {
   const structured = parseBuyerDocument(text);
   if (structured.length) return structured;
-  if (pictured) return [];
   return extractBuyerLines(text);
 }
 
-function localRows(body, index, text, pictured) {
+function localRows(body, index, text) {
   const mime = String(body?.mime || "").toLowerCase();
   const name = String(body?.name || "").toLowerCase();
   const base64 = String(body?.base64 || "");
@@ -334,15 +335,14 @@ function localRows(body, index, text, pictured) {
     return { unreadable: items.length === 0, rows: rowsFromBuyerLines(items, index) };
   }
   if (!text) return { unreadable: true, rows: [] };
-  if (!pictured && !readableEnough(text) && !parseBuyerDocument(text).length) return { unreadable: true, rows: [] };
-  const items = buyerItems(text, pictured);
+  const items = buyerItems(text);
   return { unreadable: items.length === 0, rows: rowsFromBuyerLines(items, index) };
 }
 
 function isPicture(body) {
   const mime = String(body?.mime || "").toLowerCase();
   const name = String(body?.name || "").toLowerCase();
-  return mime.startsWith("image/") || mime.includes("pdf") || name.endsWith(".pdf") || /\.(png|jpe?g|webp|gif)$/.test(name);
+  return mime.startsWith("image/") || mime.includes("pdf") || name.endsWith(".pdf") || /\.(png|jpe?g|webp|gif|heic|heif)$/.test(name);
 }
 
 async function visionBinary() {
@@ -359,11 +359,22 @@ async function visionBinary() {
   return bin;
 }
 
+function specFileExt(body) {
+  const name = String(body?.name || "").toLowerCase();
+  const mime = String(body?.mime || "").toLowerCase();
+  if (name.endsWith(".pdf") || mime.includes("pdf")) return ".pdf";
+  if (name.endsWith(".png") || mime === "image/png") return ".png";
+  if (name.endsWith(".webp") || mime === "image/webp") return ".webp";
+  if (name.endsWith(".gif") || mime === "image/gif") return ".gif";
+  if (name.endsWith(".heic") || mime.includes("heic")) return ".heic";
+  if (name.endsWith(".heif") || mime.includes("heif")) return ".heif";
+  return ".jpg";
+}
+
 async function visionText(body) {
   const base64 = String(body?.base64 || "");
   if (!base64 || process.platform !== "darwin") return "";
-  const name = String(body?.name || "").toLowerCase();
-  const ext = name.endsWith(".pdf") ? ".pdf" : name.endsWith(".png") ? ".png" : name.endsWith(".webp") ? ".webp" : name.endsWith(".gif") ? ".gif" : ".jpg";
+  const ext = specFileExt(body);
   let dir = "";
   try {
     const bin = await visionBinary();
@@ -380,13 +391,116 @@ async function visionText(body) {
   }
 }
 
+export function specBlobUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value || ""));
+  } catch {
+    return "";
+  }
+  if (url.protocol !== "https:" || url.username || url.password) return "";
+  if (!SPEC_BLOB_HOST.test(url.hostname)) return "";
+  return url.href;
+}
+
+/** Large spec files arrive as a Blob URL. Only our own store is fetched, then the bytes follow the same readers as a small upload. */
+export async function loadSpecUpload(body, fetchImpl = globalThis.fetch) {
+  const next = { ...(body || {}) };
+  if (String(next.base64 || "") || String(next.text || "")) return next;
+  const href = specBlobUrl(next.url);
+  if (!href) return next;
+  let res;
+  try {
+    res = await fetchImpl(href, { redirect: "error" });
+  } catch {
+    return next;
+  }
+  if (!res?.ok) return next;
+  const declared = Number(res.headers?.get?.("content-length") || 0);
+  if (declared > SPEC_FETCH_MAX) return next;
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (!buf.length || buf.length > SPEC_FETCH_MAX) return next;
+  next.base64 = buf.toString("base64");
+  const mime = String(next.mime || "").toLowerCase();
+  if (mime.startsWith("image/") && !String(next.dataUrl || "").startsWith("data:image/")) {
+    const dataUrl = `data:${mime};base64,${next.base64}`;
+    if (dataUrl.length <= 2_000_000) next.dataUrl = dataUrl;
+  }
+  return next;
+}
+
+function zipEntries(buffer) {
+  const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i -= 1) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return new Map();
+  const count = buf.readUInt16LE(eocd + 10);
+  let pos = buf.readUInt32LE(eocd + 16);
+  const files = new Map();
+  for (let n = 0; n < count; n += 1) {
+    if (pos + 46 > buf.length || buf.readUInt32LE(pos) !== 0x02014b50) break;
+    const method = buf.readUInt16LE(pos + 10);
+    const compSize = buf.readUInt32LE(pos + 20);
+    const nameLen = buf.readUInt16LE(pos + 28);
+    const extraLen = buf.readUInt16LE(pos + 30);
+    const commentLen = buf.readUInt16LE(pos + 32);
+    const localOff = buf.readUInt32LE(pos + 42);
+    const name = buf.slice(pos + 46, pos + 46 + nameLen).toString("utf8");
+    if (localOff + 30 > buf.length) break;
+    const localNameLen = buf.readUInt16LE(localOff + 26);
+    const localExtraLen = buf.readUInt16LE(localOff + 28);
+    const dataStart = localOff + 30 + localNameLen + localExtraLen;
+    const comp = buf.slice(dataStart, dataStart + compSize);
+    let data = comp;
+    if (method === 8) {
+      try {
+        data = inflateSync(comp);
+      } catch {
+        data = Buffer.alloc(0);
+      }
+    } else if (method !== 0) data = Buffer.alloc(0);
+    files.set(name, data);
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+  return files;
+}
+
+function docxText(base64) {
+  try {
+    const xml = zipEntries(Buffer.from(base64, "base64")).get("word/document.xml");
+    if (!xml?.length) return "";
+    return xml
+      .toString("utf8")
+      .replace(/<w:p\b[^>]*>/g, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/\n{2,}/g, "\n")
+      .trim()
+      .slice(0, 20000);
+  } catch {
+    return "";
+  }
+}
+
+function readableText(text) {
+  return parseBuyerDocument(text).length > 0 || extractBuyerLines(text).length > 0;
+}
+
 async function readDocument(body) {
   const plain = sourceText(body);
-  if (parseBuyerDocument(plain).length) return { text: plain, pictured: false };
+  if (readableText(plain)) return { text: plain, pictured: false };
   if (!isPicture(body)) return { text: plain, pictured: false };
   const ocr = await visionText(body);
-  if (parseBuyerDocument(ocr).length) return { text: ocr, pictured: true };
-  if (plain && extractBuyerLines(plain).length) return { text: plain, pictured: false };
+  if (readableText(ocr)) return { text: ocr, pictured: true };
+  if (plain && readableText(plain)) return { text: plain, pictured: false };
   return { text: "", pictured: true };
 }
 
@@ -396,6 +510,9 @@ function sourceText(body) {
   const base64 = String(body?.base64 || "");
   if (name.endsWith(".xlsx") || name.endsWith(".xls") || mime.includes("sheet") || mime.includes("excel")) {
     return sheetText(base64) || String(body?.text || "");
+  }
+  if (name.endsWith(".docx") || mime.includes("wordprocessingml")) {
+    return docxText(base64) || String(body?.text || "");
   }
   if (body?.text) return String(body.text).slice(0, 20000);
   if (base64 && (name.endsWith(".pdf") || mime.includes("pdf"))) return pdfPlainText(base64);
@@ -547,7 +664,8 @@ export async function handleSpecMatchStatus(request) {
   };
 }
 
-export async function handleSpecMatch(body, request) {
+export async function handleSpecMatch(input, request) {
+  const body = await loadSpecUpload(input);
   const member = readSession(request, "buyer") || readSession(request, "staff");
   const guest = guestState(request);
   if (!member && guest.count >= DAILY_LIMIT) {
