@@ -76,7 +76,10 @@ export default function CategorySideNav({
       className="hidden w-full min-w-0 max-w-full flex-col overflow-hidden lg:sticky lg:flex lg:max-h-[var(--cat-nav-max)]"
       style={{ top: offsetTop, "--cat-nav-max": maxHeight }}
     >
-      <p className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.14em] text-mute mb-2">{t("categories")}</p>
+      <p className="mb-2 flex shrink-0 items-baseline gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-mute">
+        <span>{t("categories")}</span>
+        <span className="tabular-nums">{categories.length}</span>
+      </p>
       <ul ref={listRef} className="min-h-0 w-full min-w-0 flex-1 overflow-y-auto overscroll-contain border border-line bg-white divide-y divide-line">
         <li className={`flex items-stretch ${allActive ? "bg-brand-50" : "hover:bg-paper"}`}>
           {allActive ? (

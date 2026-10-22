@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import GoogleAnalytics from "./components/GoogleAnalytics";
 import ScrollToTop from "./components/ScrollToTop";
@@ -112,15 +112,18 @@ function AdminHostRedirect() {
 
 function BootGate() {
   const { catalogBootReady } = useStore();
+  const { pathname } = useLocation();
+  const promoFirst = /\/promo\/?$/.test(pathname);
+  const showPage = catalogBootReady || promoFirst;
   useEffect(() => {
-    if (!catalogBootReady) return undefined;
+    if (!showPage) return undefined;
     const boot = document.querySelector("[data-boot='mattex']");
     if (!boot) return undefined;
     const frame = requestAnimationFrame(() => {
       boot.hidden = true;
     });
     return () => cancelAnimationFrame(frame);
-  }, [catalogBootReady]);
+  }, [showPage]);
   return null;
 }
 

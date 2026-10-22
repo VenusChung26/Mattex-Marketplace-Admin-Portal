@@ -27,7 +27,7 @@ export function formatUnitPrice(amount, lang) {
   const n = finiteNumber(amount);
   if (n == null || n <= 0) return requestPriceLabel(lang);
   return (
-    "$" +
+    "HKD $" +
     n.toLocaleString("en-US", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,

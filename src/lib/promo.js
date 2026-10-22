@@ -53,10 +53,36 @@ export function landingBanners(promo) {
 }
 
 let pending = null;
+let cachedPromo = null;
+const warmedImages = new Set();
+
+function warmPromoImages(promo) {
+  if (!promo || typeof Image === "undefined") return;
+  const urls = [OFFER_SECTION_HERO];
+  promoBanners(promo).forEach((banner) => {
+    if (banner.src) urls.push(banner.src);
+    if (banner.heroSrc) urls.push(banner.heroSrc);
+  });
+  urls.forEach((url) => {
+    if (!url || warmedImages.has(url)) return;
+    warmedImages.add(url);
+    const img = new Image();
+    img.decoding = "async";
+    img.src = url;
+  });
+}
 
 export function loadPromo() {
+  if (cachedPromo) return Promise.resolve(cachedPromo);
   if (!pending) {
-    pending = getPromo().catch(() => null)
+    pending = getPromo()
+      .catch(() => null)
+      .then((data) => {
+        cachedPromo = data;
+        if (data) setOfferPromo(data);
+        warmPromoImages(data);
+        return data;
+      })
       .finally(() => {
         pending = null;
       });
@@ -64,14 +90,15 @@ export function loadPromo() {
   return pending;
 }
 
+if (typeof window !== "undefined") loadPromo();
+
 export function usePromo() {
-  const [promo, setPromo] = useState(null);
-  const [ready, setReady] = useState(false);
+  const [promo, setPromo] = useState(cachedPromo);
+  const [ready, setReady] = useState(cachedPromo != null);
   useEffect(() => {
     let cancel = false;
     loadPromo().then((data) => {
       if (cancel) return;
-      setOfferPromo(data);
       setPromo(data);
       setReady(true);
     });

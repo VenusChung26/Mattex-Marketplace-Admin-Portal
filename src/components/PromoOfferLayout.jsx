@@ -38,7 +38,13 @@ function PosterView({ src, name }) {
 
   return (
     <div ref={boxRef} className="w-full" style={{ maxWidth: maxPx }}>
-      <img src={src} alt={name} className="block h-auto w-full rounded-2xl border border-line bg-white" />
+      <img
+        src={src}
+        alt={name}
+        fetchPriority="high"
+        decoding="async"
+        className="block h-auto w-full rounded-2xl border border-line bg-white"
+      />
       <div className="mt-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">
           <button
@@ -104,11 +110,7 @@ export default function PromoOfferLayout({
     <div>
       <section className="relative overflow-hidden bg-brand-800 text-white">
         {hero ? (
-          <div
-            className="absolute inset-0 bg-cover bg-center"
-            style={{ backgroundImage: `url("${hero}")` }}
-            aria-hidden
-          />
+          <img src={hero} alt="" fetchPriority="high" decoding="async" className="absolute inset-0 h-full w-full object-cover" />
         ) : null}
         <div
           className="absolute inset-0 bg-[linear-gradient(90deg,#143528_0%,#143528_46%,rgba(20,53,40,0.2)_82%)]"

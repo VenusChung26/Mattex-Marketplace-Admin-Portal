@@ -21,7 +21,11 @@ function requestPath(request) {
 }
 
 export async function handleSsr(request) {
-  await ensureCatalog();
+  try {
+    await ensureSsrCatalog();
+  } catch {
+    /* a catalog seed problem still returns the page */
+  }
   const template = await readTemplate();
   const html = injectPublicDocument(template, requestPath(request));
   return html;

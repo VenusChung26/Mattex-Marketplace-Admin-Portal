@@ -1,6 +1,7 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import ProductCard from "../components/ProductCard";
+import ProductCard, { ProductListRow } from "../components/ProductCard";
+import CatalogViewToggle from "../components/CatalogViewToggle";
 import { ProductSearchBox } from "../components/SearchSuggestions";
 import SupplierLogo from "../components/SupplierLogo";
 import SiteFooter from "../components/SiteFooter";
@@ -24,6 +25,16 @@ import {
   searchSupplierProducts,
 } from "../lib/store";
 
+const CATALOG_VIEW_KEY = "subbie_catalog_view";
+
+function readCatalogView() {
+  try {
+    return sessionStorage.getItem(CATALOG_VIEW_KEY) === "list" ? "list" : "card";
+  } catch {
+    return "card";
+  }
+}
+
 export default function SupplierPage() {
   const { slug } = useParams();
   const navigate = useNavigate();
@@ -33,24 +44,26 @@ export default function SupplierPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [priceFilter, setPriceFilter] = useState("all");
-  const [stockFilter, setStockFilter] = useState("all");
   const [greenOnly, setGreenOnly] = useState(false);
+  const [catalogView, setCatalogView] = useState(readCatalogView);
   const [toast, setToast] = useState(null);
   const [catalogShown, setCatalogShown] = useState(24);
+  const catNavRef = useRef(null);
+  const [navHeight, setNavHeight] = useState(64);
+  const [catBarHeight, setCatBarHeight] = useState(0);
+  const [wide, setWide] = useState(() => typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches);
 
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     setSearchQuery("");
     setSelectedCategory("");
     setPriceFilter("all");
-    setStockFilter("all");
     setGreenOnly(false);
     setCatalogShown(24);
   }, [slug]);
 
   useEffect(() => {
     setCatalogShown(24);
-  }, [searchQuery, selectedCategory, priceFilter, stockFilter, greenOnly]);
+  }, [searchQuery, selectedCategory, priceFilter, greenOnly]);
 
   const top = useMemo(
     () => collapseCatalog(supplier ? getTopProductsForSupplier(supplier.slug) : [], catalogGroupIndex()),
@@ -78,20 +91,56 @@ export default function SupplierPage() {
       ? searched.filter((p) => p.category === selectedCategory)
       : searched;
     if (greenOnly) list = list.filter((p) => p.green);
+    if (priceFilter === "priced") list = list.filter((p) => getEffectivePrice(p).displayPrice != null);
     if (priceFilter === "unpriced") list = list.filter((p) => getEffectivePrice(p).displayPrice == null);
     if (priceFilter === "hot") list = list.filter((p) => isHitProduct(p));
-    if (stockFilter !== "all") list = list.filter((p) => p.stockStatus === stockFilter);
     return collapseCatalog(list, catalogGroupIndex());
-  }, [searched, selectedCategory, greenOnly, priceFilter, stockFilter, groupEpoch]);
+  }, [searched, selectedCategory, greenOnly, priceFilter, groupEpoch]);
+  const hasSupplierFilters =
+    Boolean(searchQuery.trim()) || Boolean(selectedCategory) || priceFilter !== "all" || greenOnly;
+
+  useEffect(() => {
+    const read = () => {
+      const nav = document.getElementById("siteNav");
+      if (nav) setNavHeight(Math.round(nav.getBoundingClientRect().height));
+      if (catNavRef.current) setCatBarHeight(Math.round(catNavRef.current.getBoundingClientRect().height));
+      setWide(window.matchMedia("(min-width: 1024px)").matches);
+    };
+    read();
+    window.addEventListener("resize", read);
+    return () => window.removeEventListener("resize", read);
+  }, [supplier?.slug, categoryCounts.length]);
 
   function openProduct(product) {
     if (!product?.id) return;
     navigate(withLocale(lang, `/details/${product.id}`));
   }
 
+  function scrollToSupplierResults() {
+    jumpToId("supplier-results", { animate: true });
+  }
+
   function pickCategory(name) {
     setSelectedCategory(name);
-    jumpToId("supplier-products");
+    scrollToSupplierResults();
+  }
+
+  function clearSupplierFilters() {
+    setSearchQuery("");
+    setSelectedCategory("");
+    setPriceFilter("all");
+    setGreenOnly(false);
+    scrollToSupplierResults();
+  }
+
+  function setCatalogViewMode(next) {
+    const view = next === "list" ? "list" : "card";
+    setCatalogView(view);
+    try {
+      sessionStorage.setItem(CATALOG_VIEW_KEY, view);
+    } catch {
+      /* ignore */
+    }
   }
 
   if (!supplier) {
@@ -220,78 +269,127 @@ export default function SupplierPage() {
               </h2>
               <p className="text-sm text-mute mt-2">{t("supplierSearchHint")}</p>
             </div>
-            <p className="text-sm text-mute">
-              {products.length === 1
-                ? t("productLabelOne")
-                : t("productsLabel", { n: products.length })}
-            </p>
           </div>
 
-          <div className="lg:grid lg:grid-cols-[15.5rem_minmax(0,1fr)] lg:gap-8 lg:items-start">
+          <div className="lg:grid lg:grid-cols-[15.5rem_minmax(0,1fr)] lg:gap-8 lg:items-stretch">
             <SupplierCategoryMenu
+              navRef={catNavRef}
               t={t}
               total={catalog.length}
               counts={categoryCounts}
               selected={selectedCategory}
-              onSelect={setSelectedCategory}
+              onSelect={(name) => {
+                setSelectedCategory(name);
+                scrollToSupplierResults();
+              }}
+              offsetTop={navHeight}
             />
 
-            <div className="min-w-0 mt-6 lg:mt-0">
-              <div className="flex flex-col sm:flex-row sm:items-stretch gap-3 mb-6">
-                <label className="relative block min-w-0 flex-1">
-                  <span className="sr-only">{t("catalog")}</span>
-                  <ProductSearchBox
-                    value={searchQuery}
-                    onValue={setSearchQuery}
-                    onTerm={(term) => {
-                      setSearchQuery(term);
-                      jumpToId("supplier-products");
-                    }}
-                    onProduct={openProduct}
-                    onCategory={pickCategory}
-                    products={catalog}
-                    browseCategories={browseCategories}
-                    inputClassName="field-input w-full"
+            <div className="min-w-0 mt-4 lg:mt-0">
+              <div
+                id="supplier-toolbar"
+                className="sticky z-20 -mx-1 bg-paper px-1 pb-4"
+                style={{ top: Math.max((wide ? navHeight : navHeight + catBarHeight) - 1, 0) }}
+              >
+                <div className="border border-line bg-white p-3 sm:p-3.5">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <label className="relative block min-w-[min(100%,16rem)] flex-1 border border-line bg-white">
+                    <span className="sr-only">{t("catalog")}</span>
+                    <ProductSearchBox
+                      id="supplier-search"
+                      value={searchQuery}
+                      onValue={setSearchQuery}
+                      onTerm={(term) => {
+                        setSearchQuery(term);
+                        jumpToId("supplier-products");
+                      }}
+                      onProduct={openProduct}
+                      onCategory={pickCategory}
+                      products={catalog}
+                      browseCategories={browseCategories}
+                      placeholder={t("searchPlaceholder")}
+                      ariaLabel={t("catalog")}
+                      className="min-w-0"
+                      inputClassName="field-input w-full !rounded-none !border-0 !shadow-none"
+                    />
+                  </label>
+                  <CatalogViewToggle
+                    value={catalogView}
+                    onChange={setCatalogViewMode}
+                    tone="light"
+                    compact
                   />
-                </label>
-                <label className="relative sm:w-[11rem] shrink-0">
-                  <span className="sr-only">{t("stockStatus")}</span>
-                  <select
-                    value={stockFilter}
-                    onChange={(e) => setStockFilter(e.target.value)}
-                    className="field-input"
+                </div>
+                <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                  {[
+                    ["all", t("allProducts")],
+                    ["priced", t("priceFilterPriced")],
+                    ["unpriced", t("priceFilterUnpriced")],
+                  ].map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => {
+                        setPriceFilter(id);
+                        scrollToSupplierResults();
+                      }}
+                      className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border ${
+                        priceFilter === id
+                          ? "bg-brand-50 text-brand-800 border-brand-600/35"
+                          : "bg-white border-line text-mute hover:border-brand-600/50 hover:text-brand-800"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <span className="mx-1 hidden h-4 w-px bg-line sm:inline-block" aria-hidden />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGreenOnly((prev) => !prev);
+                      scrollToSupplierResults();
+                    }}
+                    aria-pressed={greenOnly}
+                    className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border ${
+                      greenOnly
+                        ? "bg-brand-50 text-brand-800 border-brand-600/35"
+                        : "bg-white border-line text-mute hover:border-brand-600/50 hover:text-brand-800"
+                    }`}
                   >
-                    <option value="all">{t("filterAllStock")}</option>
-                    <option value="in_stock">{t("stockInStock")}</option>
-                    <option value="limited">{t("stockLimited")}</option>
-                    <option value="made_to_order">{t("stockMadeToOrder")}</option>
-                    <option value="out_of_stock">{t("stockOutOfStock")}</option>
-                  </select>
-                </label>
-                <label className="relative sm:w-[10.5rem] shrink-0">
-                  <span className="sr-only">{t("priceFilterAll")}</span>
-                  <select
-                    value={priceFilter}
-                    onChange={(e) => setPriceFilter(e.target.value)}
-                    className="field-input"
+                    {t("filterGreen")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPriceFilter((prev) => (prev === "hot" ? "all" : "hot"));
+                      scrollToSupplierResults();
+                    }}
+                    aria-pressed={priceFilter === "hot"}
+                    className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border ${
+                      priceFilter === "hot"
+                        ? "bg-brand-50 text-brand-800 border-brand-600/35"
+                        : "bg-white border-line text-mute hover:border-brand-600/50 hover:text-brand-800"
+                    }`}
                   >
-                    <option value="all">{t("priceFilterAll")}</option>
-                    <option value="unpriced">{t("priceFilterUnpriced")}</option>
-                    <option value="hot">{t("priceFilterHot")}</option>
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setGreenOnly((v) => !v)}
-                  aria-pressed={greenOnly}
-                  className={`shrink-0 self-stretch px-4 text-sm font-semibold whitespace-nowrap border transition-colors ${
-                    greenOnly
-                      ? "bg-brand-600 text-white border-brand-600"
-                      : "bg-white text-brand-800 border-line hover:border-brand-600/50"
-                  }`}
-                >
-                  {t("filterGreen")}
-                </button>
+                    {t("priceFilterHot")}
+                  </button>
+                </div>
+                </div>
+              </div>
+
+              <div id="supplier-results" className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h3 className="font-display text-2xl font-semibold text-brand-800">
+                  {products.length === 1 ? t("productLabelOne") : t("productsLabel", { n: products.length })}
+                </h3>
+                {hasSupplierFilters ? (
+                  <button
+                    type="button"
+                    onClick={clearSupplierFilters}
+                    className="text-sm font-semibold text-brand-600 hover:text-brand-700"
+                  >
+                    {t("clearAll")}
+                  </button>
+                ) : null}
               </div>
 
               {products.length === 0 ? (
@@ -301,13 +399,7 @@ export default function SupplierPage() {
                   <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
                     <button
                       type="button"
-                      onClick={() => {
-                        setSearchQuery("");
-                        setSelectedCategory("");
-                        setPriceFilter("all");
-                        setStockFilter("all");
-                        setGreenOnly(false);
-                      }}
+                      onClick={clearSupplierFilters}
                       className="btn-soft !px-5"
                     >
                       {t("clearFilters")}
@@ -319,16 +411,26 @@ export default function SupplierPage() {
                 </div>
               ) : (
                 <>
-                  <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {products.slice(0, catalogShown).map((entry) => (
-                      <ProductCard
-                        key={entry.product.id}
-                        product={entry.product}
-                        grouped={entry.grouped}
-                        title={entry.groupName}
-                        onAdd={handleAdd}
-                      />
-                    ))}
+                  <div className={catalogView === "list" ? "min-w-0 space-y-4" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}>
+                    {products.slice(0, catalogShown).map((entry) =>
+                      catalogView === "list" ? (
+                        <ProductListRow
+                          key={entry.product.id}
+                          product={entry.product}
+                          grouped={entry.grouped}
+                          title={entry.groupName}
+                          onAdd={handleAdd}
+                        />
+                      ) : (
+                        <ProductCard
+                          key={entry.product.id}
+                          product={entry.product}
+                          grouped={entry.grouped}
+                          title={entry.groupName}
+                          onAdd={handleAdd}
+                        />
+                      )
+                    )}
                   </div>
                   {catalogShown < products.length ? (
                     <div className="mt-6 flex justify-center">
@@ -355,43 +457,38 @@ export default function SupplierPage() {
   );
 }
 
-function SupplierCategoryMenu({ t, total, counts, selected, onSelect }) {
+function SupplierCategoryMenu({ navRef, t, total, counts, selected, onSelect, offsetTop = 64 }) {
   const items = [{ name: "", label: t("allProducts"), count: total }, ...counts.map(([name, count]) => ({
     name,
     label: name,
     count,
   }))];
+  const maxHeight = `calc(100dvh - ${offsetTop}px - 12px)`;
 
   return (
     <nav
+      ref={navRef}
       aria-label={t("categories")}
-      className="lg:sticky lg:top-24 border border-line rounded-xl bg-white p-3 sm:p-4"
+      className="sticky z-20 flex w-full min-w-0 flex-col bg-paper lg:max-h-[var(--cat-nav-max)] lg:overflow-hidden"
+      style={{ top: Math.max(offsetTop - 1, 0), "--cat-nav-max": maxHeight }}
     >
-      <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-mute">
-        {t("categories")}
+      <p className="mb-2 flex shrink-0 items-baseline gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-mute">
+        <span>{t("categories")}</span>
+        <span className="tabular-nums">{counts.length}</span>
       </p>
-      <ul className="mt-3 flex max-w-full min-w-0 gap-2 overflow-x-auto overscroll-x-contain lg:block lg:overflow-visible lg:space-y-1">
+      <ul className="flex max-w-full min-w-0 gap-2 overflow-x-auto overscroll-x-contain border border-line bg-white lg:block lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
         {items.map((item) => {
           const active = selected === item.name;
           return (
-            <li key={item.name || "all"} className="shrink-0 lg:shrink">
+            <li key={item.name || "all"} className={`shrink-0 border-line lg:shrink lg:border-b last:lg:border-b-0 ${active ? "bg-brand-50" : "hover:bg-paper"}`}>
               <button
                 type="button"
                 onClick={() => onSelect(item.name)}
-                className={`w-full flex items-center justify-between gap-3 rounded-none px-3 py-2 text-left text-sm transition-colors ${
-                  active
-                    ? "bg-brand-600 text-white"
-                    : "text-ink hover:bg-brand-50"
-                }`}
+                aria-current={active ? "page" : undefined}
+                className={`w-full px-3 py-2.5 text-left ${active ? "text-brand-800" : "text-ink"}`}
               >
-                <span className="font-medium truncate">{item.label}</span>
-                <span
-                  className={`shrink-0 text-[11px] tabular-nums ${
-                    active ? "text-white/80" : "text-mute"
-                  }`}
-                >
-                  {item.count}
-                </span>
+                <span className={`block text-sm leading-snug ${active ? "font-semibold" : "font-medium"}`}>{item.label}</span>
+                <span className="mt-0.5 block text-[11px] font-medium text-mute tabular-nums">{item.count}</span>
               </button>
             </li>
           );

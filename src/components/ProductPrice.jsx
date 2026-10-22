@@ -47,7 +47,7 @@ export default function ProductPrice({ product, size = "card", className = "", s
 
   return (
     <div className={`${large ? "mt-4" : "mt-3"} ${className}`.trim()}>
-      <div className={`flex flex-wrap items-baseline gap-x-2 gap-y-1 ${large ? "py-3.5" : "py-2.5"}`}>
+      <div className={`flex flex-wrap items-center gap-x-2.5 gap-y-1 ${large ? "py-3.5" : "py-2.5"}`}>
         <p
           className={
             large
@@ -57,6 +57,11 @@ export default function ProductPrice({ product, size = "card", className = "", s
         >
           {formatUnitPrice(shownPrice, lang)}
         </p>
+        {offer ? (
+          <p className={`${large ? "text-sm px-2 py-1" : "text-[11px] px-1.5 py-1"} inline-block w-fit max-w-full leading-snug font-semibold border ${URGENCY_CHIP.soon}`}>
+            {t("offerEnds", { date: formatQuoteDate(offer.endsOn, lang) })}
+          </p>
+        ) : null}
         {status === "quoted" ? (
           <span
             className={`${large ? "text-xs px-2 py-0.5" : "text-[10px] px-1.5 py-0.5"} font-bold tracking-wide border ${URGENCY_CHIP[urgency]}`}
@@ -71,11 +76,7 @@ export default function ProductPrice({ product, size = "card", className = "", s
           <span className="ml-1.5">{t("quotedFromQuotation")}</span>
         </p>
       ) : null}
-      {offer ? (
-        <p className={`${chip} inline-block w-fit max-w-full leading-snug font-semibold border ${URGENCY_CHIP.soon}`}>
-          {t("offerEnds", { date: formatQuoteDate(offer.endsOn, lang) })}
-        </p>
-      ) : endedOffer ? (
+      {endedOffer ? (
         <p className={`${chip} inline-block w-fit max-w-full leading-snug font-semibold border text-amber-950 bg-amber-50 border-amber-300`}>
           {t("offerEnded")}
         </p>

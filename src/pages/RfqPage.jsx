@@ -2,6 +2,7 @@
  * RFQ draft — select products, then confirm logistics on the next page.
  */
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../hooks/useStore";
 import {
   addCustomLine,
@@ -36,7 +37,7 @@ import {
   completeCartWhatsappSubmit,
   takeLastCartWhatsappResult,
 } from "../lib/store";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { scrollToTopNow } from "../lib/jumpTo";
 import SiteHeader from "../components/SiteHeader";
 import CustomProductForm from "../components/CustomProductForm";
 import { useLanguage } from "../i18n";
@@ -425,12 +426,12 @@ export default function RfqPage() {
       });
       setConfirmChannel(viaWhatsapp ? "whatsapp" : "rfq");
       setConfirmKind(kind);
-      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      scrollToTopNow();
       return;
     }
     setConfirmChannel(viaWhatsapp ? "whatsapp" : "rfq");
     setConfirmKind(kind);
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    scrollToTopNow();
   }
 
   function linesBelowMoq(ids) {

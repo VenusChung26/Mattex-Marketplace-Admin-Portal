@@ -77,6 +77,7 @@ export default function CatalogPage() {
     if (!category) return [];
     let list = searchProducts(searchQuery, category.name, { fields: searchFields });
     if (greenOnly) list = list.filter((p) => p.green);
+    if (priceFilter === "priced") list = list.filter((p) => getEffectivePrice(p).displayPrice != null);
     if (priceFilter === "unpriced") list = list.filter((p) => getEffectivePrice(p).displayPrice == null);
     if (priceFilter === "hot") list = list.filter((p) => isHitProduct(p));
     return collapseCatalog(list, catalogGroupIndex());
@@ -212,7 +213,8 @@ export default function CatalogPage() {
               </div>
               <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                 {[
-                  ["all", t("priceFilterAll")],
+                  ["all", t("allProducts")],
+                  ["priced", t("priceFilterPriced")],
                   ["unpriced", t("priceFilterUnpriced")],
                 ].map(([id, label]) => (
                   <button
@@ -278,7 +280,7 @@ export default function CatalogPage() {
             </div>
             {catalogLoading && !products.length ? (
               <div
-                className={catalogView === "list" ? "min-w-0 space-y-2" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}
+                className={catalogView === "list" ? "min-w-0 space-y-4" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}
                 aria-busy="true"
                 aria-live="polite"
               >
@@ -286,7 +288,7 @@ export default function CatalogPage() {
               </div>
             ) : products.length ? (
               <>
-                <div className={catalogView === "list" ? "min-w-0 space-y-2" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}>
+                <div className={catalogView === "list" ? "min-w-0 space-y-4" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}>
                   {products.slice(0, catalogShown).map((entry) =>
                     catalogView === "list" ? (
                       <ProductListRow

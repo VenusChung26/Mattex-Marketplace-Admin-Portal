@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { readSession } from "./auth.js";
 import { handleCatalogGroupsGet, handleCatalogGroupsSave } from "../server/catalog-groups.js";
 import { toPublicProduct } from "../server/public-catalog.js";
+import { readUatCatalog } from "../server/uat-catalog.js";
 
 const DIR = path.join(process.cwd(), "data");
 const SNAPSHOT_FILE = path.join(DIR, "catalog-snapshot.json");
@@ -102,6 +103,8 @@ export async function handleCatalogVersion() {
 }
 
 export async function handleCatalogGet() {
+  const uat = await readUatCatalog();
+  if (uat) return uat;
   const sb = db();
   if (sb) {
     const remote = await readKv(sb, SNAPSHOT_KEY);

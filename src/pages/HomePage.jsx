@@ -11,6 +11,7 @@ import SiteHeader from "../components/SiteHeader";
 import Seo, { breadcrumbJsonLd, orgJsonLd } from "../components/Seo";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
+import HowStepGraphic from "../components/HowStepGraphic";
 import SpecMatchLaunch from "../components/SpecMatchLaunch";
 import { SHOW_SPEC_MATCH } from "../lib/flags";
 import { jumpToId } from "../lib/jumpTo";
@@ -245,6 +246,7 @@ export default function HomePage() {
   const products = useMemo(() => {
     let list = searchProducts(searchQuery, selectedCategories, { fields: searchFields });
     if (greenOnly) list = list.filter((p) => p.green);
+    if (priceFilter === "priced") list = list.filter((p) => getEffectivePrice(p).displayPrice != null);
     if (priceFilter === "unpriced") list = list.filter((p) => getEffectivePrice(p).displayPrice == null);
     if (priceFilter === "hot") list = list.filter((p) => isHitProduct(p));
     return collapseCatalog(list, catalogGroupIndex());
@@ -293,16 +295,10 @@ export default function HomePage() {
     showToast(t("addedCustomToRfq"));
   }
 
-  function scrollToCatalog() {
+  function scrollToCatalog({ animate = false } = {}) {
     holdCatalogPinRef.current = true;
     setCatalogPinned(true);
-    jumpToId("catalog-toolbar");
-  }
-
-  function glideToCatalog() {
-    holdCatalogPinRef.current = true;
-    setCatalogPinned(true);
-    jumpToId("catalog-toolbar", { animate: true });
+    jumpToId("products", { gap: -1, animate });
   }
 
   function openFilteredCatalog(kind) {
@@ -394,10 +390,10 @@ export default function HomePage() {
     [catalogEpoch]
   );
 
-  function scrollToResults() {
+  function scrollToResults({ animate = false } = {}) {
     holdCatalogPinRef.current = true;
     setCatalogPinned(true);
-    jumpToId("catalog-results");
+    jumpToId("catalog-results", { animate });
   }
 
   function onCatalogQueryChange(value) {
@@ -454,7 +450,7 @@ export default function HomePage() {
           clearFilters();
           scrollToCatalog();
         }}
-        onCatalogClick={glideToCatalog}
+        onCatalogClick={() => scrollToCatalog({ animate: true })}
         onDraftClick={onCartClick}
         suggestProducts={suggestionsPool}
       />
@@ -510,18 +506,34 @@ export default function HomePage() {
                 <h2 className="mt-2 font-display text-3xl font-semibold text-brand-800">{t("howHeadline")}</h2>
               </div>
             </div>
-            <ol className="grid grid-cols-1 overflow-hidden rounded-xl border border-line bg-white shadow-[0_1px_0_rgba(16,21,19,0.04)] md:grid-cols-5">
+            <ol className="grid grid-cols-1 gap-3 md:grid-cols-5 md:gap-4">
               {[
-                ["01", "step1Title", "step1Body"],
-                ["02", "step2Title", "step2Body"],
-                ["03", "step3Title", "step3Body"],
-                ["04", "step4Title", "step4Body"],
-                ["05", "step5Title", "step5Body"],
-              ].map(([n, title, body]) => (
-                <li key={n} className="border-t border-line px-4 py-4 first:border-t-0 md:border-l md:border-t-0 md:px-5 md:first:border-l-0">
-                  <p className="font-display text-2xl font-semibold tracking-[0.08em] text-brand-800">{n}</p>
-                  <p className="mt-2 text-sm font-semibold leading-snug text-ink">{t(title)}</p>
-                  <p className="mt-1 text-[13px] leading-relaxed text-mute [text-wrap:pretty]">{t(body)}</p>
+                ["01", "step1Title", "step1Body", "search"],
+                ["02", "step2Title", "step2Body", "quote"],
+                ["03", "step3Title", "step3Body", "buy"],
+                ["04", "step4Title", "step4Body", "cart"],
+                ["05", "step5Title", "step5Body", "spec"],
+              ].map(([n, title, body, art], index, steps) => (
+                <li
+                  key={n}
+                  className="relative flex min-w-0 flex-col overflow-visible rounded-xl border border-line bg-white shadow-[0_1px_0_rgba(16,21,19,0.04)]"
+                >
+                  <div className="overflow-hidden rounded-t-xl">
+                    <HowStepGraphic name={art} />
+                  </div>
+                  <div className="flex flex-1 flex-col px-3.5 pb-4 pt-3">
+                    <p className="text-[11px] font-semibold tracking-[0.16em] text-brand-700">{n}</p>
+                    <p className="mt-1.5 text-sm font-semibold leading-snug text-ink">{t(title)}</p>
+                    <p className="mt-1 text-[13px] leading-relaxed text-mute [text-wrap:pretty]">{t(body)}</p>
+                  </div>
+                  {index < steps.length - 1 ? (
+                    <span
+                      className="absolute left-[calc(100%+0.5rem)] top-14 z-10 hidden h-6 w-6 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-white text-xs text-brand-700 md:flex"
+                      aria-hidden
+                    >
+                      ›
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ol>
@@ -801,12 +813,9 @@ export default function HomePage() {
         </section>
 
         {/* Catalog desk — sticky under header while browsing products */}
-        <section
-          id="products"
-          className="pt-14 sm:pt-16"
-          style={{ scrollMarginTop: navHeight }}
-        >
-          <div className="bg-charcoal text-white">
+        <section className="pt-14 sm:pt-16">
+          <div id="products" style={{ scrollMarginTop: 0 }}>
+            <div className="bg-charcoal text-white">
             <div className="max-w-7xl mx-auto px-4 pt-10 pb-5 sm:pt-12 sm:pb-6">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/50">
                 {t("fullCatalog")}
@@ -818,13 +827,13 @@ export default function HomePage() {
                 {t("searchHint")}
               </p>
             </div>
-          </div>
+            </div>
           <div
             id="catalog-toolbar"
             className={`bg-charcoal text-white sticky z-30 ${
               searchStuck ? "shadow-[0_8px_20px_rgba(0,0,0,0.28)]" : ""
             }`}
-            style={{ top: navHeight }}
+            style={{ top: Math.max(navHeight - 1, 0) }}
           >
             <div className="max-w-7xl mx-auto px-4 py-2">
               <div className="flex min-w-0 flex-col gap-2">
@@ -863,13 +872,17 @@ export default function HomePage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {[
-                    ["all", t("priceFilterAll")],
+                    ["all", t("allProducts")],
+                    ["priced", t("priceFilterPriced")],
                     ["unpriced", t("priceFilterUnpriced")],
                   ].map(([id, label]) => (
                     <button
                       key={id}
                       type="button"
-                      onClick={() => setPriceFilter(id)}
+                      onClick={() => {
+                        setPriceFilter(id);
+                        scrollToResults({ animate: true });
+                      }}
                       className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-none ${
                         priceFilter === id
                           ? "bg-white text-charcoal border-white"
@@ -882,7 +895,10 @@ export default function HomePage() {
                   <span className="mx-1 hidden h-4 w-px bg-white/25 sm:inline-block" aria-hidden />
                   <button
                     type="button"
-                    onClick={() => setGreenOnly((prev) => !prev)}
+                    onClick={() => {
+                      setGreenOnly((prev) => !prev);
+                      scrollToResults({ animate: true });
+                    }}
                     aria-pressed={greenOnly}
                     className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-none ${
                       greenOnly
@@ -894,7 +910,10 @@ export default function HomePage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPriceFilter((prev) => (prev === "hot" ? "all" : "hot"))}
+                    onClick={() => {
+                      setPriceFilter((prev) => (prev === "hot" ? "all" : "hot"));
+                      scrollToResults({ animate: true });
+                    }}
                     aria-pressed={priceFilter === "hot"}
                     className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide border rounded-none ${
                       priceFilter === "hot"
@@ -972,7 +991,7 @@ export default function HomePage() {
             </div>
             {catalogLoading && !products.length ? (
               <div
-                className={catalogView === "list" ? "min-w-0 space-y-2" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}
+                className={catalogView === "list" ? "min-w-0 space-y-4" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}
                 aria-busy="true"
                 aria-live="polite"
               >
@@ -993,7 +1012,7 @@ export default function HomePage() {
               </div>
             ) : (
               <>
-                <div className={catalogView === "list" ? "min-w-0 space-y-2" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}>
+                <div className={catalogView === "list" ? "min-w-0 space-y-4" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}>
                   {visibleCatalog.map((entry) =>
                     catalogView === "list" ? (
                       <ProductListRow
@@ -1029,6 +1048,7 @@ export default function HomePage() {
             )}
               </div>
             </div>
+          </div>
           </div>
         </section>
 

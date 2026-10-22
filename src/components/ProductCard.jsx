@@ -663,18 +663,18 @@ export function ProductListRow({ product, onAdd, grouped = false }) {
   const label = selected.name;
 
   return (
-    <article className="relative flex min-w-0 max-w-full flex-col gap-3 border border-line bg-white p-3 sm:flex-row sm:items-center">
-      <div className="flex min-w-0 gap-3 sm:contents">
+    <article className="relative flex min-w-0 max-w-full flex-col gap-4 border border-line bg-white p-4 sm:flex-row sm:items-stretch sm:gap-6">
+      <div className="flex min-w-0 gap-4 sm:contents">
         <Link
           to={withLocale(lang, `/details/${selected.id}`)}
-          className="h-16 w-16 shrink-0 overflow-hidden bg-brand-50 sm:w-24"
+          className="relative block h-24 w-24 shrink-0 overflow-hidden bg-brand-50 sm:h-auto sm:w-32 sm:self-stretch"
         >
           <ProductImage
             src={selected.image}
             fallback={selected.imageFallback}
             alt={label}
             compact
-            className="h-full w-full"
+            className="h-full w-full sm:absolute sm:inset-0"
             imgClassName="h-full w-full object-cover"
           />
         </Link>
@@ -687,12 +687,12 @@ export function ProductListRow({ product, onAdd, grouped = false }) {
               {selected.category}
             </Link>
           </p>
-          <h3 className="mt-0.5 break-words text-sm font-semibold leading-snug text-ink sm:text-base">
+          <h3 className="mt-1 break-words text-sm font-semibold leading-snug text-ink sm:text-base">
             <Link to={withLocale(lang, `/details/${selected.id}`)} className="hover:text-brand-600">
               {label}
             </Link>
           </h3>
-          <p className="mt-0.5 truncate text-xs text-mute">
+          <p className="mt-1 truncate text-xs text-mute">
             {t("productNo")} {productSkuId(selected) || selected.id}
             {selected.supplier ? ` · ${t("by")} ${supplierDisplayName(selected.supplier)}` : ""}
           </p>
@@ -706,13 +706,13 @@ export function ProductListRow({ product, onAdd, grouped = false }) {
             moreHref={withLocale(lang, `/details/${selected.id}`)}
             moreLabel={t("moreOptions", { n: Math.max(members.length - 2, 0) })}
           />
-          <ProductMetaChips product={selected} showTags className="mt-1.5" />
+          <ProductMetaChips product={selected} showTags className="mt-2" />
         </div>
       </div>
-      <div className="hidden shrink-0 sm:block sm:w-32">
+      <div className="hidden shrink-0 self-start sm:block sm:w-32">
         <ProductPrice product={selected} className="!mt-0" />
       </div>
-      <div className="min-w-0 sm:w-72 sm:shrink-0">
+      <div className="min-w-0 self-start sm:w-60 sm:shrink-0">
         <ProductActions product={selected} onAdd={onAdd} size="row" />
       </div>
     </article>

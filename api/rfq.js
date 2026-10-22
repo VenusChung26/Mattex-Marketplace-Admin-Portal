@@ -626,14 +626,25 @@ async function syncRfqs(body, request) {
   const actor = body?.as === "staff" ? actorOf(request) : placerOf(request);
   if (body?.as === "staff" ? actor.kind !== "staff" : actor.kind !== "buyer") return { status: 200, body: { ok: true, rfqs: [] } };
   const known = new Set((Array.isArray(body?.known) ? body.known : []).map((id) => text(id, 40)));
-  const records = await rfqStore().list("rfq", actor);
+  const records = await inboxRecords(actor);
   return {
     status: 200,
     body: {
       ok: true,
       rfqs: records.map((record) => {
         const owned = ownedView(record, { staff: actor.kind === "staff" });
-        return known.has(record.id) ? { owned } : { owned, payload: record.payload || {}, lines: record.lines || [], project: record.project || "", channel: record.channel || "", askKind: record.askKind || "quote", companyName: record.companyName || "" };
+        const full = {
+          owned,
+          payload: record.payload || {},
+          lines: record.lines || [],
+          project: record.project || "",
+          channel: record.channel || "",
+          askKind: record.askKind || "quote",
+          companyName: record.companyName || "",
+        };
+        /* Sales always gets the request itself, so a fresh Portal tab can draw the row. */
+        if (actor.kind === "staff" || !known.has(record.id)) return full;
+        return { owned };
       }),
     },
   };
@@ -847,6 +858,46 @@ async function routePost(body, request) {
   return { status: 400, body: { ok: false, error: "action" } };
 }
 
+function legacyRecord(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || !payload.id) return null;
+  const lines = Array.isArray(payload.lines) ? payload.lines : [];
+  return {
+    ...payload,
+    id: String(payload.id),
+    revision: Number(payload.revision) || 1,
+    lines,
+    payload: { ...payload, lines },
+    buyerEmail: payload.buyerEmail || "",
+    buyerName: payload.buyerName || "",
+    reviewStatus: payload.reviewStatus || payload.status || "received",
+    createdAt: payload.createdAt || payload.submittedAt || "",
+  };
+}
+
+/** New rfq_records plus the older public.rfqs rows, without showing the same id twice. */
+export function mergeInboxRecords(current, legacyPayloads) {
+  const seen = new Set((current || []).map((record) => record?.id).filter(Boolean));
+  const extra = [];
+  for (const payload of legacyPayloads || []) {
+    const record = legacyRecord(payload);
+    if (!record || seen.has(record.id)) continue;
+    seen.add(record.id);
+    extra.push(record);
+  }
+  return [...(current || []), ...extra];
+}
+
+async function inboxRecords(actor) {
+  const current = await rfqStore().list("rfq", actor);
+  if (actor.kind !== "staff" || typeof rfqStore().listLegacy !== "function") return current;
+  try {
+    return mergeInboxRecords(current, await rfqStore().listLegacy());
+  } catch (error) {
+    console.error("[rfq] legacy list:", error?.message || error);
+    return current;
+  }
+}
+
 async function routeGet(request) {
   if (!storeReady()) return { status: 501, body: { ok: false, error: "use-supabase" } };
   const actor = actorOf(request);
@@ -858,7 +909,8 @@ async function routeGet(request) {
     const record = await rfqStore().get(id.startsWith("PO-") ? "po" : "rfq", id, actor);
     return record ? { status: 200, body: { ok: true, record: view(record, actor) } } : { status: 404, body: { ok: false, error: "not_found" } };
   }
-  return { status: 200, body: { ok: true, records: (await rfqStore().list(kind, actor)).map((record) => view(record, actor)) } };
+  const records = kind === "rfq" ? await inboxRecords(actor) : await rfqStore().list(kind, actor);
+  return { status: 200, body: { ok: true, records: records.map((record) => view(record, actor)) } };
 }
 
 /** A storage failure answers 500 with no detail; it must never crash the process or leak the reason. */

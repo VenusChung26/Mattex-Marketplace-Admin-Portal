@@ -10,7 +10,7 @@ const guest = { kind: "guest", email: "" };
 
 /** A tiny stand-in for the Supabase client that behaves like create_doc / update_doc in the migration. */
 function fakeClient() {
-  const tables = { rfq_records: new Map(), po_records: new Map() };
+  const tables = { rfq_records: new Map(), po_records: new Map(), rfqs: new Map() };
   const counters = new Map();
   const calls = [];
   const kindOf = { rfq: "rfq_records", po: "po_records" };
@@ -41,7 +41,9 @@ function fakeClient() {
       },
       async maybeSingle() {
         const hit = [...tables[table].values()].find((row) => filters.every((f) => f(row)));
-        return { data: hit ? { record: hit.record } : null, error: null };
+        if (!hit) return { data: null, error: null };
+        if (table === "rfqs") return { data: { payload: hit.payload || hit.record }, error: null };
+        return { data: { record: hit.record }, error: null };
       },
       then(resolve) {
         const rows = [...tables[table].values()].filter((row) => filters.every((f) => f(row)));

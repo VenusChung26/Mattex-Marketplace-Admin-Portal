@@ -10,6 +10,7 @@ import AttachmentLinks, { PreviewThumb, linePhotoSrc } from "../components/Attac
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
+import { scrollToTopNow } from "../lib/jumpTo";
 import { uploadSpecFile } from "../lib/rfqBlob";
 import { clearSpecFiles, loadSpecFiles, saveSpecFile } from "../lib/specMatchFiles";
 import { displayUnit, formatUnitPrice, localizeSpecLine } from "../lib/productFields";
@@ -32,6 +33,24 @@ import {
 } from "../lib/specMatchSession";
 
 const ACCEPT = ".pdf,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.doc,.docx,.xls,.xlsx,image/*,application/pdf";
+
+function specUploadMime(file) {
+  const type = String(file?.type || "").toLowerCase();
+  if (type && type !== "application/octet-stream") return type;
+  const name = String(file?.name || "").toLowerCase();
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".gif")) return "image/gif";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  if (name.endsWith(".doc")) return "application/msword";
+  if (name.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (name.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (name.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  return type || "application/octet-stream";
+}
 const FILE_CAP = 8;
 
 const SAMPLE_FILE_NAME = SAMPLE_SPEC_NAME;
@@ -325,12 +344,8 @@ export default function SpecMatchPage() {
   const [fileEpoch, setFileEpoch] = useState(0);
 
   useLayoutEffect(() => {
-    const previous = window.history.scrollRestoration;
     window.history.scrollRestoration = "manual";
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-    return () => {
-      window.history.scrollRestoration = previous;
-    };
+    scrollToTopNow();
   }, []);
 
   useEffect(() => {
@@ -478,7 +493,10 @@ export default function SpecMatchPage() {
       payload.mime = "image/jpeg";
     } else if (file.size > 3_200_000) {
       onPhase?.("upload");
-      payload.url = await uploadSpecFile(file);
+      const mime = specUploadMime(file);
+      const typed = file.type === mime ? file : new File([file], file.name, { type: mime });
+      payload.mime = mime;
+      payload.url = await uploadSpecFile(typed);
     } else {
       onPhase?.("read");
       const dataUrl = await readFile(file);
@@ -489,7 +507,7 @@ export default function SpecMatchPage() {
     const data = res.data || {};
     if (data?.remaining != null) setStatus((prev) => ({ ...prev, remaining: data.remaining }));
     if (!data?.ok) return { ok: false, error: data?.error || "file" };
-    if (data.unreadable || !Array.isArray(data.rows) || !data.rows.length) return { ok: true, unreadable: true };
+    if (!Array.isArray(data.rows) || !data.rows.length) return { ok: true, unreadable: true };
     return { ok: true, rows: data.rows };
   }
 
@@ -507,7 +525,9 @@ export default function SpecMatchPage() {
     held.files.forEach((file, id) => {
       specFilesRef.current.set(id, file);
       saveSpecFile(owner, id, file).catch(() => {});
-      uploadSpecFile(file).then((url) => {
+      const mime = specUploadMime(file);
+      const typed = file.type === mime ? file : new File([file], file.name, { type: mime });
+      uploadSpecFile(typed).then((url) => {
         if (!url) return;
         setSources((prev) => prev.map((item) => (item.id === id ? { ...item, url } : item)));
       }).catch(() => {});
