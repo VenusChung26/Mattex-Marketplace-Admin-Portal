@@ -296,6 +296,19 @@ const actions = {
     return { cookie: sessionCookie(kind, account.email), body: { ok: true, account } };
   },
 
+  async buyers(_body, request) {
+    const session = readSession(request, "staff");
+    if (!session) return { status: 401, body: { ok: false, error: "staff" } };
+    const { data, error } = await db()
+      .from("user_accounts")
+      .select(PUBLIC_COLUMNS)
+      .eq("kind", "buyer")
+      .order("created_at", { ascending: false })
+      .limit(1000);
+    if (error) return { status: 500, body: { ok: false, error: "server" } };
+    return { body: { ok: true, buyers: data || [] } };
+  },
+
   async signup({ email, password, profile = {} }) {
     const address = normalizeEmail(email);
     if (!EMAIL_RE.test(address)) return { body: { ok: false, error: "email" } };

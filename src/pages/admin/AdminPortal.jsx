@@ -69,6 +69,7 @@ import {
   markAdminAlertsSeen,
   pullSharedStore,
   refreshRemoteRfqs,
+  refreshServerBuyers,
   assignRfqToBuyerRemote,
   setRfqBuyerPhone,
   buyerWhatsappHref,
@@ -545,21 +546,24 @@ export default function AdminPortal() {
   }, [staff]);
 
   useEffect(() => {
-    if (!staff?.email || page !== "rfqs") return undefined;
+    if (!staff?.email) return undefined;
     let alive = true;
-    const run = () => Promise.resolve(refreshRemoteRfqs()).finally(() => {
+    const run = () => Promise.all([
+      Promise.resolve(refreshRemoteRfqs()),
+      Promise.resolve(refreshServerBuyers()),
+    ]).finally(() => {
       if (alive) setRfqUpdatedAt(Date.now());
     });
     run();
     const timer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
       run();
-    }, 15000);
+    }, 4000);
     return () => {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [staff?.email, page]);
+  }, [staff?.email]);
 
   useEffect(() => {
     if (!staff) return undefined;

@@ -1668,6 +1668,9 @@ export function getStoreSnapshot() {
 }
 
 const AUTH_KEY = "subbie_auth";
+/* The signed-in member stays in memory when the browser store is full or a stale local row would wipe the session. */
+let memoryUser = null;
+let memoryAccounts = {};
 const DISABLED_KICK_KEY = "subbie_disabled_kick";
 const ACCOUNTS_KEY = "subbie_accounts";
 const DELETED_BUYERS_KEY = "subbie_deleted_buyers";
@@ -1791,7 +1794,7 @@ function joinProfileProjects(list) {
 }
 
 function getUser() {
-  const user = readJson(AUTH_KEY, null);
+  const user = memoryUser || readJson(AUTH_KEY, null);
   if (!user) return null;
   const projects = normalizeProfileProjects(user.projects || user.project);
   return {
@@ -1812,6 +1815,8 @@ function kickDisabledBuyerIfNeeded() {
   } catch {
     /* ignore */
   }
+  memoryUser = null;
+  delete memoryAccounts[normalizeEmail(user.email)];
   localStorage.removeItem(AUTH_KEY);
   return true;
 }
@@ -3143,24 +3148,37 @@ async function authApi(action, payload = {}) {
 }
 
 function accountFromRow(row) {
-  const extra = withoutSecrets(row?.extra && typeof row.extra === "object" ? row.extra : {});
+  if (!row || typeof row !== "object") return { email: "", enabled: true, approvalStatus: "approved" };
+  const extra = withoutSecrets(row.extra && typeof row.extra === "object" ? row.extra : {});
   return {
     ...extra,
     email: row.email,
     name: row.name || extra.name || "",
     phone: row.phone || extra.phone || "",
+    jobTitle: row.job_title || extra.jobTitle || "",
     companyName: row.company_name || extra.companyName || "",
+    companyReg: row.company_reg || extra.companyReg || "",
+    companyPhone: row.company_phone || extra.companyPhone || "",
+    companyAddress: row.company_address || extra.companyAddress || "",
+    project: row.project || extra.project || "",
+    projects: row.projects || extra.projects || [],
     enabled: row.enabled !== false,
     approvalStatus: row.approval_status || extra.approvalStatus || "approved",
+    needsReview: Boolean(row.needs_review),
+    createdAt: row.created_at || extra.createdAt || "",
+    approvedAt: row.approved_at || extra.approvedAt || "",
+    reviewedAt: row.reviewed_at || extra.reviewedAt || "",
   };
 }
 
 function getAccountsMap() {
-  return accountsWithoutSecrets(stripDeletedBuyers(readJson(ACCOUNTS_KEY, {})));
+  return accountsWithoutSecrets(stripDeletedBuyers({ ...readJson(ACCOUNTS_KEY, {}), ...memoryAccounts }));
 }
 
 function setAccountsMap(map) {
-  writeJson(ACCOUNTS_KEY, accountsWithoutSecrets(stripDeletedBuyers(map || {})));
+  const clean = accountsWithoutSecrets(stripDeletedBuyers(map || {}));
+  memoryAccounts = { ...memoryAccounts, ...clean };
+  writeJson(ACCOUNTS_KEY, clean);
 }
 
 function getAccount(email) {
@@ -3232,8 +3250,10 @@ function restoreSessionBuyerAccount() {
 }
 
 function setSessionUser(user) {
+  if (!user?.email) return;
+  memoryUser = user;
   buyerSessionEpoch += 1;
-  const previous = getUser();
+  const previous = readJson(AUTH_KEY, null);
   const prevEmail = previous ? normalizeEmail(previous.email) : null;
   const nextEmail = normalizeEmail(user.email);
 
@@ -3496,18 +3516,30 @@ async function loginUser({ email, password }) {
   const result = await authApi("login", { kind: "buyer", email: nextEmail, password: String(password || "") });
   if (!result.ok) return { ok: false, error: result.error || "password" };
   const map = getAccountsMap();
-  const account = { ...accountFromRow(result.account), ...(map[nextEmail] || {}), enabled: true };
+  const incoming = accountFromRow(result.account || { email: nextEmail });
+  const account = {
+    ...(map[nextEmail] || {}),
+    ...incoming,
+    email: nextEmail,
+    enabled: true,
+    approvalStatus: incoming.approvalStatus || "approved",
+  };
   map[nextEmail] = account;
-  setAccountsMap(map);
+  try {
+    setAccountsMap(map);
+  } catch {
+    /* the browser store can be full; the member still stays signed in */
+  }
+  memoryAccounts[nextEmail] = account;
   authModalOpen = false;
   const user = publicUserFromAccount(account);
   try {
     setSessionUser(user);
     mergeGuestCartIntoUser();
   } catch {
-    /* the server cookie is already set; local bookkeeping must not show a login error */
+    memoryUser = user;
   }
-  return { ok: true, user };
+  return { ok: true, user: getUser() || user };
 }
 
 async function verifyBuyerSession() {
@@ -3517,6 +3549,8 @@ async function verifyBuyerSession() {
   const result = await authApi("session", { kind: "buyer" });
   if (epoch !== buyerSessionEpoch) return false;
   if (result.error === "disabled" || result.error === "rejected") {
+    memoryUser = null;
+    delete memoryAccounts[normalizeEmail(local.email)];
     localStorage.removeItem(AUTH_KEY);
     emitStoreChange();
     return false;
@@ -3537,6 +3571,7 @@ function clearServerRfqCache() {
 
 function logoutUser() {
   buyerSessionEpoch += 1;
+  memoryUser = null;
   authApi("logout", { kind: "buyer" });
   localStorage.removeItem(AUTH_KEY);
   clearServerRfqCache();
@@ -5027,6 +5062,28 @@ function enableStaff(email) {
   setStaffList(list);
   emitStoreChange();
   return { ok: true };
+}
+
+async function refreshServerBuyers() {
+  const result = await authApi("buyers", {});
+  if (!result.ok || !Array.isArray(result.buyers)) return false;
+  const map = getAccountsMap();
+  let changed = false;
+  result.buyers.forEach((row) => {
+    const incoming = accountFromRow(row);
+    const key = normalizeEmail(incoming.email);
+    if (!key) return;
+    const prev = map[key] || {};
+    const next = { ...prev, ...incoming, email: key, enabled: row.enabled !== false };
+    if (JSON.stringify(prev) !== JSON.stringify(next)) {
+      map[key] = next;
+      changed = true;
+    }
+  });
+  if (!changed) return true;
+  setAccountsMap(map);
+  emitStoreChange();
+  return true;
 }
 
 function listBuyers() {
@@ -7977,7 +8034,7 @@ function startServerRfqSync() {
   syncServerRfqs();
   serverSyncTimer = window.setInterval(() => {
     if (document.visibilityState === "visible") syncServerRfqs();
-  }, 10000);
+  }, 4000);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") syncServerRfqs();
   });
@@ -8230,6 +8287,7 @@ export {
   canDeleteBuyerForever,
   listAssignableBuyers,
   listBuyers,
+  refreshServerBuyers,
   setBuyerEnabled,
   approveBuyer,
   markBuyerReviewed,
