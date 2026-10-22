@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listPurchaseOrders } from "../lib/remote";
 
-const BASE_MS = 15_000;
+const BASE_MS = 4_000;
 const MAX_MS = 120_000;
 
 /**
- * Purchase orders from the server, display only. Refreshes every 15 s while the tab is visible,
+ * Purchase orders from the server, display only. Refreshes every 4 s while the tab is visible,
  * straight away when the tab comes back, and backs off (up to 2 min) while the server keeps failing.
  * `enabled` false pauses everything (for example when nobody is signed in).
  */
