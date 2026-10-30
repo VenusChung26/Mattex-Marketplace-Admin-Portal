@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { circledFromPdf, findInkCircles } from "../api/circled.js";
+import { circledFromPdf, findInkCircles } from "../server/circled.js";
 import { isProductDescription } from "../src/lib/buyerLine.js";
 import { handleSpecMatch } from "../api/spec-match.js";
 
