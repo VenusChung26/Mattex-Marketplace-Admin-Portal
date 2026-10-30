@@ -17,17 +17,22 @@ export function usePurchaseOrders(enabled = true) {
   const timer = useRef(null);
   const alive = useRef(true);
 
+  const stamp = useRef("");
   const load = useCallback(async () => {
     const result = await listPurchaseOrders();
     if (!alive.current) return;
     if (result.ok) {
       failures.current = 0;
-      setRecords(result.records);
-      setState("ready");
-      setUpdatedAt(Date.now());
+      const next = JSON.stringify(result.records || []);
+      if (next !== stamp.current) {
+        stamp.current = next;
+        setRecords(result.records);
+        setUpdatedAt(Date.now());
+      }
+      setState((prev) => (prev === "ready" ? prev : "ready"));
     } else {
       failures.current += 1;
-      setState("error");
+      setState((prev) => (prev === "error" ? prev : "error"));
     }
   }, []);
 

@@ -4,8 +4,9 @@ import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { readSession } from "./auth.js";
 import { handleCatalogGroupsGet, handleCatalogGroupsSave } from "../server/catalog-groups.js";
-import { toPublicProduct } from "../server/public-catalog.js";
+import { foldAggregate, foldAluminumCladding, foldBalustrades, foldCable, foldDenseMesh, foldDowelBar, foldDrainageGratings, foldFinishBoards, foldGypsumBlocks, foldManholeCovers, foldOxygenChamber, foldPaint, foldPipeFittings, foldPrecastConcrete, foldRaisedFloors, foldShoeWashing, foldSteelGratings, foldTiles, foldWindows, foldXpsFoamBoard, toPublicProduct } from "../server/public-catalog.js";
 import { readUatCatalog } from "../server/uat-catalog.js";
+import { applyListedProducts } from "../server/listed-products.js";
 
 const DIR = path.join(process.cwd(), "data");
 const SNAPSHOT_FILE = path.join(DIR, "catalog-snapshot.json");
@@ -90,31 +91,82 @@ async function writeKv(sb, key, value) {
 }
 
 export async function handleCatalogVersion() {
-  const sb = db();
-  if (sb) {
-    const remote = await readKv(sb, VERSION_KEY);
-    if (!remote.error && remote.value?.etag && remote.value.etag !== SEED) {
-      return { etag: remote.value.etag, updatedAt: remote.value.updatedAt || "" };
-    }
-  }
-  const version = await readJson(VERSION_FILE);
-  if (!version?.etag || version.etag === SEED) return { etag: SEED, updatedAt: "" };
-  return { etag: version.etag, updatedAt: version.updatedAt || "" };
+  const snapshot = await handleCatalogGet();
+  const etag = String(snapshot?.etag || "");
+  if (!etag || etag === SEED) return { etag: SEED, updatedAt: "" };
+  return { etag, updatedAt: snapshot.updatedAt || "" };
 }
 
-export async function handleCatalogGet() {
-  const uat = await readUatCatalog();
-  if (uat) return uat;
+function staffUnitPrices(snapshot) {
+  const prices = new Map();
+  for (const product of snapshot?.products || []) {
+    if (!product?.id || !product.staffEditedAt) continue;
+    const amount = Number(product.unit_price);
+    prices.set(String(product.id), Number.isFinite(amount) && amount > 0 ? Math.round(amount * 100) / 100 : null);
+  }
+  return prices;
+}
+
+function withStaffUnitPrices(live, snapshot) {
+  const prices = staffUnitPrices(snapshot);
+  if (!prices.size || !Array.isArray(live?.products)) return live;
+  const products = live.products.map((product) => {
+    const id = String(product?.id || "");
+    if (!prices.has(id)) return product;
+    return { ...product, unit_price: prices.get(id) };
+  });
+  const stamp = [...prices.entries()].map(([id, amount]) => `${id}:${amount ?? ""}`).sort().join("|");
+  const etag = createHash("sha256").update(`${live.etag || ""}|${stamp}`).digest("hex").slice(0, 16);
+  return { ...live, products, etag };
+}
+
+let catalogMemo = null;
+let catalogMemoAt = 0;
+let buyerBodyMemo = null;
+
+function dropCatalogMemo() {
+  catalogMemo = null;
+  catalogMemoAt = 0;
+  buyerBodyMemo = null;
+}
+
+function withListedProducts(catalog) {
+  if (!catalog?.products?.length) return catalog;
+  const products = applyListedProducts(catalog.products.map((product) => ({ ...product })));
+  const names = [...new Set(products.map((product) => product.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const body = JSON.stringify(products.map((product) => [product.id, product.unit_price, product.name, product.category]));
+  return {
+    ...catalog,
+    products,
+    etag: createHash("sha256").update(body).digest("hex").slice(0, 16),
+    categories: names.map((name) => ({ name, image: "", imageFallback: "" })),
+  };
+}
+
+async function readCatalogUncached() {
+  const uat = process.env.VERCEL_ENV === "production" ? null : await readUatCatalog();
+  const saved = await readJson(SNAPSHOT_FILE);
+  if (uat?.products?.length) return withListedProducts(withStaffUnitPrices(uat, saved));
   const sb = db();
   if (sb) {
     const remote = await readKv(sb, SNAPSHOT_KEY);
     if (!remote.error) {
       const shared = snapshotBody(remote.value);
-      if (shared) return shared;
+      if (shared) return withListedProducts(shared);
     }
   }
   const snapshot = await readJson(SNAPSHOT_FILE);
-  return snapshotBody(snapshot);
+  return withListedProducts(snapshotBody(snapshot));
+}
+
+export async function handleCatalogGet() {
+  if (catalogMemo && Date.now() - catalogMemoAt < 20000) return catalogMemo;
+  const next = await readCatalogUncached();
+  if (next) {
+    catalogMemo = next;
+    catalogMemoAt = Date.now();
+  }
+  return next;
 }
 
 function buildSnapshot(snapshot) {
@@ -141,6 +193,7 @@ async function writeSnapshotFile(next) {
 }
 
 async function writeSnapshot(snapshot, sb) {
+  dropCatalogMemo();
   const next = buildSnapshot(snapshot);
   if (sb) {
     const saved = await writeKv(sb, SNAPSHOT_KEY, next);
@@ -290,11 +343,28 @@ function buyerVisibleProduct(product) {
 }
 
 function catalogForCaller(snapshot, request) {
-  if (!snapshot || readSession(request, "staff")) return snapshot;
-  return {
+  const surface = request?.headers?.get?.("x-mm-catalog") || "";
+  if (!snapshot || (surface !== "shop" && readSession(request, "staff"))) return snapshot;
+  const etag = String(snapshot.etag || "");
+  const buyerEtag = etag && etag !== "seed" ? `${etag}-ask-tile12` : etag;
+  if (buyerBodyMemo && buyerBodyMemo.etag === buyerEtag) return buyerBodyMemo;
+  const products = foldGypsumBlocks(foldManholeCovers(foldSteelGratings(foldDrainageGratings(foldTiles(foldWindows(foldPipeFittings(foldAggregate(foldFinishBoards(foldShoeWashing(foldCable(foldAluminumCladding(foldRaisedFloors(foldPaint(foldDowelBar(foldOxygenChamber(foldBalustrades(foldPrecastConcrete(foldDenseMesh(foldXpsFoamBoard((snapshot.products || []).filter(buyerVisibleProduct).map(toPublicProduct)))))))))))))))))))));
+  const previous = new Map((Array.isArray(snapshot.categories) ? snapshot.categories : []).map((item) => [item?.name, item]));
+  const categories = [...new Set(products.map((product) => String(product?.category || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "zh"))
+    .map((name) => ({
+      name,
+      image: previous.get(name)?.image || "",
+      imageFallback: previous.get(name)?.imageFallback || "",
+    }));
+  const body = {
     ...snapshot,
-    products: (snapshot.products || []).filter(buyerVisibleProduct).map(toPublicProduct),
+    etag: buyerEtag,
+    categories,
+    products,
   };
+  if (buyerEtag) buyerBodyMemo = body;
+  return body;
 }
 
 export async function GET(request) {

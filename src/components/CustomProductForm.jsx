@@ -58,6 +58,9 @@ export default function CustomProductForm({
   });
   const [category, setCategory] = useState(initial.category || "");
   const [attachments, setAttachments] = useState(initial.attachments || []);
+  const [lengthMm, setLengthMm] = useState("0");
+  const [widthMm, setWidthMm] = useState("0");
+  const [thicknessMm, setThicknessMm] = useState("0");
   const [extracting, setExtracting] = useState(false);
   const [filledFrom, setFilledFrom] = useState("");
   const [error, setError] = useState("");
@@ -74,6 +77,9 @@ export default function CustomProductForm({
     setImages([initial.image, ...list].filter(Boolean).slice(0, PRODUCT_IMAGE_MAX));
     setCategory(initial.category || "");
     setAttachments(Array.isArray(initial.attachments) ? initial.attachments : []);
+    setLengthMm("0");
+    setWidthMm("0");
+    setThicknessMm("0");
     setExtracting(false);
     setFilledFrom("");
     setError("");
@@ -181,9 +187,12 @@ export default function CustomProductForm({
       return;
     }
     setError("");
+    const sizeNote = initial.dimensions
+      ? `(${lengthMm || "0"} mm) x (${widthMm || "0"} mm) x (${thicknessMm || "0"} mm)`
+      : "";
     onSubmit({
       name: trimmed,
-      description: description.trim(),
+      description: [sizeNote, description.trim()].filter(Boolean).join("\n"),
       qty: nextQty,
       image: images[0] || "",
       images,
@@ -397,6 +406,36 @@ export default function CustomProductForm({
         <span className="block text-sm font-semibold text-ink mb-1">{t("qty")}</span>
         <QtyStepper value={Math.max(1, Number(qty) || 1)} min={1} onChange={setQty} size="card" t={t} />
       </div>
+      {initial.dimensions ? (
+        <div>
+          <p className="text-sm font-semibold text-ink">
+            ({lengthMm || "0"} mm) x ({widthMm || "0"} mm) x ({thicknessMm || "0"} mm)
+          </p>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {[
+              [t("sizeLength"), lengthMm, setLengthMm],
+              [t("sizeWidth"), widthMm, setWidthMm],
+              [t("sizeThickness"), thicknessMm, setThicknessMm],
+            ].map(([label, value, setValue]) => (
+              <label key={label} className="min-w-0">
+                <span className="mb-1 block text-xs font-semibold text-ink">{label}</span>
+                <span className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min="0"
+                    inputMode="decimal"
+                    value={value}
+                    onChange={(event) => setValue(event.target.value)}
+                    className="field-input w-full"
+                    aria-label={label}
+                  />
+                  <span className="shrink-0 text-xs text-mute">mm</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <label className="block">
         <span className="block text-sm font-medium text-ink mb-1">
           {t("customProductDesc")} <span className="font-normal text-mute">({t("optional")})</span>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import ProductCard, { ProductCardSkeleton } from "../components/ProductCard";
 import { ProductSearchBox } from "../components/SearchSuggestions";
@@ -33,14 +33,14 @@ export default function GreenPage() {
     setCatalogShown(24);
   }, [searchQuery]);
 
-  function handleAdd(productId, intent = "quote", qty) {
+  const handleAdd = useCallback((productId, intent = "quote", qty) => {
     const result = addFromStorefront(productId, intent, qty, lang);
     if (!result?.ok || intent === "quote-now" || intent === "buy-now") return;
     setToast({
       message: t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq"),
       href: withLocale(lang, "/rfq"),
     });
-  }
+  }, [lang, t]);
 
   return (
     <div className="bg-paper min-h-screen">

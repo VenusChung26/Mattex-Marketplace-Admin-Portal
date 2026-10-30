@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import * as Sentry from "@sentry/react";
 import GoogleAnalytics from "./components/GoogleAnalytics";
 import ScrollToTop from "./components/ScrollToTop";
 import { LanguageProvider } from "./i18n.jsx";
@@ -17,15 +18,20 @@ import PurchaseOrdersPage from "./pages/PurchaseOrdersPage";
 import WhatsappPage from "./pages/WhatsappPage";
 import WhatsappChatPage from "./pages/WhatsappChatPage";
 import SupplierPage from "./pages/SupplierPage";
+import AdminPortal from "./pages/admin/AdminPortal";
+import StaffSetPasswordPage from "./pages/admin/StaffSetPasswordPage";
+import StaffForgotPasswordPage from "./pages/admin/StaffForgotPasswordPage";
 import PublicQuotePage from "./pages/PublicQuotePage";
 import SpecMatchPage from "./pages/SpecMatchPage";
 import MidAutumnPage from "./pages/MidAutumnPage";
 import CatalogUpdateBanner from "./components/CatalogUpdateBanner";
 import FloatingActions from "./components/FloatingActions";
 import { getCategoryByName, ensureBuyerSession } from "./lib/store";
-import { adminOrigin } from "./lib/origins";
+import { adminOrigin, isAdminSurface } from "./lib/origins";
 import { preferredLocale, withLocale } from "./lib/locale";
 import { useStore } from "./hooks/useStore";
+
+const SentryRoutes = Sentry.withSentryReactRouterV7Routing(Routes);
 
 function BuyerSessionGuard() {
   const { user } = useStore();
@@ -114,7 +120,7 @@ function BootGate() {
   const { catalogBootReady } = useStore();
   const { pathname } = useLocation();
   const promoFirst = /\/promo\/?$/.test(pathname);
-  const showPage = catalogBootReady || promoFirst;
+  const showPage = isAdminSurface() || catalogBootReady || promoFirst;
   useEffect(() => {
     if (!showPage) return undefined;
     const boot = document.querySelector("[data-boot='mattex']");
@@ -128,13 +134,28 @@ function BootGate() {
 }
 
 export default function App() {
+  if (isAdminSurface()) {
+    return (
+      <BrowserRouter>
+        <LanguageProvider>
+          <BootGate />
+          <ScrollToTop />
+          <Routes>
+            <Route path="/set-password" element={<StaffSetPasswordPage />} />
+            <Route path="/forgot-password" element={<StaffForgotPasswordPage />} />
+            <Route path="*" element={<AdminPortal />} />
+          </Routes>
+        </LanguageProvider>
+      </BrowserRouter>
+    );
+  }
   return (
     <BrowserRouter>
       <LanguageProvider>
         <BootGate />
         <ScrollToTop />
         <GoogleAnalytics />
-        <Routes>
+        <SentryRoutes>
           <Route path="/" element={<PreferredRedirect />} />
           <Route path="/green" element={<PreferredRedirect to={{ pathname: "/", search: "?green=1", hash: "products" }} />} />
           <Route path="/sales" element={<PreferredRedirect />} />
@@ -189,7 +210,7 @@ export default function App() {
             <Route path="quote/:token" element={<PublicQuotePage />} />
             <Route path="*" element={<UnknownLangPath />} />
           </Route>
-        </Routes>
+        </SentryRoutes>
       </LanguageProvider>
     </BrowserRouter>
   );

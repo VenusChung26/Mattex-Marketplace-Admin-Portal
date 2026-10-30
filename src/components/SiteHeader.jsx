@@ -12,6 +12,7 @@ import { usePromo } from "../lib/promo";
 import { closeAuthModal, getCategoryByName, getCategoryDefs, getProductsByCategory, logoutUser } from "../lib/store";
 import { ProductSearchBox } from "./SearchSuggestions";
 import { CategorySheet } from "./MobileCategories";
+import { TourReplayButton } from "./MarketplaceTour";
 
 function CartIcon({ className = "h-4 w-4" }) {
   return (
@@ -63,6 +64,7 @@ export default function SiteHeader({
   onClearFilters,
   onCatalogClick,
   onDraftClick,
+  onStartTour,
   onSearchCategory,
   browseCategories,
   suggestProducts,
@@ -71,7 +73,7 @@ export default function SiteHeader({
   const { t, lang } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
-  const categories = useMemo(() => getCategoryDefs(), [catalogEpoch]);
+  const categories = getCategoryDefs();
   const headerRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [lockedHeight, setLockedHeight] = useState(0);
@@ -133,6 +135,20 @@ export default function SiteHeader({
     setMenuOpen(false);
   }
 
+  function replayTour() {
+    closeMenu();
+    if (onStartTour) {
+      onStartTour();
+      return;
+    }
+    try {
+      sessionStorage.setItem("mm_tour_force", "1");
+    } catch {
+      /* ignore */
+    }
+    navigate(lp("/"));
+  }
+
   function homeTo(hash = "", extra = {}) {
     const next = new URLSearchParams();
     if (isHome) {
@@ -180,6 +196,12 @@ export default function SiteHeader({
   function openProduct(product) {
     if (!product?.id) return;
     closeMenu();
+    if (isHome && onSearchSubmit) {
+      const name = String(product.name || product.productNo || "").trim();
+      setSearch(name);
+      onSearchSubmit(null, name);
+      return;
+    }
     navigate(lp(`/details/${product.id}`));
   }
 
@@ -291,7 +313,7 @@ export default function SiteHeader({
             </span>
           </Link>
 
-          <form className="hidden min-w-0 flex-1 md:block max-w-xl" onSubmit={submitSearch}>
+          <form data-tour="search" className="hidden min-w-0 flex-1 md:block max-w-xl" onSubmit={submitSearch}>
             <ProductSearchBox
               value={query}
               onValue={setSearch}
@@ -307,8 +329,10 @@ export default function SiteHeader({
           </form>
 
           <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
+            <TourReplayButton onClick={replayTour} className="hidden md:inline-flex" />
             <button
               type="button"
+              data-tour="cart"
               onClick={onRfqClick}
               className="relative inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white/85 hover:text-white hover:bg-white/10 transition-colors"
               aria-label={`${t("rfqDraft")}, ${t("cartCountAria", { n: cartCount })}`}
@@ -350,7 +374,7 @@ export default function SiteHeader({
           </div>
         </div>
 
-        <form className="pb-3 md:hidden" onSubmit={submitSearch}>
+        <form data-tour="search" className="pb-3 md:hidden" onSubmit={submitSearch}>
           <ProductSearchBox
             value={query}
             onValue={setSearch}
@@ -435,6 +459,7 @@ export default function SiteHeader({
       {menuOpen ? (
         <div className="absolute inset-x-0 top-full z-40 max-h-[min(70dvh,calc(100dvh-4.5rem))] overflow-y-auto border-t border-white/10 bg-[#101513] px-4 py-4 shadow-[0_18px_40px_rgba(0,0,0,0.35)] lg:hidden">
           <div className="flex flex-col gap-1 text-sm font-medium text-white/80">
+            <TourReplayButton onClick={replayTour} className="mb-2 md:hidden" />
             <button
               type="button"
               className="mb-2 flex items-center justify-between border border-white/15 px-3 py-2.5 text-left hover:bg-white/10"

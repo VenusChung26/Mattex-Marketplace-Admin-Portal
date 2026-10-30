@@ -273,7 +273,7 @@ function paragraphs(value) {
 const HOME_COPY = {
   en: {
     heroHeadline: "Engineering products, ask or buy",
-    heroSupport: "No price: request a quotation on WhatsApp. Listed price: purchase from stock on WhatsApp. Several products: add to the cart first.",
+    heroSupport: "No price: request a quotation on WhatsApp.\nListed price: purchase from stock on WhatsApp.\nSeveral products: add to the cart first.",
     browseCatalog: "Browse catalog",
     materialCategories: "Material categories",
     greenHeadline: "Lower-impact picks for greener builds",
@@ -299,7 +299,7 @@ const HOME_COPY = {
   },
   zh: {
     heroHeadline: "工程產品，問價或購買",
-    heroSupport: "未標價以 WhatsApp 詢問報價。已標價以 WhatsApp 購買現貨。數項產品可先放入購物車。",
+    heroSupport: "未標價以 WhatsApp 詢問報價。\n已標價以 WhatsApp 購買現貨。\n數項產品可先放入購物車。",
     browseCatalog: "瀏覽目錄",
     materialCategories: "物料分類",
     greenHeadline: "較低碳影響的建材選擇",
@@ -435,6 +435,15 @@ function pageContent(page) {
       ${gallery.map((src) => `<img src="${esc(src)}" alt="${esc(product.name)}" />`).join("\n")}
       <p><a href="${esc(withLocale(lang, catalogPathForCategory(product.category)))}">${esc(product.category)}</a></p>
       <h1>${esc(product.name)}</h1>
+      ${
+        product.green
+          ? `<p>${esc(
+              lang === "zh"
+                ? "此產品標示為環保，屬較低碳影響的建材。可問價，已標價亦可購買現貨。"
+                : "This product is marked Green. It is a lower-carbon building material. Ask for a quote, or buy from stock when a price is shown.",
+            )}</p>`
+          : ""
+      }
       <p>${lang === "zh" ? "供應商" : "Supplier"}: ${
         product.supplier
           ? `<a href="${esc(withLocale(lang, supplierPath(product.supplier)))}">${esc(supplierDisplayName(product.supplier))}</a>`
@@ -525,7 +534,7 @@ function pageContent(page) {
   const suppliers = getSuppliers();
   return `<article class="mattex-ssr">
       <h1>${esc(copy.heroHeadline)}</h1>
-      <p>${esc(copy.heroSupport)}</p>
+      ${paragraphs(copy.heroSupport)}
       <p><a href="${esc(withLocale(lang, "/catalog"))}">${esc(copy.browseCatalog)}</a></p>
       <section>
         <h2>${esc(copy.howHeadline)}</h2>

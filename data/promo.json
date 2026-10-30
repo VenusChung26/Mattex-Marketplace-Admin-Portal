@@ -19,29 +19,39 @@
           "endsOn": "2026-12-31"
         },
         {
-          "productId": "mkt-mesh-a193",
-          "price": 96,
-          "endsOn": "2026-12-31"
-        },
-        {
-          "productId": "mkt-mesh-a252",
-          "price": 110,
-          "endsOn": "2026-12-31"
-        },
-        {
-          "productId": "mkt-mesh-a393",
-          "price": 128,
-          "endsOn": "2026-12-31"
-        },
-        {
-          "productId": "mkt-mesh-b503",
-          "price": 140,
-          "endsOn": "2026-12-31"
-        },
-        {
-          "productId": "mkt-tiles-the-divine-light-series-600x1200mm",
+          "productId": "mkt-loc-ss97x4vr-001",
           "price": 30,
-          "endsOn": "2026-10-28"
+          "endsOn": "2026-12-31"
+        },
+        {
+          "productId": "mkt-gypsum-block-gypsum-block-500x500x80mm-1100-1200kg-m3",
+          "price": 199,
+          "endsOn": "2026-12-31"
+        },
+        {
+          "productId": "mkt-precasted-concrete-precast-concrete-block-300x300x200",
+          "price": 45,
+          "endsOn": "2026-12-31"
+        },
+        {
+          "productId": "mkt-db-0001",
+          "price": 18,
+          "endsOn": "2026-12-31"
+        },
+        {
+          "productId": "mkt-dense-mesh-flame-retardant-safety-net-fr-safety-net-4x9m",
+          "price": 88,
+          "endsOn": "2026-12-31"
+        },
+        {
+          "productId": "mkt-xps-foam-board-jl150-xps-50-mm",
+          "price": 32,
+          "endsOn": "2026-12-31"
+        },
+        {
+          "productId": "mkt-loc-tw2ccpyp-001",
+          "price": 48,
+          "endsOn": "2026-12-31"
         }
       ],
       "heroSrc": "/assets/promo/offer-hero-prices.jpg"

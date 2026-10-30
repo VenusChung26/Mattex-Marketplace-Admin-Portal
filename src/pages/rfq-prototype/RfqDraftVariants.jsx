@@ -6,12 +6,14 @@
 import { Link } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { draftTotals, formatPrice, getEffectivePrice, getProduct, isDiscontinued } from "../../lib/store";
+import GuestSubmitFields from "../../components/GuestSubmitFields";
 import { usePromo } from "../../lib/promo";
 import CustomProductForm from "../../components/CustomProductForm";
 import CustomProductModal from "../../components/CustomProductModal";
 import AttachmentLinks, { PreviewThumb } from "../../components/AttachmentLinks";
 import { QtyStepper } from "../../components/ProductCard";
 import { useLanguage } from "../../i18n";
+import DateField, { todayIso } from "../../components/DateField";
 
 export const RFQ_PROTOTYPE_VARIANTS = [
   { key: "A", name: "Inline in list" },
@@ -643,8 +645,15 @@ export function ConfirmRfqView(props) {
       </section>
 
       <section className="mt-4 bg-white border border-line rounded-xl p-4 sm:p-5 space-y-4">
-    <h2 className="text-base sm:text-lg font-bold text-brand-800">{t("deliveryRequest")}</h2>
-        <MetaForm {...props} compact requiredMarks={!viaWhatsapp} />
+        {props.signedIn ? (
+          <>
+            <GuestSubmitFields value={props.memberInfo} onChange={props.setMemberInfo} errorField={props.formErrorField} />
+            <h2 className="text-base sm:text-lg font-bold text-brand-800">{t("deliveryRequest")}</h2>
+            <MetaForm {...props} compact omitShared requiredMarks={!viaWhatsapp} />
+          </>
+        ) : (
+          <GuestSubmitFields value={props.guestInfo} onChange={props.setGuestInfo} errorField={props.formErrorField} />
+        )}
         <SubmitBar
           bare
           selectedIds={group.map((l) => String(l.productId))}
@@ -1315,215 +1324,6 @@ function invalidFieldClass(invalid, extra = "") {
   return `field-input ${extra} ${invalid ? "border-red-500 ring-2 ring-red-200 bg-red-50" : ""}`.trim();
 }
 
-function todayIso() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function isoFromParts(y, m, d) {
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
-
-function parseDateInput(raw) {
-  const text = String(raw || "").trim();
-  if (!text) return "";
-  let y;
-  let m;
-  let d;
-  const iso = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
-  const dmy = text.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
-  if (iso) {
-    y = Number(iso[1]);
-    m = Number(iso[2]);
-    d = Number(iso[3]);
-  } else if (dmy) {
-    d = Number(dmy[1]);
-    m = Number(dmy[2]);
-    y = Number(dmy[3]);
-  } else {
-    return "";
-  }
-  if (!y || m < 1 || m > 12 || d < 1 || d > 31) return "";
-  const dt = new Date(y, m - 1, d);
-  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return "";
-  return isoFromParts(y, m, d);
-}
-
-function DatePickerField({ value, onChange, min, invalid, className = "" }) {
-  const { lang } = useLanguage();
-  const boxRef = useRef(null);
-  const inputRef = useRef(null);
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState(value || "");
-  const selected = parseDateInput(value) || "";
-  const minIso = min || todayIso();
-  const seed = parseDateInput(value) || minIso;
-  const seedDate = new Date(`${seed}T00:00:00`);
-  const [viewYear, setViewYear] = useState(seedDate.getFullYear());
-  const [viewMonth, setViewMonth] = useState(seedDate.getMonth());
-
-  useEffect(() => {
-    setText(value || "");
-  }, [value]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const iso = parseDateInput(value) || minIso;
-    const d = new Date(`${iso}T00:00:00`);
-    setViewYear(d.getFullYear());
-    setViewMonth(d.getMonth());
-    function onDoc(e) {
-      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open, value, minIso]);
-
-  function commit(nextIso, close = true) {
-    const iso = parseDateInput(nextIso);
-    if (!iso) return;
-    if (iso < minIso) return;
-    setText(iso);
-    onChange(iso);
-    if (close) setOpen(false);
-  }
-
-  const weekdays = lang === "zh" ? ["日", "一", "二", "三", "四", "五", "六"] : ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-  const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString(lang === "zh" ? "zh-HK" : "en-GB", {
-    month: "long",
-    year: "numeric",
-  });
-  const first = new Date(viewYear, viewMonth, 1).getDay();
-  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
-  const cells = [];
-  for (let i = 0; i < first; i += 1) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d += 1) cells.push(d);
-  while (cells.length % 7) cells.push(null);
-
-  return (
-    <div ref={boxRef} className="relative">
-      <div className="relative">
-        <input
-          ref={inputRef}
-          type="text"
-          inputMode="numeric"
-          autoComplete="off"
-          placeholder="YYYY-MM-DD"
-          value={text}
-          onFocus={() => setOpen(true)}
-          onClick={() => setOpen(true)}
-          onChange={(e) => {
-            const next = e.target.value;
-            setText(next);
-            const iso = parseDateInput(next);
-            if (iso && iso >= minIso) onChange(iso);
-          }}
-          onBlur={() => {
-            const iso = parseDateInput(text);
-            if (iso && iso >= minIso) commit(iso, false);
-            else setText(value || "");
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setOpen(false);
-            if (e.key === "Enter") {
-              e.preventDefault();
-              const iso = parseDateInput(text);
-              if (iso && iso >= minIso) commit(iso);
-            }
-          }}
-          className={`${invalidFieldClass(invalid, className)} pr-10`}
-          aria-invalid={invalid ? true : undefined}
-        />
-        <button
-          type="button"
-          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-brand-800 hover:bg-brand-50"
-          aria-label="Open calendar"
-          onClick={() => {
-            setOpen((v) => !v);
-            inputRef.current?.focus();
-          }}
-        >
-          <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden>
-            <rect x="3" y="4.5" width="14" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
-            <path d="M3 8h14M7 3v3M13 3v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-        </button>
-      </div>
-      {open ? (
-        <div className="absolute z-30 mt-1 w-[17.5rem] rounded-xl border border-line bg-white p-3 shadow-lg">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              className="rounded-lg px-2 py-1 text-sm font-semibold text-brand-800 hover:bg-brand-50"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                const d = new Date(viewYear, viewMonth - 1, 1);
-                setViewYear(d.getFullYear());
-                setViewMonth(d.getMonth());
-              }}
-            >
-              ‹
-            </button>
-            <p className="text-sm font-semibold text-ink">{monthLabel}</p>
-            <button
-              type="button"
-              className="rounded-lg px-2 py-1 text-sm font-semibold text-brand-800 hover:bg-brand-50"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                const d = new Date(viewYear, viewMonth + 1, 1);
-                setViewYear(d.getFullYear());
-                setViewMonth(d.getMonth());
-              }}
-            >
-              ›
-            </button>
-          </div>
-          <div className="grid grid-cols-7 gap-0.5 text-center text-[11px] font-semibold text-mute">
-            {weekdays.map((w) => (
-              <span key={w} className="py-1">
-                {w}
-              </span>
-            ))}
-          </div>
-          <div className="mt-0.5 grid grid-cols-7 gap-0.5">
-            {cells.map((day, index) => {
-              if (!day) return <span key={`e-${index}`} />;
-              const iso = isoFromParts(viewYear, viewMonth + 1, day);
-              const disabled = iso < minIso;
-              const isSelected = iso === selected;
-              const isToday = iso === todayIso();
-              return (
-                <button
-                  key={iso}
-                  type="button"
-                  disabled={disabled}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => commit(iso)}
-                  className={`h-8 rounded-lg text-sm ${
-                    disabled
-                      ? "cursor-not-allowed text-mute/40"
-                      : isSelected
-                        ? "bg-brand-600 font-semibold text-white"
-                        : isToday
-                          ? "font-semibold text-brand-800 hover:bg-brand-50"
-                          : "text-ink hover:bg-brand-50"
-                  }`}
-                >
-                  {day}
-                </button>
-              );
-            })}
-          </div>
-          <p className="mt-2 text-[11px] text-mute">{lang === "zh" ? "可開日曆選擇，或直接輸入日期" : "Pick from the calendar, or type the date"}</p>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function FieldError({ show, children }) {
   if (!show) return null;
   return (
@@ -1563,6 +1363,7 @@ function MetaForm({
   compact = false,
   requiredMarks = true,
   profileProjects = [],
+  omitShared = false,
 }) {
   const { t } = useLanguage();
   const today = todayIso();
@@ -1575,7 +1376,7 @@ function MetaForm({
     .map((row) => row.trim())
     .filter(Boolean);
   const projectOptions = [...new Set([...(profileProjects || []), ...selectedProjects])];
-  const reqMark = requiredMarks ? <span className="text-brand-600">*</span> : null;
+  const reqMark = requiredMarks ? <span className="text-red-600">*</span> : null;
 
   function commitProjects(next) {
     const joined = next.filter(Boolean).join(" · ");
@@ -1586,12 +1387,12 @@ function MetaForm({
 
   return (
     <div id="rfq-details" className={compact ? "space-y-3" : "bg-white border border-line rounded-xl p-4 sm:p-5 space-y-4"}>
-      <div className="grid sm:grid-cols-2 gap-4">
+      <div className={`grid gap-4 ${omitShared ? "" : "sm:grid-cols-2"}`}>
         <label className="block">
           <span className="block text-sm font-medium mb-1">
             {t("quotationDeadline")} {reqMark}
           </span>
-          <DatePickerField
+          <DateField
             value={responseDate || ""}
             min={today}
             invalid={deadlineInvalid}
@@ -1604,22 +1405,44 @@ function MetaForm({
           <FieldError show={deadlineInvalid}>{t("responseDateRequired")}</FieldError>
           <span className="mt-1 block text-xs text-mute">{t("quotationDeadlineHint")}</span>
         </label>
+        {omitShared ? null : (
         <label className="block">
           <span className="block text-sm font-medium mb-1">
             {t("requestDeliveryDate")} {reqMark}
           </span>
-          <DatePickerField
-            value={deliveryDate || ""}
-            min={today}
-            invalid={deliveryInvalid}
-            onChange={(next) => {
-              setDeliveryDate(next);
-              setDraftDeliveryDate(next);
-              setFormError("");
-            }}
-          />
+          <label className="mb-2 flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-brand-600"
+              checked={(deliveryDate || "") === "N/A"}
+              onChange={(e) => {
+                const next = e.target.checked ? "N/A" : "";
+                setDeliveryDate(next);
+                setDraftDeliveryDate(next);
+                setFormError("");
+              }}
+            />
+            <span>
+              {t("deliveryDateNa")}
+            </span>
+          </label>
+          {(deliveryDate || "") === "N/A" ? (
+            <p className="text-sm font-medium">N/A</p>
+          ) : (
+            <DateField
+              value={deliveryDate || ""}
+              min={today}
+              invalid={deliveryInvalid}
+              onChange={(next) => {
+                setDeliveryDate(next);
+                setDraftDeliveryDate(next);
+                setFormError("");
+              }}
+            />
+          )}
           <FieldError show={deliveryInvalid}>{t("deliveryDateRequired")}</FieldError>
         </label>
+        )}
       </div>
       <p className="text-sm font-semibold text-brand-800">{t("deliveryRequest")}</p>
       <fieldset className="block">
@@ -1700,7 +1523,7 @@ function MetaForm({
                 <span className="block text-sm font-medium mb-1">
                   {t("deliveryLotDate")} {reqMark}
                 </span>
-                <DatePickerField
+                <DateField
                   value={lot.date || ""}
                   min={today}
                   invalid={lotsInvalid && index === 0}
@@ -1788,6 +1611,7 @@ function MetaForm({
           </button>
         </div>
       ) : null}
+      {omitShared ? null : (
       <div className="space-y-2">
         <p className="text-sm font-medium">{t("projectName")}</p>
         <div className="flex flex-wrap gap-2">
@@ -1829,7 +1653,8 @@ function MetaForm({
         />
         <span className="block text-xs text-mute">{t("projectHint")}</span>
       </div>
-      {deliveryMode === "partial" ? null : (
+      )}
+      {omitShared || deliveryMode === "partial" ? null : (
       <label className="block">
         <span className="block text-sm font-medium mb-1">
           {t("siteAddress")} {reqMark}

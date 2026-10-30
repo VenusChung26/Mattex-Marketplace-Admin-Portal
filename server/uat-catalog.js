@@ -42,15 +42,36 @@ function httpUrl(value) {
   return /^https:\/\//.test(url) ? url : "";
 }
 
-async function eachPage(sb, table, columns) {
+async function eachPage(sb, table, columns, filter) {
   const rows = [];
   for (let from = 0; ; from += PAGE) {
-    const { data, error } = await sb.from(table).select(columns).range(from, from + PAGE - 1);
+    let query = sb.from(table).select(columns);
+    if (filter) query = filter(query);
+    const { data, error } = await query.range(from, from + PAGE - 1);
     if (error) throw error;
     rows.push(...(data || []));
     if (!data || data.length < PAGE) break;
   }
   return rows;
+}
+
+const VALVE_PHOTO_SOURCE = "Copper Gate Valve — 15mm";
+const VALVE_PHOTO_LINES = [
+  "Cast Iron Gate Valve",
+  "Ductile Iron Check Valve",
+  "Ductile Iron Pressure Reducing Valve",
+];
+
+function correctUatProducts(products) {
+  const source = products.find((product) => product.name === VALVE_PHOTO_SOURCE && product.image);
+  const valveImage = source?.image || "";
+  return products
+    .filter((product) => !(product.name === "Steel (2)" && product.productNo === "000001"))
+    .map((product) => {
+      const line = VALVE_PHOTO_LINES.find((name) => String(product.name || "").startsWith(name));
+      if (!valveImage || !line) return product;
+      return { ...product, image: valveImage, imageUrl: valveImage };
+    });
 }
 
 function toProduct(row, category, supplier, images) {
@@ -89,7 +110,7 @@ function toProduct(row, category, supplier, images) {
 export async function readUatCatalog() {
   const sb = db();
   if (!sb) return null;
-  if (cached && Date.now() - cachedAt < 15000) return cached;
+  if (cached && Date.now() - cachedAt < 60000) return cached;
   try {
     const [products, categories, suppliers, files] = await Promise.all([
       eachPage(
@@ -99,7 +120,7 @@ export async function readUatCatalog() {
       ),
       eachPage(sb, "categories", "id, uuid, primary_name, secondary_name, parent_id, status"),
       eachPage(sb, "suppliers", "id, uuid, name_eng, name_chi, logo"),
-      eachPage(sb, "files", "id, model_type, model_id, thumbnail_file_path, file_path, file_url, sort"),
+      eachPage(sb, "files", "id, model_type, model_id, thumbnail_file_path, file_path, file_url, sort", (query) => query.eq("model_type", "products")),
     ]);
     const categoryById = new Map(categories.map((row) => [String(row.id), row]));
     const supplierById = new Map(suppliers.map((row) => [String(row.id), row]));
@@ -113,7 +134,7 @@ export async function readUatCatalog() {
         list.push(row);
         imagesByProduct.set(key, list);
       });
-    const mapped = products
+    const mapped = correctUatProducts(products
       .filter((row) => Number(row.status) === 1)
       .map((row) =>
         toProduct(
@@ -123,7 +144,7 @@ export async function readUatCatalog() {
           imagesByProduct.get(String(row.id)) || []
         )
       )
-      .filter((row) => row.id && row.name);
+      .filter((row) => row.id && row.name));
     if (!mapped.length) return null;
     const names = [...new Set(mapped.map((row) => row.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     const body = JSON.stringify(mapped.map((row) => [row.id, row.unit_price, row.name]));

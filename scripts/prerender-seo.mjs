@@ -32,7 +32,7 @@ async function main() {
     await writePage(rel, injectPublicDocument(template, pagePath, origin));
   }
 
-  const home = injectPublicDocument(template, "/en", origin);
+  const home = injectPublicDocument(template, "/zh", origin);
   await writeFile(path.join(distDir, "index.html"), home);
 
   const english = paths.filter((pagePath) => pagePath.startsWith("/en"));
@@ -44,7 +44,7 @@ async function main() {
     <loc>${esc(loc)}</loc>
     <xhtml:link rel="alternate" hreflang="en" href="${esc(loc)}" />
     <xhtml:link rel="alternate" hreflang="zh-Hant" href="${esc(zh)}" />
-    <xhtml:link rel="alternate" hreflang="x-default" href="${esc(loc)}" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="${esc(zh)}" />
   </url>`;
     })
     .join("\n");

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { useStore } from "../hooks/useStore";
-import { searchProducts } from "./store";
+import { getCatalogEpoch, searchProducts, subscribeStore } from "./store";
 import { assignProducts, buildAutoGroups, collapseCatalog, indexGroups, releaseProducts } from "./catalogGroup";
 import { getCatalogGroups as loadRemoteCatalogGroups, saveCatalogGroups as saveCatalogGroupsRemote } from "./remote.js";
 
@@ -11,6 +10,8 @@ let byProduct = new Map();
 let source = "auto";
 let remoteLoad = null;
 let autoKey = null;
+let savedKey = null;
+let catalogWatch = null;
 const listeners = new Set();
 
 function loadGroupsOnce() {
@@ -29,14 +30,66 @@ function loadGroupsOnce() {
   return remoteLoad;
 }
 
+function skuKey(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+/** Saved groups still point at the old mkt-* ids. Live catalog ids are UUIDs, matched here by SKU. */
+function rebindSavedGroups(list) {
+  const products = searchProducts("");
+  if (!products.length || !Array.isArray(list) || !list.length) return list;
+  const bySku = new Map();
+  const liveIds = new Set();
+  for (const product of products) {
+    const id = String(product.id || "");
+    if (id) liveIds.add(id);
+    const sku = skuKey(product.productNo);
+    if (sku && !bySku.has(sku)) bySku.set(sku, id);
+  }
+  let changed = false;
+  const next = [];
+  const used = new Set();
+  for (const group of list) {
+    const members = [];
+    for (const member of group.members || []) {
+      const sku = skuKey(member.productNo);
+      const fromSku = sku ? bySku.get(sku) : "";
+      const current = String(member.productId || "");
+      const productId = fromSku || (liveIds.has(current) ? current : "");
+      if (productId && used.has(productId)) continue;
+      if (productId) used.add(productId);
+      const nextId = productId || current;
+      if (nextId !== current) changed = true;
+      members.push({ ...member, productId: nextId });
+    }
+    if (members.length) next.push({ ...group, members });
+  }
+  return changed ? next : list;
+}
+
 function ensureAutoGroups(epoch) {
-  if (source === "saved" || autoKey === epoch) return;
+  if (source === "saved") {
+    if (savedKey === epoch) return;
+    const next = rebindSavedGroups(groups);
+    if (next === groups && !searchProducts("").length) return;
+    savedKey = epoch;
+    if (next !== groups) publish(next, "saved");
+    return;
+  }
+  if (autoKey === epoch) return;
   autoKey = epoch;
   publish(buildAutoGroups(searchProducts("")), "auto");
 }
 
+function watchCatalogEpoch() {
+  if (catalogWatch) return;
+  ensureAutoGroups(getCatalogEpoch());
+  catalogWatch = subscribeStore(() => ensureAutoGroups(getCatalogEpoch()));
+}
+
 function publish(next, nextSource) {
-  groups = Array.isArray(next) ? next : [];
+  const bound = nextSource === "saved" ? rebindSavedGroups(next) : next;
+  groups = Array.isArray(bound) ? bound : [];
   byProduct = indexGroups(groups);
   source = nextSource;
   listeners.forEach((fn) => fn());
@@ -55,18 +108,14 @@ export function catalogGroupIndex() {
 }
 
 export function useCatalogGroups() {
-  const { catalogEpoch } = useStore();
   const [epoch, setEpoch] = useState(0);
 
   useEffect(() => {
+    watchCatalogEpoch();
     const onChange = () => setEpoch((value) => value + 1);
     listeners.add(onChange);
     return () => listeners.delete(onChange);
   }, []);
-
-  useEffect(() => {
-    ensureAutoGroups(catalogEpoch);
-  }, [catalogEpoch]);
 
   useEffect(() => {
     let cancel = false;

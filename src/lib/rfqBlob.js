@@ -173,6 +173,40 @@ export async function collectAttachmentUrls(rows, refNo) {
   });
 }
 
+/** Guest name-card / BQ / drawing files. Each item is `{ name, url }`. Empty input leaves the message unchanged. */
+export function fitWhatsappFileLinks(baseText, files, heading = "附件連結：") {
+  const list = (Array.isArray(files) ? files : [])
+    .map((file) => ({
+      url: String(file?.url || "").trim(),
+      name: String(file?.name || "").trim(),
+    }))
+    .filter((file) => file.url);
+  const used = [];
+  let text = baseText;
+  for (const file of list) {
+    const body = file.name ? `${file.name}\n${file.url}` : file.url;
+    const next = used.length ? `${text}\n${used.length + 1}. ${body}` : `${text}\n\n${heading}\n1. ${body}`;
+    if (next.length > WA_TEXT_MAX) break;
+    text = next;
+    used.push(file);
+  }
+  return { text, files: used };
+}
+
+export async function uploadGuestOrderFiles(files, refNo) {
+  const uploaded = [];
+  const list = Array.isArray(files) ? files : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const file = list[i]?.file;
+    if (!file) throw new Error("guest attachment");
+    const rawName = String(list[i].name || file.name || `file-${i + 1}`);
+    const name = safeSegment(rawName);
+    const url = await uploadRfqFile(`rfq/${safeSegment(refNo)}/guest-${i + 1}-${name}`, file);
+    uploaded.push({ name: rawName, url });
+  }
+  return uploaded;
+}
+
 export function fitWhatsappUrls(baseText, imageUrls, heading = "產品圖片：") {
   const urls = Array.isArray(imageUrls) ? imageUrls.filter(Boolean) : [];
   const used = [];

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLanguage } from "../i18n";
 import { foldHan } from "../lib/han";
+import { shopTitle } from "../lib/catalogGroup";
 import { categoriesInCatalog, flattenSuggestOptions, productSku, searchSuggestOptions } from "../lib/searchOptions";
 import { scrollNodeIntoView } from "../lib/scrollInto";
 
@@ -83,8 +84,8 @@ function SuggestMenu({ anchorRef, query, options, activeIndex, onPick, labels })
       const item = items[index];
       if (item) onPick(item);
     }
-    menu.addEventListener("mousedown", onDown);
-    return () => menu.removeEventListener("mousedown", onDown);
+    menu.addEventListener("pointerdown", onDown);
+    return () => menu.removeEventListener("pointerdown", onDown);
   }, [items, onPick, box]);
 
   if (!box || typeof document === "undefined") return null;
@@ -147,7 +148,7 @@ function SuggestMenu({ anchorRef, query, options, activeIndex, onPick, labels })
       const item = items[cursor];
       sections.push(row(item, (
         <span className="min-w-0">
-          <span className="block leading-snug">{highlightMatch(product.name, query)}</span>
+          <span className="block leading-snug">{highlightMatch(shopTitle(product), query)}</span>
           <span className="mt-0.5 block truncate text-[11px] text-mute">
             {highlightMatch([product.category, productSku(product)].filter(Boolean).join(" · "), query)}
           </span>
@@ -189,6 +190,7 @@ export function ProductSearchBox({
   const { t } = useLanguage();
   const admin = import.meta.env.VITE_SURFACE === "admin";
   const inputRef = useRef(null);
+  const blurTimer = useRef(0);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const excludeKey = excludeIds.join("\0");
@@ -243,8 +245,13 @@ export function ProductSearchBox({
           setOpen(admin ? Boolean(event.target.value.trim()) : true);
           setActiveIndex(-1);
         }}
-        onFocus={() => setOpen(admin ? Boolean(query.trim()) : true)}
-        onBlur={() => setOpen(false)}
+        onFocus={() => {
+          window.clearTimeout(blurTimer.current);
+          setOpen(admin ? Boolean(query.trim()) : true);
+        }}
+        onBlur={() => {
+          blurTimer.current = window.setTimeout(() => setOpen(false), 200);
+        }}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
             event.preventDefault();

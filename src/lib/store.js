@@ -1,14 +1,15 @@
-import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappUrls, publishCustomLineMedia, uploadRfqPdf } from "./rfqBlob.js";
+import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappFileLinks, fitWhatsappUrls, publishCustomLineMedia, uploadGuestOrderFiles, uploadRfqPdf } from "./rfqBlob.js";
 import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
+import { attachmentSummary, guestOrderError, guestOrderPayload, guestUploadFiles, memberOrderSeed, releaseGuestUploadFiles } from "./guestOrder.js";
 import { fetchQuoteSnapshot, fetchRemoteKv, fetchRemoteRfqs, fetchRfqStamp, fetchSessionState, isSupabaseConfigured, persistCatalogTables, persistKv, persistKvNow, probeRemoteData, shouldUseLocalSharedStore } from "./supabasePersist.js";
-import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedStore, postAuth, postEmail, postSharedStore, registerRfq, createPurchaseOrderRemote, decideRfqOnServer, assignRfqOnServer, submitQuoteOnServer, freezeWhatsappQuoteOnServer, markWhatsappSentOnServer, syncRfqsFromServer, pushBuyerContent, saveQuoteDraft, saveBuyerPhone, createPoFromQuote } from "./remote.js";
+import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedStore, postAuth, postEmail, postSharedStore, registerRfq, createPurchaseOrderRemote, decideRfqOnServer, assignRfqOnServer, submitQuoteOnServer, freezeWhatsappQuoteOnServer, markWhatsappSentOnServer, syncRfqsFromServer, pushBuyerContent, saveQuoteDraft, saveBuyerPhone, saveGuestFileUrls, createPoFromQuote } from "./remote.js";
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
 import { SHOW_TMS_LINK } from "./flags.js";
 import { activeOfferPrice } from "./offer.js";
 import { activityDedupeKey, applyDecision, applyDeliveredQuoteVersion, buildDeliveredQuoteVersion, freezeQuoteLines, nextQuoteVersionNo, planLoadQuoteVersion, planQuoteSubmit, quoteDraftIsDirty, quoteEffectiveVersionNo, quoteVersionLines, quoteVersionList, snapshotLineImage, canBuyerRequestCancel, canBuyerReverse, getQuoteVersion, inboxStatus, planAssign, planCancelReverse, planDecision, mergeOwned, draftPricesOf, deliveredLinePrices, salesLine, planPoFromQuote, rfqBuyerKind, pushRfqActivity, rfqNeedsSalesReverse } from "./rfqRules.js";
 import { adoptGuestSpecMatch } from "./specMatchSession.js";
 import { foldHan } from "./han.js";
-import { displaySku, isTailorMade, localizeLeadTime, orderMinimum, productImageUrl, sellingAmount } from "./productFields.js";
+import { buyerSpecSourceLines, displaySku, isTailorMade, localizeLeadTime, orderMinimum, productImageUrl, sellingAmount } from "./productFields.js";
 import { contactFormFromAccount, normalizeRoles } from "./phone.js";
 import {
   accountCreatedEmailHtml,
@@ -275,7 +276,7 @@ function specBody(value) {
 function specificationRows(product) {
   const rows = [];
   const seen = new Set();
-  for (const spec of product?.specs || []) {
+  for (const spec of buyerSpecSourceLines(product)) {
     const text = String(spec).trim();
     if (!text) continue;
     if (/^(sales unit|moq|unit\s*\/\s*pallet|units per pallet|pallet)\s*:/i.test(text)) continue;
@@ -304,7 +305,7 @@ function productDescriptionText(product) {
   const description = String(product?.description || "").trim();
   if (!description) return "";
   const body = specBody(description);
-  const repeated = (product?.specs || []).some((line) => specBody(line) === body);
+  const repeated = buyerSpecSourceLines(product).some((line) => specBody(line) === body);
   return repeated ? "" : description;
 }
 
@@ -356,6 +357,12 @@ function normalizeProductRecord(product) {
       : (product.imageUrl || product.image ? [product.imageUrl || product.image] : []),
     certFiles: Array.isArray(product.certFiles) ? product.certFiles : [],
     createdAt: Number(product.createdAt) > 0 ? Number(product.createdAt) : product.createdAt || 0,
+    unit_price: isPortalSurface()
+      ? product.unit_price
+      : (product.priceUponRequest === false && Number(product.unit_price) > 0 ? product.unit_price : null),
+    priceUponRequest: isPortalSurface()
+      ? Boolean(product.priceUponRequest)
+      : !(product.priceUponRequest === false && Number(product.unit_price) > 0),
   };
 }
 
@@ -365,7 +372,6 @@ function activeCatalog(list) {
 
 function canDirectBuy(product) {
   if (!product || isDiscontinued(product)) return false;
-  if (activeOfferPrice(product.id) != null) return true;
   return getEffectivePrice(product).displayPrice != null;
 }
 
@@ -440,6 +446,11 @@ function getEffectivePrice(product) {
   return { displayPrice: amount, status: "list", quote: null };
 }
 
+/** The price a product card actually shows: the selling price, or a live offer. */
+function productShowsPrice(product) {
+  return getEffectivePrice(product).displayPrice != null;
+}
+
 function formatQuoteDate(iso, lang) {
   if (!iso) return "";
   const d = new Date(`${iso}T00:00:00`);
@@ -496,6 +507,36 @@ function categoryAliases(def) {
     const parts = String(def.name).split(",");
     names.push(parts[0].trim(), parts.slice(1).join(",").trim());
   }
+  if (def?.id === "xps-foam-board") {
+    names.push(
+      "Insulation Board",
+      "擠塑保溫板, Insulation Board",
+      "擠塑保溫板",
+      "保溫板",
+      "隔熱板",
+      "Building Envelope, Insulation & Waterproofing",
+      "建築外牆、保溫及防水",
+      "建築外牆、保溫及防水, Building Envelope, Insulation & Waterproofing",
+    );
+  }
+  if (def?.id === "balustrades") {
+    names.push("Metal Access", "金屬通道", "金屬通道, Metal Access", "Guardrails & Balustrades");
+  }
+  if (def?.id === "oxygen-chamber") {
+    names.push("Site Facilities", "工地設施", "工地設施, Site Facilities", "Site Equipment & Storage", "工地設備及儲存");
+  }
+  if (def?.id === "dowel-bar") {
+    names.push("Steel", "鋼材", "鋼材, Steel");
+  }
+  if (def?.id === "paint") {
+    names.push("Architectural Finishes", "建築飾面", "建築飾面, Architectural Finishes");
+  }
+  if (def?.id === "cable") {
+    names.push("MEP & Utilities", "機電及公用設施", "機電及公用設施, MEP & Utilities", "Electrical & Cabling", "電氣及電纜");
+  }
+  if (def?.id === "aggregate" || String(def?.name || "").startsWith("石料")) {
+    names.push("Raw Materials", "原材料", "原材料, Raw Materials", "Aggregates", "石料");
+  }
   return [...new Set(names.map((n) => String(n || "").trim()).filter(Boolean))];
 }
 
@@ -549,6 +590,58 @@ function visibleCategoryDefs() {
     .map((c) => ({ ...c, name: meta.names[c.id] || c.name }));
 }
 
+function shopCategoryRank(category) {
+  const id = String(category?.id || "");
+  const name = String(category?.name || (typeof category === "string" ? category : ""));
+  // Order follows the materials page product list: steel, tile, timber, board, aggregate, plaster, pipe, cable, precast, barriers, gypsum, waterproof, brick, manhole, insulation, safety net.
+  const rules = [
+    [["structure-steel"], /結構鋼|structure steel/i, 10],
+    [["reinforcement-mesh"], /鋼筋網|reinforcement mesh/i, 20],
+    [["dowel-bar"], /鋼材|傳力桿|dowel/i, 30],
+    [["handrails"], /扶手|handrail/i, 40],
+    [["balustrades"], /金屬通道|欄河|balustrade/i, 50],
+    [["cat-ladder"], /貓梯|cat ladder/i, 60],
+    [["steel-shelving"], /鋼層架|貨台|shelving|storage platform/i, 70],
+    [["tiles"], /瓷磚|\btiles?\b/i, 80],
+    [["paint"], /建築飾面|architectural finishes|^油漆/i, 90],
+    [["timber", "plywood"], /木材|夾板|timber|plywood/i, 100],
+    [["gypsum-board", "board"], /板材|石膏板|gypsum board|\bboard\b/i, 110],
+    [["aggregate"], /原材料|raw materials|aggregate|石料/i, 120],
+    [["plaster", "plastering"], /批盪|plaster/i, 130],
+    [["pipe", "pipes"], /喉管|pipe\s*&\s*fittings/i, 140],
+    [["infrastructure"], /基建|infrastructure/i, 150],
+    [["cable-containment"], /線槽|cable containment/i, 160],
+    [["precasted-concrete"], /預製混凝土|precast/i, 170],
+    [["barriers"], /圍欄|barriers?/i, 180],
+    [["gypsum-block"], /石膏磚|gypsum block/i, 190],
+    [["waterproof", "waterproofing"], /防水,\s*waterproofing|^防水(?!板)/i, 200],
+    [["xps-foam-board"], /建築外牆|building envelope|擠塑板|xps foam/i, 210],
+    [["brick", "brick-block"], /磚、砌塊|brick\s*&\s*block/i, 220],
+    [["manhole"], /沙井|manhole/i, 230],
+    [["forge-welded-grating"], /焊接鋼格板|forge-welded/i, 240],
+    [["press-lock-grating"], /壓鎖鋼格板|press-lock/i, 241],
+    [["gu-gratings"], /gu型去水溝蓋|gu type/i, 242],
+    [["gt-gratings"], /gt型去水溝蓋|gt type/i, 243],
+    [["insulation"], /保溫,\s*insulation|^保溫(?!及)/i, 250],
+    [["safety-net"], /安全網|safety net/i, 260],
+    [["oxygen-chamber", "shoe-washing-machines"], /工地設施|site facilities|氧氣艙|洗鞋/i, 900],
+    [["cable"], /機電|電線電纜|\bmep\b/i, 910],
+    [["window"], /(^|[^a-z])窗|window/i, 920],
+    [["software"], /建築科技|\bsoftware\b/i, 1000],
+  ];
+  for (const [ids, , rank] of rules) {
+    if (id && ids.includes(id)) return rank;
+  }
+  for (const [, pattern, rank] of rules) {
+    if (pattern.test(name)) return rank;
+  }
+  return 800;
+}
+
+function compareShopCategories(a, b) {
+  return shopCategoryRank(a) - shopCategoryRank(b) || String(a?.name || a || "").localeCompare(String(b?.name || b || ""), "zh");
+}
+
 function getCategoryDefs() {
   const defs = visibleCategoryDefs();
   const aliasToId = new Map();
@@ -559,27 +652,59 @@ function getCategoryDefs() {
     }
   }
   const counts = Object.create(null);
+  const covers = Object.create(null);
   for (const def of defs) counts[def.id] = 0;
   for (const product of activeCatalog(PRODUCTS)) {
     for (const piece of categoryPieces(product?.category)) {
       const id = aliasToId.get(categoryKey(piece));
       if (id == null) continue;
       counts[id] += 1;
+      if (!covers[id]) {
+        const image = String(product.image || product.imageUrl || "").trim();
+        if (image) covers[id] = { image, imageFallback: String(product.imageFallback || "") };
+      }
       break;
     }
   }
-  return defs.map((c) => ({
-    id: c.id,
-    name: c.name,
-    image: c.image || "/assets/prod-mesh.webp",
-    imageFallback: c.imageFallback || "",
-    count: counts[c.id] || 0,
-    custom: Boolean(c.custom),
-  }));
+  const rows = defs.filter((c) => isPortalSurface() || c.id !== "vinyl").map((c) => {
+    const generic = !c.image || (c.custom && isGenericCategoryImage(c.image));
+    const cover = generic ? covers[c.id] : null;
+    return {
+      id: c.id,
+      name:
+        !isPortalSurface() && c.id === "xps-foam-board"
+          ? "建築外牆、保溫及防水, Building Envelope, Insulation & Waterproofing"
+          : !isPortalSurface() && c.id === "balustrades"
+            ? "金屬通道, Metal Access"
+            : !isPortalSurface() && c.id === "oxygen-chamber"
+              ? "工地設施, Site Facilities"
+              : !isPortalSurface() && c.id === "dowel-bar"
+                ? "鋼材, Steel"
+                : !isPortalSurface() && c.id === "paint"
+                  ? "建築飾面, Architectural Finishes"
+                  : !isPortalSurface() && c.id === "cable"
+                    ? "機電及公用設施, MEP & Utilities"
+                    : !isPortalSurface() && (c.id === "aggregate" || String(c.name || "").startsWith("石料"))
+                      ? "原材料, Raw Materials"
+                      : c.name,
+      image: cover?.image || c.image || "/assets/prod-mesh.webp",
+      imageFallback: cover?.imageFallback || c.imageFallback || "",
+      count: counts[c.id] || 0,
+      custom: Boolean(c.custom),
+    };
+  });
+  rows.sort(compareShopCategories);
+  if (!activeCatalog(PRODUCTS).length) return rows;
+  return rows.filter((category) => category.count > 0);
+}
+
+function isGenericCategoryImage(url) {
+  const value = String(url || "");
+  return !value || value.includes("prod-mesh");
 }
 
 function getCategories() {
-  return visibleCategoryDefs().map((c) => c.name);
+  return visibleCategoryDefs().slice().sort(compareShopCategories).map((c) => c.name);
 }
 
 function getAdminCategories() {
@@ -613,7 +738,7 @@ function addAdminCategory(name) {
   let id = slugifyCategory(nextName);
   const used = new Set([...CATEGORY_DEFS.map((c) => c.id), ...list.map((c) => c.id), ...getCategoryAdminMeta().hidden]);
   if (used.has(id)) id = `${id}-${Date.now().toString(36)}`;
-  list.push({ id, name: nextName, image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/prod-mesh-igvCUHaNuYJdOx7HvsmLA7WsVq9Spc.webp", imageFallback: "/assets/prod-mesh.webp", custom: true });
+  list.push({ id, name: nextName, image: "", imageFallback: "", custom: true });
   writeJson(CUSTOM_CATEGORIES_KEY, list);
   emitStoreChange();
   return { ok: true, category: { id, name: nextName } };
@@ -623,18 +748,43 @@ function adminProductsInCategory(name) {
   return PRODUCTS.filter((p) => productInNamedCategory(p, name));
 }
 
+let adminCategoryCache = { key: "", list: null };
+
 function listAdminCategories() {
-  return visibleCategoryDefs().map((c) => {
-    const products = adminProductsInCategory(c.name);
+  const defs = visibleCategoryDefs();
+  const key = `${catalogEpoch}\n${defs.map((def) => `${def.id}\t${def.name}\t${def.image || ""}\t${def.custom ? 1 : 0}`).join("\n")}`;
+  if (adminCategoryCache.key === key && adminCategoryCache.list) return adminCategoryCache.list;
+  const resolved = defs.map((def) => {
+    const found = findCategoryDef(def.name);
+    return found
+      ? { def, keys: categoryAliases(found).map(categoryKey), raw: "" }
+      : { def, keys: null, raw: categoryKey(def.name) };
+  });
+  const buckets = new Map(defs.map((def) => [def.id, []]));
+  for (const product of PRODUCTS) {
+    const pieces = new Set(categoryPieces(product?.category).map(categoryKey));
+    for (const row of resolved) {
+      const hit = row.keys ? row.keys.some((alias) => pieces.has(alias)) : pieces.has(row.raw);
+      if (hit) buckets.get(row.def.id).push(product);
+    }
+  }
+  const list = defs.map((def) => {
+    const products = buckets.get(def.id) || [];
+    const productImage = products.map((product) => String(product.image || product.imageUrl || "").trim()).find(Boolean);
     return {
-      id: c.id,
-      name: c.name,
-      image: c.image || "/assets/prod-mesh.webp",
-      custom: Boolean(c.custom),
+      id: def.id,
+      name: def.name,
+      image: (!def.image || (def.custom && isGenericCategoryImage(def.image)))
+        ? (productImage || def.image || "/assets/prod-mesh.webp")
+        : def.image,
+      custom: Boolean(def.custom),
       count: products.length,
-      deletedCount: products.filter((p) => p.deleted).length,
+      deletedCount: products.filter((product) => product.deleted).length,
     };
   });
+  list.sort(compareShopCategories);
+  adminCategoryCache = { key, list };
+  return list;
 }
 
 function renameAdminCategory(id, name) {
@@ -716,10 +866,39 @@ function assignAdminProductsCategory(ids, categoryName) {
   return { ok: true, moved: ok, skipped };
 }
 
+function categorySlug(name) {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function categoryNameFromProducts(slug) {
+  const want = String(slug || "").trim();
+  if (!want) return "";
+  for (const product of PRODUCTS) {
+    const name = String(product?.category || "").trim();
+    if (name && categorySlug(name) === want) return name;
+  }
+  return "";
+}
+
 function getCategoryBySlug(slug) {
   const id = String(slug || "").trim();
   if (!id || HIDDEN_CATEGORY_IDS.has(id)) return null;
-  return getCategoryDefs().find((c) => c.id === id) || null;
+  const found = getCategoryDefs().find((c) => c.id === id);
+  if (found) return found;
+  const name = categoryNameFromProducts(id);
+  if (!name) return null;
+  return {
+    id,
+    name,
+    image: "/assets/prod-mesh.webp",
+    imageFallback: "",
+    count: 0,
+    custom: true,
+  };
 }
 
 function getCategoryByName(name) {
@@ -730,7 +909,10 @@ function getCategoryByName(name) {
 
 function catalogPathForCategory(nameOrSlug) {
   const found = getCategoryBySlug(nameOrSlug) || getCategoryByName(nameOrSlug);
-  return found ? `/catalog/${found.id}` : "/";
+  if (found) return `/catalog/${found.id}`;
+  const slug = categorySlug(nameOrSlug);
+  if (!slug || HIDDEN_CATEGORY_IDS.has(slug)) return "/";
+  return `/catalog/${slug}`;
 }
 
 function hitProductOrder(a, b) {
@@ -780,26 +962,29 @@ const CATEGORY_SEARCH_TERMS = {
   "Reinforcement Mesh": ["BRC", "welded mesh", "reinforcing mesh", "square mesh", "鋼筋網", "鐵網", "鋼網"],
   "Dense Mesh Flame Retardant Safety Net": ["safety net", "FR net", "debris net", "密目網", "安全網", "阻燃網"],
   "Gypsum Block": ["gypsum block", "partition block", "石膏砌塊", "石膏磚"],
-  "XPS Foam Board": ["XPS", "foam board", "insulation board", "擠塑板", "保溫板"],
+  "XPS Foam Board": ["XPS", "foam board", "insulation board", "擠塑板", "擠塑保溫板", "保溫板", "隔熱板", "building envelope", "建築外牆", "rigid xps"],
   "Tiles": ["tile", "sintered stone", "porcelain", "瓷磚", "岩板"],
   "Vinyl": ["vinyl flooring", "PVC floor", "膠地板", "塑膠地板"],
   "Precasted Concrete": ["precast", "precast block", "預製混凝土", "預製件"],
   "Cat Ladder": ["cat ladder", "roof ladder", "貓梯", "爬梯"],
   "Logistics Storage Platform & Steel Shelving": ["steel shelving", "storage platform", "貨架", "鋼架"],
   "Handrails": ["handrail", "ball joint", "扶手"],
-  "Balustrades": ["balustrade", "railing", "欄杆", "欄河"],
+  "Balustrades": ["balustrade", "railing", "guardrail", "metal access", "欄杆", "欄河", "金屬通道"],
   "Forge-welded Grating": ["forge-welded grating", "steel grating", "焊接格柵", "鋼格板"],
   "Press-Lock Grating": ["press-lock grating", "pressure locked grating", "壓鎖格柵"],
   "GU Type Drainage Gratings": ["GU grating", "drainage grating", "排水溝蓋"],
   "GT Type Drainage Gratings": ["GT grating", "drainage grating", "排水溝蓋"],
   "Gypsum Board": ["plasterboard", "drywall", "石膏板"],
-  "Oxygen Chamber": ["oxygen chamber", "hyperbaric", "氧氣艙"],
-  "Dowel Bar": ["dowel bar", "傳力桿", "銷釘"],
-  "Paint": ["paint", "coating", "油漆", "乳膠漆"],
-  "Raised Access Floors": ["raised floor", "access floor", "架空地板"],
-  "Aluminum Cladding": ["aluminum cladding", "aluminium cladding", "鋁板", "幕牆"],
-  "Cable": ["cable", "power cable", "電線", "電纜"],
-  "Shoe Washing Machines": ["shoe washing", "洗鞋機"],
+  "Oxygen Chamber": ["oxygen chamber", "hyperbaric", "氧氣艙", "site facilities", "site equipment", "工地設施", "工地設備", "shoe washing", "洗鞋機"],
+  "Dowel Bar": ["dowel bar", "傳力桿", "銷釘", "steel", "鋼材", "reinforcement", "鋼筋及連接", "mild steel", "galvanized", "軟鋼", "鍍鋅"],
+  "Paint": ["paint", "coating", "油漆", "乳膠漆", "architectural finishes", "surface finishes", "建築飾面", "表面飾面", "室內", "室外", "地台", "raised floor", "架空地板", "瓷磚", "cement board", "水泥板", "gypsum board", "石膏板"],
+  "Raised Access Floors": ["raised floor", "access floor", "架空地板", "architectural finishes", "建築飾面"],
+  "Aluminum Cladding": ["aluminum cladding", "aluminium cladding", "鋁板", "幕牆", "wall board", "牆板", "architectural finishes", "建築飾面"],
+  "Cable": ["cable", "power cable", "電線", "電纜", "mep", "機電", "electrical", "電氣"],
+  "Shoe Washing Machines": ["shoe washing", "洗鞋機", "site facilities", "工地設施", "工地設備"],
+  "石料, Aggregate": ["aggregate", "石料", "raw materials", "原材料", "coarse aggregate", "粗骨料", "rockfill", "填石", "sub-base", "底基層"],
+  "原材料, Raw Materials": ["aggregate", "石料", "raw materials", "原材料", "coarse aggregate", "粗骨料", "rockfill", "填石"],
+  "基建（排水、污水、食水、海水）, Infrastructure (Drainage, Sewerage, Potable, Seawater)": ["pipe", "fitting", "喉管", "配件", "infrastructure", "基建", "排水", "污水", "食水", "海水", "cast iron", "copper", "hdpe"],
   "Software": ["license", "BIM", "軟件授權"],
 };
 
@@ -828,9 +1013,13 @@ function getProductRemarks(product) {
   return out;
 }
 
+const searchBlobs = new WeakMap();
+
 function productSearchBlob(product) {
+  const cached = product ? searchBlobs.get(product) : "";
+  if (cached) return cached;
   const specs = Array.isArray(product.specs) ? product.specs.join(" ") : "";
-  return [
+  const blob = [
     product.id,
     product.productNo,
     product.provisionalSku,
@@ -852,6 +1041,8 @@ function productSearchBlob(product) {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+  if (product) searchBlobs.set(product, blob);
+  return blob;
 }
 
 const SEARCH_FIELD_KEYS = ["name", "category", "sku", "spec", "supplier", "remarks"];
@@ -1249,9 +1440,10 @@ function catalogBodyStorageKey() {
 }
 
 function readCachedCatalog() {
-  if (typeof sessionStorage === "undefined") return null;
+  const key = catalogBodyStorageKey();
   try {
-    const data = JSON.parse(sessionStorage.getItem(catalogBodyStorageKey()) || "null");
+    const raw = localStorage.getItem(key) || sessionStorage.getItem(key);
+    const data = JSON.parse(raw || "null");
     if (!data?.etag || data.etag === "seed" || !Array.isArray(data.products) || !data.products.length) return null;
     return data;
   } catch {
@@ -1260,12 +1452,27 @@ function readCachedCatalog() {
 }
 
 function writeCachedCatalog(data) {
-  if (typeof sessionStorage === "undefined" || !data?.etag) return;
+  if (!data?.etag) return;
+  const key = catalogBodyStorageKey();
   try {
-    sessionStorage.setItem(catalogBodyStorageKey(), JSON.stringify(data));
+    localStorage.setItem(key, JSON.stringify(data));
+    sessionStorage.removeItem(key);
   } catch {
-    try { sessionStorage.removeItem(catalogBodyStorageKey()); } catch { /* quota */ }
+    try { localStorage.removeItem(key); } catch { /* quota */ }
   }
+}
+
+function rememberCachedCatalog(data) {
+  const key = catalogBodyStorageKey();
+  try {
+    if (localStorage.getItem(key)) {
+      sessionStorage.removeItem(key);
+      return;
+    }
+  } catch {
+    /* ignore */
+  }
+  writeCachedCatalog(data);
 }
 
 async function fetchSharedCatalog() {
@@ -1275,6 +1482,7 @@ async function fetchSharedCatalog() {
     const res = await getCatalog(cached?.etag || "");
     if (res.status === 304 && cached) {
       catalogEtag = cached.etag;
+      rememberCachedCatalog(cached);
       return cached;
     }
     if (!res.ok) return null;
@@ -1333,7 +1541,7 @@ function applyHostCategoryImages(categories) {
     extra.push({
       id: slugifyCategory(name),
       name,
-      image: item.image || "/assets/prod-mesh.webp",
+      image: item.image || "",
       imageFallback: item.imageFallback || "",
       custom: true,
     });
@@ -1385,10 +1593,6 @@ async function publishCatalogProducts(list) {
       );
     }
     if (i === 0) releaseBoot();
-    else {
-      bumpCatalog();
-      emitStoreChange();
-    }
     if (i + CHUNK < rows.length) await yieldToBrowser();
   }
   if (!releasedBoot) releaseBoot();
@@ -1412,10 +1616,6 @@ async function seedCatalogSnapshot(data) {
 
 function yieldToBrowser() {
   return new Promise((resolve) => {
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => setTimeout(resolve, 0));
-      return;
-    }
     setTimeout(resolve, 0);
   });
 }
@@ -1460,10 +1660,19 @@ async function hydrateStore() {
     if (catalogLoading) emitStoreChange();
     await yieldToBrowser();
 
-    const host = (await fetchSharedCatalog()) || (await fetchHostCatalog());
-    if (host) {
+    const cached = readCachedCatalog();
+    if (cached) {
+      catalogEtag = cached.etag;
+      applyHostCategoryImages(cached.categories);
+      await publishCatalogProducts(cached.products);
+    }
+    const shared = await fetchSharedCatalog();
+    const host = shared || (cached ? null : await fetchHostCatalog());
+    if (host && String(host.etag || "") !== String(cached?.etag || "")) {
       applyHostCategoryImages(host.categories);
       await publishCatalogProducts(host.products);
+    }
+    if (host || cached) {
       const kv = await fetchRemoteKv(CATALOG_KV_KEYS, { withPrivate: hasLocalSession() });
       if (kv) {
         applyCatalogKv(kv, { overlays: false });
@@ -1610,6 +1819,8 @@ const catalogSyncErrors = {};
 let catalogCommitChain = Promise.resolve();
 let catalogReady = !catalogLoading;
 let catalogBootReady = !catalogLoading;
+let portalInboxReady = false;
+let buyersReady = false;
 
 function bumpCatalog() {
   catalogEpoch += 1;
@@ -1644,7 +1855,9 @@ function refreshStoreSnapshot() {
     catalogBootReady,
     draft: getDraft(),
     rfqs: getRfqs(),
-    allRfqs: getAllRfqs(),
+    allRfqs: isPortalSurface() && !portalInboxReady ? [] : getAllRfqs(),
+    portalInboxReady,
+    buyersReady,
     reports: getReports(),
     adminAlerts: listAdminAlerts(),
     authModalOpen,
@@ -1665,6 +1878,9 @@ export function subscribeStore(listener) {
 }
 export function getStoreSnapshot() {
   return storeSnapshot;
+}
+export function getCatalogEpoch() {
+  return catalogEpoch;
 }
 
 const AUTH_KEY = "subbie_auth";
@@ -1793,8 +2009,47 @@ function joinProfileProjects(list) {
   return normalizeProfileProjects(list).join(" · ");
 }
 
+function readStoredUser() {
+  const local = readJson(AUTH_KEY, null);
+  if (local?.email) return local;
+  try {
+    const raw = sessionStorage.getItem(AUTH_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed?.email ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberStoredUser(user) {
+  const raw = JSON.stringify(user);
+  try {
+    localStorage.setItem(AUTH_KEY, raw);
+  } catch {
+    /* a full browser store must not drop the sign-in */
+  }
+  try {
+    sessionStorage.setItem(AUTH_KEY, raw);
+  } catch {
+    /* ignore */
+  }
+}
+
+function forgetStoredUser() {
+  try {
+    localStorage.removeItem(AUTH_KEY);
+  } catch {
+    /* ignore */
+  }
+  try {
+    sessionStorage.removeItem(AUTH_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 function getUser() {
-  const user = memoryUser || readJson(AUTH_KEY, null);
+  const user = memoryUser || readStoredUser();
   if (!user) return null;
   const projects = normalizeProfileProjects(user.projects || user.project);
   return {
@@ -1817,7 +2072,7 @@ function kickDisabledBuyerIfNeeded() {
   }
   memoryUser = null;
   delete memoryAccounts[normalizeEmail(user.email)];
-  localStorage.removeItem(AUTH_KEY);
+  forgetStoredUser();
   return true;
 }
 
@@ -2170,11 +2425,8 @@ function addCustomLine({
   baseProductId = "",
   baseProductNo = "",
 } = {}) {
-  if (!isLoggedIn()) {
-    requireBuyerAuth({
-      custom: true,
-      tailorFrom: tailorMade ? String(baseProductId || "").trim() : undefined,
-    });
+  if (!tailorMade && !isLoggedIn()) {
+    requireBuyerAuth({ custom: true });
     return { ok: false, error: "not_logged_in" };
   }
   const trimmed = String(name || "").trim();
@@ -2241,7 +2493,7 @@ function commitSpecMatch({ rows, mode, specFile } = {}) {
     ["mm", "catalog", "tailor", "file"].includes(row?.choice)
   );
   if (!decided.length) return { ok: false, error: "empty" };
-  if (decided.some((row) => row.choice === "tailor" || row.choice === "file") && !isLoggedIn()) {
+  if (decided.some((row) => row.choice === "file") && !isLoggedIn()) {
     requireBuyerAuth({ custom: true });
     return { ok: false, error: "not_logged_in" };
   }
@@ -2265,11 +2517,20 @@ function commitSpecMatch({ rows, mode, specFile } = {}) {
       const priced = getEffectivePrice(product).displayPrice != null;
       const intent = mode === "quote" ? "quote" : priced ? "buy" : "quote";
       const existing = draft.lines.find((line) => String(line.productId) === String(product.id) && !line.custom);
+      const attachments = normalizeAttachments(row.attachments);
       if (existing) {
         existing.qty = nextQty;
         existing.intent = intent;
+        if (attachments.length) {
+          const seen = new Set();
+          existing.attachments = normalizeAttachments([...(existing.attachments || []), ...attachments]).filter((item) => {
+            if (!item.url || seen.has(item.url)) return false;
+            seen.add(item.url);
+            return true;
+          });
+        }
       } else {
-        draft.lines.push({ productId: product.id, qty: nextQty, intent });
+        draft.lines.push({ productId: product.id, qty: nextQty, intent, attachments });
       }
       bindings.push({ key: row.key, boundId: product.id });
       continue;
@@ -2307,12 +2568,23 @@ function commitSpecMatch({ rows, mode, specFile } = {}) {
 }
 
 function catalogTokens(text) {
-  const stop = new Set(["the", "and", "for", "with", "from", "type", "item", "items", "qty", "quantity", "pcs", "size", "spec"]);
+  const stop = new Set([
+    "the", "and", "for", "with", "from", "type", "item", "items", "qty", "quantity", "pcs", "size", "spec",
+    "on", "of", "to", "in", "or", "by", "at", "as", "be", "is", "it", "an", "no", "we", "de", "mr", "ms", "dr",
+    "hong", "kong", "day", "open", "photo", "photos", "vip", "tech", "executive", "director", "deputy",
+    "senior", "vice", "president", "managing", "manager", "regional", "resident", "leader", "partners", "ltd", "co",
+  ]);
   return `${text || ""}`
     .toLowerCase()
     .split(/[^a-z0-9\u4e00-\u9fff]+/)
     .filter((word) => word.length >= 2 && !stop.has(word));
 }
+
+const WEAK_SPEC_TOKENS = new Set([
+  "digital", "works", "system", "supervision", "building", "construction", "steel", "pipe", "board",
+  "product", "material", "concrete", "block", "industry", "council", "engineer", "chief", "lead",
+  "asia", "group", "limited", "company", "services", "service", "general", "standard", "structural",
+]);
 
 function specQueryTokens(name, spec) {
   const text = `${name || ""} ${spec || ""}`;
@@ -2335,10 +2607,8 @@ function specQueryTokens(name, spec) {
 function specTokenHit(word, hayTokens, hayText) {
   if (/[\u4e00-\u9fff]/.test(word)) return hayText.includes(word);
   if (hayTokens.has(word)) return true;
-  if (word.length < 4) return false;
-  for (const token of hayTokens) {
-    if (token.startsWith(word)) return true;
-  }
+  if (word.endsWith("s") && hayTokens.has(word.slice(0, -1))) return true;
+  if (hayTokens.has(`${word}s`)) return true;
   return false;
 }
 
@@ -2407,15 +2677,15 @@ function matchSpecToCatalog(name, spec) {
     (product) => product?.id && product.deleted !== true && product.published !== false && isOrderable(product) && !isDiscontinued(product)
   )
     .map((product) => {
-      const hayTokens = new Set(
-        catalogTokens(`${product.name || ""} ${product.productNo || ""} ${product.category || ""} ${product.primarySpec || ""} ${product.sizeDesc || ""}`)
-      );
-      const hayText = `${product.name || ""} ${product.primarySpec || ""} ${product.sizeDesc || ""}`;
-      const hits = words.filter((word) => specTokenHit(word, hayTokens, hayText)).length + specFamilyScore(text, product.name);
-      return { product, hits };
+      const nameTokens = new Set(catalogTokens(`${product.name || ""} ${product.productNo || ""} ${product.provisionalSku || ""}`));
+      const nameText = `${product.name || ""} ${product.productNo || ""} ${product.provisionalSku || ""}`;
+      const nameHits = words.filter((word) => specTokenHit(word, nameTokens, nameText));
+      const family = specFamilyScore(text, product.name);
+      const distinctive = nameHits.filter((word) => !WEAK_SPEC_TOKENS.has(word)).length;
+      return { product, hits: nameHits.length + family, nameHits: nameHits.length, distinctive, family };
     })
-    .filter((row) => row.hits > 0)
-    .sort((a, b) => b.hits - a.hits)
+    .filter((row) => row.family > 0 || row.distinctive >= 1 || row.nameHits >= 2)
+    .sort((a, b) => b.hits - a.hits || b.distinctive - a.distinctive)
     .slice(0, 5);
   if (!ranked.length) return [];
   const top = ranked[0].hits;
@@ -2659,8 +2929,9 @@ function draftTotals(draft, productIds) {
       };
     }
     const product = getProduct(line.productId);
-    const offerPrice = product ? activeOfferPrice(product.id) : null;
-    const unitPrice = offerPrice != null ? offerPrice : product ? getEffectivePrice(product).displayPrice : null;
+    const listPrice = product ? getEffectivePrice(product).displayPrice : null;
+    const offerPrice = listPrice != null && product ? activeOfferPrice(product.id) : null;
+    const unitPrice = offerPrice != null ? offerPrice : listPrice;
     if (unitPrice == null) unpricedCount += 1;
     else pricedSubtotal += unitPrice * line.qty;
     return {
@@ -2801,7 +3072,15 @@ async function issueRfqNumber(rfq) {
     channel: rfq.channel,
     askKind: rfq.askKind,
     project: rfq.project || "",
-    buyer: { email: rfq.buyerEmail, name: rfq.buyerName, phone: rfq.buyerPhone },
+    buyer: {
+      email: rfq.buyerEmail,
+      name: rfq.buyerName,
+      phone: rfq.buyerPhone,
+      company: rfq.buyerCompany || "",
+    },
+    project: rfq.project || "",
+    delivery: { address: rfq.address || "", date: rfq.deliveryDate || "" },
+    attachments: rfq.guestAttachments || [],
     lines: (rfq.lines || []).map((line) => ({
       productId: line.productId,
       sku: line.productNo,
@@ -2823,9 +3102,15 @@ async function issueRfqNumber(rfq) {
 async function submitRfq(productIds, options = {}) {
   const user = getUser();
   const allowGuest = Boolean(options.allowGuest);
-  const guest = !user?.email ? readGuestContact(options.guest) : null;
+  const supplied = options.guest ? readGuestContact(options.guest) : null;
+  const guest = !user?.email ? supplied : null;
+  const memberOrder = user?.email ? supplied : null;
   if (!user?.email && !allowGuest) return { ok: false, error: "not_logged_in" };
   if (!user?.email && !guest) return { ok: false, error: "email" };
+  if (!user?.email || memberOrder) {
+    const missing = guestOrderError((guest || memberOrder) || {});
+    if (missing) return { ok: false, error: missing };
+  }
   const email = accountKey();
   let draft = options.draft || getDraft();
   if (!draft.lines.length) return { ok: false, error: "empty" };
@@ -2848,7 +3133,7 @@ async function submitRfq(productIds, options = {}) {
   const siteAddress =
     deliveryMode === "partial"
       ? deliveryLots.find((lot) => lot.address)?.address || String(draft.address || "").trim()
-      : String(draft.address || "").trim();
+      : String(draft.address || memberOrder?.address || guest?.address || "").trim();
   if (!skipLogistics && !siteAddress) return { ok: false, error: "address" };
 
   const selectedIds =
@@ -2879,10 +3164,14 @@ async function submitRfq(productIds, options = {}) {
     note: totals.note,
     responseDate: totals.responseDate,
     quotationDeadline: totals.responseDate,
-    deliveryDate: deliveryMode === "partial" ? deliveryLots.find((lot) => lot.date)?.date || totals.deliveryDate : totals.deliveryDate,
+    deliveryDate:
+      (deliveryMode === "partial" ? deliveryLots.find((lot) => lot.date)?.date || totals.deliveryDate : totals.deliveryDate) ||
+      memberOrder?.deliveryDate ||
+      guest?.deliveryDate ||
+      "",
     deliveryMode,
     deliveryLots: deliveryMode === "partial" ? deliveryLots.filter((lot) => lot.date || lot.note || lot.address) : [],
-    project: joinProfileProjects(totals.projects || totals.project),
+    project: memberOrder?.project || joinProfileProjects(totals.projects || totals.project) || guest?.project || "",
     projects: normalizeProfileProjects(totals.projects || totals.project),
     address: siteAddress,
     canonicalCategory: totals.canonicalCategory,
@@ -2912,13 +3201,15 @@ async function submitRfq(productIds, options = {}) {
     })),
     pricedSubtotal: totals.pricedSubtotal,
     unpricedCount: totals.unpricedCount,
-    buyerEmail,
-    buyerName: user?.name || guest?.name || (buyerKind === "guest" ? "" : "Guest"),
-    buyerPhone: buyerKind === "member" ? buyerContactPhone(user, user?.email) : guest?.phone || guest?.otherPhone || "",
-    buyerOtherPhone: buyerKind === "member" ? String(memberAccount?.otherPhone || "").trim() : guest?.otherPhone || "",
-    buyerWhatsappOn: buyerKind === "member" ? slotOn(memberAccount?.whatsappOn) : slotOn(guest?.whatsappOn),
-    buyerWechatOn: buyerKind === "member" ? slotOn(memberAccount?.wechatOn) : slotOn(guest?.wechatOn),
-    buyerPhoneWhatsapp: buyerKind === "member" ? Boolean(slotOn(memberAccount?.whatsappOn) || memberAccount?.phoneWhatsapp) : Boolean(guest?.whatsappOn),
+    buyerEmail: memberOrder?.email || buyerEmail,
+    buyerName: memberOrder?.name || user?.name || guest?.name || (buyerKind === "guest" ? "" : "Guest"),
+    buyerPhone: memberOrder?.phone || (buyerKind === "member" ? buyerContactPhone(user, user?.email) : guest?.phone || guest?.otherPhone || ""),
+    buyerOtherPhone: memberOrder?.otherPhone || (buyerKind === "member" ? String(memberAccount?.otherPhone || "").trim() : guest?.otherPhone || ""),
+    buyerWhatsappOn: memberOrder ? slotOn(memberOrder.whatsappOn) : buyerKind === "member" ? slotOn(memberAccount?.whatsappOn) : slotOn(guest?.whatsappOn),
+    buyerWechatOn: memberOrder ? slotOn(memberOrder.wechatOn) : buyerKind === "member" ? slotOn(memberAccount?.wechatOn) : slotOn(guest?.wechatOn),
+    buyerPhoneWhatsapp: memberOrder ? Boolean(memberOrder.whatsappOn) : buyerKind === "member" ? Boolean(slotOn(memberAccount?.whatsappOn) || memberAccount?.phoneWhatsapp) : Boolean(guest?.whatsappOn),
+    buyerCompany: memberOrder?.companyName || (buyerKind === "member" ? String(memberAccount?.companyName || user?.companyName || "").trim() : guest?.companyName || ""),
+    guestAttachments: memberOrder?.attachments || guest?.attachments || [],
     buyerKind,
     specFile: draft.specFile?.url ? draft.specFile : null,
   };
@@ -2969,11 +3260,38 @@ async function submitRfq(productIds, options = {}) {
     rfq,
     buyer: {
       email: buyerEmail,
-      name: user?.name || guest?.name || "",
-      phone: buyerKind === "member" ? buyerContactPhone(user, user?.email) : guest?.phone || guest?.otherPhone || "",
-      otherPhone: buyerKind === "member" ? String(memberAccount?.otherPhone || "").trim() : guest?.otherPhone || "",
+      name: rfq.buyerName,
+      phone: rfq.buyerPhone,
+      otherPhone: rfq.buyerOtherPhone,
+      company: rfq.buyerCompany,
+      address: rfq.address,
+      project: rfq.project,
+      deliveryDate: rfq.deliveryDate,
+      attachments: rfq.guestAttachments,
     },
   };
+}
+
+async function downloadSubmittedPdf(rfq) {
+  if (!rfq?.id || typeof document === "undefined") return;
+  const items = quotePdfItems(rfq.lines || []);
+  const pdf = await buildQuotePdf({
+    kind: rfq.askKind === "buy" ? "buy" : "quote",
+    items,
+    refNo: rfq.id,
+    buyer: {
+      email: rfq.buyerEmail,
+      name: rfq.buyerName,
+      phone: rfq.buyerPhone,
+      otherPhone: rfq.buyerOtherPhone,
+      company: rfq.buyerCompany,
+      address: rfq.address,
+      project: rfq.project,
+      deliveryDate: rfq.deliveryDate,
+      attachments: rfq.guestAttachments,
+    },
+  });
+  downloadBlob(pdf.blob, pdf.filename);
 }
 
 function takeLastCartWhatsappResult() {
@@ -2986,7 +3304,6 @@ function takeLastCartWhatsappResult() {
 async function completeCartWhatsappSubmit(spec = {}, { announce = false } = {}) {
   const kind = spec.kind === "buy" ? "buy" : "quote";
   const ids = (Array.isArray(spec.ids) ? spec.ids : []).map(String).filter(Boolean);
-  const details = draftLogisticsForWhatsapp();
   const submitted = await submitRfq(ids, {
     kind,
     channel: "whatsapp",
@@ -2995,8 +3312,24 @@ async function completeCartWhatsappSubmit(spec = {}, { announce = false } = {}) 
     guest: spec.guest,
   });
   if (!submitted.ok) return submitted;
+  const details = {
+    ...draftLogisticsForWhatsapp(),
+    company: submitted.buyer?.company || spec.guest?.companyName || "",
+    contact: submitted.buyer?.name || spec.guest?.name || "",
+    email: submitted.buyer?.email || spec.guest?.email || "",
+    phone: submitted.buyer?.phone || spec.guest?.phone || "",
+    address: submitted.rfq?.address || spec.guest?.address || "",
+    project: submitted.rfq?.project || spec.guest?.project || "",
+    deliveryDate: submitted.rfq?.deliveryDate || spec.guest?.deliveryDate || "",
+    attachments: attachmentSummary(spec.guest?.attachments || submitted.buyer?.attachments),
+  };
   const lines = getDraft().lines.filter((line) => ids.includes(String(line.productId)));
-  openWhatsappDraft(lines, kind, { refNo: submitted.rfq.id, details, buyer: submitted.buyer });
+  openWhatsappDraft(lines, kind, {
+    refNo: submitted.rfq.id,
+    details,
+    buyer: submitted.buyer,
+    guestFiles: spec.guest?.attachments,
+  });
   removeLines(ids);
   if (announce) {
     lastCartWhatsappResult = { rfq: submitted.rfq, kind };
@@ -3181,6 +3514,12 @@ function setAccountsMap(map) {
   writeJson(ACCOUNTS_KEY, clean);
 }
 
+export function currentMemberOrderSeed() {
+  const user = getUser();
+  if (!user?.email) return memberOrderSeed(null);
+  return memberOrderSeed({ ...(getAccount(user.email) || {}), ...user });
+}
+
 function getAccount(email) {
   const key = normalizeEmail(email);
   const map = getAccountsMap();
@@ -3262,11 +3601,7 @@ function setSessionUser(user) {
     sessionStorage.removeItem(PENDING_WA_RFQ_KEY);
   }
 
-  try {
-    localStorage.setItem(AUTH_KEY, JSON.stringify(user));
-  } catch {
-    /* a full browser store must not leave the sign-in button stuck */
-  }
+  rememberStoredUser(user);
   try {
     if (!prevEmail && nextEmail) adoptGuestSpecMatch(nextEmail);
   } catch {
@@ -3544,20 +3879,35 @@ async function loginUser({ email, password }) {
 
 async function verifyBuyerSession() {
   const local = getUser();
-  if (!local?.email) return false;
   const epoch = buyerSessionEpoch;
   const result = await authApi("session", { kind: "buyer" });
-  if (epoch !== buyerSessionEpoch) return false;
+  if (epoch !== buyerSessionEpoch) return Boolean(getUser()?.email);
   if (result.error === "disabled" || result.error === "rejected") {
-    memoryUser = null;
-    delete memoryAccounts[normalizeEmail(local.email)];
-    localStorage.removeItem(AUTH_KEY);
-    emitStoreChange();
+    if (local?.email) {
+      memoryUser = null;
+      delete memoryAccounts[normalizeEmail(local.email)];
+      forgetStoredUser();
+      emitStoreChange();
+    }
     return false;
   }
-  if (result.ok) return true;
-  // A missing cookie or a server error must not undo a sign-in the server just accepted.
-  return true;
+  if (result.ok && result.account?.email) {
+    const account = accountFromRow(result.account);
+    const email = normalizeEmail(account.email);
+    if (email) {
+      memoryAccounts[email] = account;
+      const user = publicUserFromAccount(account);
+      if (normalizeEmail(local?.email) !== email) setSessionUser(user);
+      else if (!memoryUser) {
+        memoryUser = user;
+        rememberStoredUser(user);
+        emitStoreChange();
+      }
+    }
+    return true;
+  }
+  // A missing cookie or a server blip must not sign the buyer out. The cookie itself lasts 14 days.
+  return Boolean(getUser()?.email);
 }
 
 /** Signing out drops the server-held RFQs this tab was showing. */
@@ -3573,7 +3923,7 @@ function logoutUser() {
   buyerSessionEpoch += 1;
   memoryUser = null;
   authApi("logout", { kind: "buyer" });
-  localStorage.removeItem(AUTH_KEY);
+  forgetStoredUser();
   clearServerRfqCache();
   sessionStorage.removeItem(PENDING_CUSTOM_KEY);
   emitStoreChange();
@@ -3733,31 +4083,25 @@ function requireBuyerAuth(pending = {}) {
   return false;
 }
 
-function addFromStorefront(productId, intent = "quote", qty, lang) {
+function addFromStorefront(productId, intent = "quote", qty) {
   if (intent === "quote-now" || intent === "buy-now") {
-    if (!isLoggedIn()) {
-      setPendingCart(productId, intent, qty);
-      openAuthModal("invite");
-      return { ok: false, error: "auth_invite" };
-    }
-    const kind = intent === "buy-now" ? "buy" : "quote";
-    return whatsappNow(productId, { qty, kind, lang, skipCart: true });
+    setPendingCart(productId, intent, qty);
+    openAuthModal("invite");
+    return { ok: false, error: "auth_invite" };
   }
   addToCart(productId, { intent, qty });
   return { ok: true };
 }
 
 function readGuestContact(contact) {
-  const email = String(contact?.email || "").trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return null;
+  const row = guestOrderPayload(contact);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(row.email)) return null;
   const slot = (value) => (value === "1" || value === "2" ? value : "");
   return {
-    email,
-    name: String(contact?.name || "").trim().slice(0, 120),
-    phone: String(contact?.phone || "").trim().slice(0, 40),
-    otherPhone: String(contact?.otherPhone || "").trim().slice(0, 40),
-    whatsappOn: slot(contact?.whatsappOn),
-    wechatOn: slot(contact?.wechatOn),
+    ...row,
+    otherPhone: String(row.otherPhone || contact?.otherPhone || "").trim().slice(0, 40),
+    whatsappOn: slot(row.whatsappOn || contact?.whatsappOn),
+    wechatOn: slot(row.wechatOn || contact?.wechatOn),
   };
 }
 
@@ -3841,11 +4185,8 @@ function consumePendingAfterAuth() {
       productId = pendingCart;
     }
     if (intent === "quote-now" || intent === "buy-now") {
-      whatsappNow(productId, {
-        qty,
-        kind: intent === "buy-now" ? "buy" : "quote",
-        skipCart: true,
-      });
+      setPendingCart(productId, intent, qty);
+      openAuthModal("invite");
       stayPut = true;
     } else {
       addToCart(productId, { intent, qty, silentInvite: true });
@@ -3986,10 +4327,20 @@ function whatsappLogisticsBlock(details) {
   const deliveryDate = String(details.deliveryDate || "").trim();
   const note = String(details.note || "").trim();
   const lots = Array.isArray(details.lots) ? details.lots : [];
+  const company = String(details.company || "").trim();
+  const contact = String(details.contact || "").trim();
+  const email = String(details.email || "").trim();
+  const phone = String(details.phone || "").trim();
+  const attached = String(details.attachments || "").trim();
+  if (company) lines.push(`公司：${company}`);
+  if (address) lines.push(`送貨地址：${address}`);
+  if (contact) lines.push(`聯絡人：${contact}`);
+  if (email) lines.push(`電郵：${email}`);
+  if (phone) lines.push(`電話：${phone}`);
   if (project) lines.push(`項目：${project}`);
-  if (address) lines.push(`地址：${address}`);
   if (responseDate) lines.push(`報價限期：${responseDate}`);
-  if (deliveryDate) lines.push(`交貨期：${deliveryDate}`);
+  if (deliveryDate) lines.push(`交貨日期：${deliveryDate}`);
+  if (attached) lines.push(`附件：${attached}`);
   lots.forEach((lot, index) => {
     const bits = [`第${index + 1}批`];
     if (lot?.date) bits.push(String(lot.date).trim());
@@ -4110,7 +4461,7 @@ function modalButtonStyle(primary, disabled = false) {
   return disabled ? `${base}cursor:not-allowed;opacity:0.5;` : `${base}cursor:pointer;`;
 }
 
-function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, blobUrl, uploading, onRetry }) {
+function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, blobUrl, uploading, onRetry, guestFiles = 0 }) {
   if (typeof document === "undefined") return;
   closeWhatsappCopiedModal();
   const zh = String(document.documentElement.lang || "").startsWith("zh");
@@ -4140,13 +4491,19 @@ function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, b
         body: failed
           ? "PDF 連結未準備好。請重試，成功之後先可以開啟 WhatsApp。"
           : uploading
-            ? "正在把 PDF 同產品圖片上傳到 Vercel Blob，之後會把連結寫入 WhatsApp。"
+            ? guestFiles
+              ? "正在把 PDF、產品圖片同客人附件上傳，之後會把連結寫入 WhatsApp。"
+              : "正在把 PDF 同產品圖片上傳到 Vercel Blob，之後會把連結寫入 WhatsApp。"
             : pdf
               ? hasBlob
-                ? `共 ${count} 項。WhatsApp 訊息會帶 PDF 連結同產品圖片。`
+                ? guestFiles
+                  ? `共 ${count} 項。WhatsApp 訊息會帶 PDF 連結、產品圖片同客人附件。`
+                  : `共 ${count} 項。WhatsApp 訊息會帶 PDF 連結同產品圖片。`
                 : `共 ${count} 項。PDF 已產生，正在準備連結。`
               : "正在把貨名、貨號、數量、單價同產品圖整成 PDF。",
-        copied: "PDF 連結同產品圖片已複製。開啟 WhatsApp 後可直接傳送。",
+        copied: guestFiles
+          ? "PDF 連結、產品圖片同客人附件已複製。開啟 WhatsApp 後可直接傳送。"
+          : "PDF 連結同產品圖片已複製。開啟 WhatsApp 後可直接傳送。",
         preview: "PDF 預覽",
         download: reused ? "再次下載同一份 PDF" : "下載 PDF",
         share: "分享 PDF",
@@ -4175,13 +4532,19 @@ function showWhatsappPdfModal({ kind, count, text, pdf, failed, reused, refNo, b
         body: failed
           ? "The PDF link is not ready. Retry, then open WhatsApp."
           : uploading
-            ? "Uploading the PDF and product images to Vercel Blob, then putting the links in WhatsApp."
+            ? guestFiles
+              ? "Uploading the PDF, product images, and guest attachments, then putting the links in WhatsApp."
+              : "Uploading the PDF and product images to Vercel Blob, then putting the links in WhatsApp."
             : pdf
               ? hasBlob
-                ? `${count} item(s). WhatsApp will include the PDF link and product images.`
+                ? guestFiles
+                  ? `${count} item(s). WhatsApp will include the PDF link, product images, and the guest attachments.`
+                  : `${count} item(s). WhatsApp will include the PDF link and product images.`
                 : `${count} item(s). PDF created — preparing the link.`
               : "Creating a PDF with name, SKU, qty, unit price, and product images.",
-        copied: "PDF and product image links are copied. Open WhatsApp to send them.",
+        copied: guestFiles
+          ? "PDF, product image, and guest attachment links are copied. Open WhatsApp to send them."
+          : "PDF and product image links are copied. Open WhatsApp to send them.",
         preview: "PDF preview",
         download: reused ? "Download the same PDF again" : "Download PDF",
         share: "Share PDF",
@@ -4415,15 +4778,25 @@ function whatsappDraftUrl() {
   return whatsappChatHref();
 }
 
-function quotePdfFingerprint(kind, items, refNo, buyer) {
+function quotePdfFingerprint(kind, items, refNo, buyer, guestFiles) {
   return JSON.stringify({
     kind: kind === "buy" ? "buy" : "quote",
     refNo: String(refNo || "").trim(),
+    guestFiles: (Array.isArray(guestFiles) ? guestFiles : []).map((file) => [
+      file?.id || "",
+      file?.name || "",
+      file?.file?.size || 0,
+    ]),
     buyer: {
       email: String(buyer?.email || "").trim(),
       name: String(buyer?.name || "").trim(),
       phone: String(buyer?.phone || "").trim(),
       otherPhone: String(buyer?.otherPhone || "").trim(),
+      company: String(buyer?.company || "").trim(),
+      address: String(buyer?.address || "").trim(),
+      project: String(buyer?.project || "").trim(),
+      deliveryDate: String(buyer?.deliveryDate || "").trim(),
+      attachments: attachmentSummary(buyer?.attachments),
     },
     items: (Array.isArray(items) ? items : []).map((item) => [
       item.name,
@@ -4450,6 +4823,10 @@ function attachWhatsappAssetsToRfq(refNo, published) {
     imageUrls: Array.isArray(published.imageUrls) ? published.imageUrls : [],
     attachmentUrls: Array.isArray(published.attachmentUrls) ? published.attachmentUrls : [],
   }));
+  const guestFiles = (Array.isArray(published.guestFileUrls) ? published.guestFileUrls : [])
+    .map((file) => ({ name: String(file?.name || "").trim(), url: String(file?.url || "").trim() }))
+    .filter((file) => file.name && file.url);
+  if (guestFiles.length) saveGuestFileUrls(refNo, guestFiles);
   if (result.ok) {
     const buyerKey = rfqBuyerKind(result.rfq) === "guest" ? GUEST_KEY : result.rfq.buyerEmail;
     persistSharedRfq(buyerKey, result.rfq);
@@ -4467,16 +4844,22 @@ function rememberWaPdf(fingerprint, pdf, extra = {}) {
         blobUrl: extra.blobUrl || (waPdfCache?.fingerprint === fingerprint ? waPdfCache.blobUrl : "") || "",
         imageUrls: extra.imageUrls || (waPdfCache?.fingerprint === fingerprint ? waPdfCache.imageUrls : []) || [],
         attachmentUrls: extra.attachmentUrls || (waPdfCache?.fingerprint === fingerprint ? waPdfCache.attachmentUrls : []) || [],
+        guestFileUrls: extra.guestFileUrls || (waPdfCache?.fingerprint === fingerprint ? waPdfCache.guestFileUrls : []) || [],
       }
     : null;
 }
 
-async function publishRfqAssets(pdf, rows, refNo, fingerprint) {
+async function publishRfqAssets(pdf, rows, refNo, fingerprint, guestFiles) {
   if (waPdfCache?.fingerprint === fingerprint && waPdfCache.blobUrl) {
-    return { blobUrl: waPdfCache.blobUrl, imageUrls: waPdfCache.imageUrls || [], attachmentUrls: waPdfCache.attachmentUrls || [] };
+    return {
+      blobUrl: waPdfCache.blobUrl,
+      imageUrls: waPdfCache.imageUrls || [],
+      attachmentUrls: waPdfCache.attachmentUrls || [],
+      guestFileUrls: waPdfCache.guestFileUrls || [],
+    };
   }
   if (waPublishInflight?.fingerprint === fingerprint) return waPublishInflight.promise;
-  const promise = publishRfqPdf(pdf, rows, refNo).then((published) => {
+  const promise = publishRfqPdf(pdf, rows, refNo, guestFiles).then((published) => {
     rememberWaPdf(fingerprint, pdf, published);
     return published;
   });
@@ -4488,19 +4871,36 @@ async function publishRfqAssets(pdf, rows, refNo, fingerprint) {
   }
 }
 
-function buildWhatsappShareText(kind, refNo, rows, blobUrl, imageUrls, attachmentUrls, details) {
-  const withImages = fitWhatsappUrls(whatsappPdfHintText(kind, refNo, blobUrl, details), imageUrls, "產品圖片：");
+function buildWhatsappShareText(kind, refNo, rows, blobUrl, imageUrls, attachmentUrls, details, guestFileUrls) {
+  const withGuest = fitWhatsappFileLinks(whatsappPdfHintText(kind, refNo, blobUrl, details), guestFileUrls, "附件連結：");
+  const withImages = fitWhatsappUrls(withGuest.text, imageUrls, "產品圖片：");
   const extra = (Array.isArray(attachmentUrls) ? attachmentUrls : []).filter((url) => !(imageUrls || []).includes(url));
   const fitted = fitWhatsappUrls(withImages.text, extra, "規格附件：");
   const fallback = whatsappWrapList(rows.map((line, i) => whatsappItemBlock(line, i)).join("\n\n"), kind, refNo);
   return blobUrl ? fitted.text : fallback;
 }
 
-async function publishRfqPdf(pdf, rows, refNo) {
+async function publishRfqPdf(pdf, rows, refNo, guestFiles) {
   const blobUrl = await uploadRfqPdf(pdf.file, refNo);
   const imageUrls = await collectProductImageUrls(rows, refNo);
   const attachmentUrls = await collectAttachmentUrls(rows, refNo);
-  return { blobUrl, imageUrls, attachmentUrls };
+  const guestFileUrls = await uploadGuestOrderFiles(guestFiles, refNo);
+  return { blobUrl, imageUrls, attachmentUrls, guestFileUrls };
+}
+
+function guestWhatsappDetails(guest, buyer) {
+  const src = guest && typeof guest === "object" ? guest : {};
+  const who = buyer && typeof buyer === "object" ? buyer : {};
+  return {
+    company: String(src.companyName || who.company || "").trim(),
+    address: String(src.address || who.address || "").trim(),
+    contact: String(src.name || who.name || "").trim(),
+    email: String(src.email || who.email || "").trim(),
+    phone: String(src.phone || who.phone || "").trim(),
+    project: String(src.project || who.project || "").trim(),
+    deliveryDate: String(src.deliveryDate || who.deliveryDate || "").trim(),
+    attachments: attachmentSummary(src.attachments || who.attachments),
+  };
 }
 
 function openWhatsappDraft(lines, kind, options = {}) {
@@ -4509,7 +4909,8 @@ function openWhatsappDraft(lines, kind, options = {}) {
   const refNo = String(options?.refNo || "").trim() || nextRfqId();
   const details = options.details || null;
   const buyer = options.buyer || null;
-  const fingerprint = quotePdfFingerprint(kind, items, refNo, buyer);
+  const guestFiles = guestUploadFiles(options.guestFiles || buyer?.attachments);
+  const fingerprint = quotePdfFingerprint(kind, items, refNo, buyer, guestFiles);
   const url = whatsappChatHref(whatsappPdfHintText(kind, refNo, "", details));
   if (typeof window === "undefined") return { url, truncated: false, copied: true, count: rows.length, refNo };
 
@@ -4523,7 +4924,8 @@ function openWhatsappDraft(lines, kind, options = {}) {
       published?.blobUrl,
       published?.imageUrls,
       published?.attachmentUrls,
-      details
+      details,
+      published?.guestFileUrls
     );
   }
 
@@ -4531,6 +4933,7 @@ function openWhatsappDraft(lines, kind, options = {}) {
     const text = linkedText(published);
     copyPlainText(text);
     attachWhatsappAssetsToRfq(refNo, published);
+    releaseGuestUploadFiles(guestFiles);
     showWhatsappPdfModal({
       kind,
       count: rows.length,
@@ -4539,6 +4942,7 @@ function openWhatsappDraft(lines, kind, options = {}) {
       reused,
       refNo,
       blobUrl: published.blobUrl,
+      guestFiles: guestFiles.length,
     });
   }
 
@@ -4550,16 +4954,20 @@ function openWhatsappDraft(lines, kind, options = {}) {
       pdf,
       refNo,
       uploading: true,
+      guestFiles: guestFiles.length,
       onRetry: () => {
         if (generation !== whatsappPdfGeneration) return;
         runUpload(pdf);
       },
     });
-    publishRfqAssets(pdf, rows, refNo, fingerprint)
+    publishRfqAssets(pdf, rows, refNo, fingerprint, guestFiles)
       .then((published) => {
         if (generation !== whatsappPdfGeneration) return;
         if (!document.querySelector("[data-wa-copy-modal]")) return;
         if (!published?.blobUrl) throw new Error("missing pdf link");
+        if (guestFiles.length && (published.guestFileUrls || []).length < guestFiles.length) {
+          throw new Error("guest attachment");
+        }
         showLinked(pdf, published);
       })
       .catch(() => {
@@ -4572,6 +4980,7 @@ function openWhatsappDraft(lines, kind, options = {}) {
           pdf,
           refNo,
           failed: true,
+          guestFiles: guestFiles.length,
           onRetry: () => {
             if (generation !== whatsappPdfGeneration) return;
             runUpload(pdf);
@@ -4624,6 +5033,13 @@ const PO_ERROR_TEXT = {
     unavailable: "此產品已不能訂購。",
     moq: "數量低於最低訂購量。",
     network: "連線失敗，採購單未建立，請稍後再試。",
+    company: "請填寫公司名稱。",
+    address: "請填寫送貨地址。",
+    contact: "請填寫聯絡人。",
+    phone: "請填寫電話。",
+    project: "請填寫項目名稱。",
+    delivery_date: "請選擇交貨日期，或選 N/A。",
+    attachment: "請至少附加一個檔案。",
   },
   en: {
     default: "The purchase order could not be created. Please try again.",
@@ -4631,6 +5047,13 @@ const PO_ERROR_TEXT = {
     unavailable: "This product can no longer be ordered.",
     moq: "The quantity is below the minimum order.",
     network: "Connection failed. The purchase order was not created. Please try again.",
+    company: "Enter the company name.",
+    address: "Enter the delivery address.",
+    contact: "Enter the contact person.",
+    phone: "Enter a phone number.",
+    project: "Enter the project name.",
+    delivery_date: "Choose a delivery date, or N/A.",
+    attachment: "Add at least one attachment.",
   },
 };
 
@@ -4640,17 +5063,28 @@ const PO_ERROR_TEXT = {
  */
 async function placeBuyNowPo(product, qty, line, guest) {
   const user = getUser();
-  const contact = user?.email ? null : readGuestContact(guest);
+  const contact = readGuestContact(guest);
   const email = user?.email || contact?.email || "";
   if (!email) return { ok: false, error: "email" };
-  const member = user?.email ? { ...(getAccount(user.email) || {}), ...(user || {}) } : null;
+  const missing = guestOrderError(contact || {});
+  if (missing) return { ok: false, error: missing };
+  const buyer = {
+    email: contact?.email || email,
+    name: contact?.name || user?.name || "",
+    phone: contact?.phone || "",
+    otherPhone: contact?.otherPhone || "",
+    company: contact?.companyName || "",
+    address: contact?.address || "",
+    project: contact?.project || "",
+    deliveryDate: contact?.deliveryDate || "",
+    attachments: contact?.attachments || [],
+  };
   const placed = await createPurchaseOrderRemote({
     lines: [{ productId: product.id, qty }],
-    buyer: {
-      email,
-      name: user?.name || contact?.name || "",
-      phone: member ? buyerContactPhone(user, user.email) : contact?.phone || contact?.otherPhone || "",
-    },
+    buyer: { email: buyer.email, name: buyer.name, phone: buyer.phone, company: buyer.company },
+    project: buyer.project,
+    delivery: { address: buyer.address, date: buyer.deliveryDate },
+    attachments: buyer.attachments,
   });
   if (placed.legacy) return null;
   if (!placed.ok) {
@@ -4664,12 +5098,18 @@ async function placeBuyNowPo(product, qty, line, guest) {
     po: placed.po,
     ...openWhatsappDraft([line], "buy", {
       refNo: placed.po.id,
-      buyer: {
-        email,
-        name: user?.name || contact?.name || "",
-        phone: member ? buyerContactPhone(user, user.email) : contact?.phone || contact?.otherPhone || "",
-        otherPhone: member ? String(member.otherPhone || "").trim() : contact?.otherPhone || "",
+      buyer,
+      details: {
+        company: buyer.company,
+        address: buyer.address,
+        contact: buyer.name,
+        email: buyer.email,
+        phone: buyer.phone,
+        project: buyer.project,
+        deliveryDate: buyer.deliveryDate,
+        attachments: attachmentSummary(buyer.attachments),
       },
+      guestFiles: contact?.attachments,
     }),
   };
 }
@@ -4705,7 +5145,16 @@ async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false
   const submitted = await pending;
   if (!submitted.ok && submitted.error !== "not_logged_in") return submitted;
   const rfq = submitted.ok ? submitted.rfq : null;
-  return { ok: true, ...openWhatsappDraft([line], intent, { refNo: rfq?.id, buyer: submitted.buyer }), rfq };
+  return {
+    ok: true,
+    ...openWhatsappDraft([line], intent, {
+      refNo: rfq?.id,
+      buyer: submitted.buyer,
+      guestFiles: guest?.attachments,
+      details: guestWhatsappDetails(guest, submitted.buyer),
+    }),
+    rfq,
+  };
 }
 
 function whatsappUrl() {
@@ -4833,7 +5282,10 @@ async function loginStaff({ email, password }) {
   const result = await authApi("login", { kind: "staff", email: normalizeEmail(email), password });
   if (!result.ok) return { ok: false, error: result.error || "password" };
   const local = getStaffAccount(result.account.email);
-  return { ok: true, staff: startStaffSession({ email: result.account.email, name: local?.name || result.account.name }) };
+  const staff = startStaffSession({ email: result.account.email, name: local?.name || result.account.name });
+  syncServerRfqs();
+  refreshServerBuyers();
+  return { ok: true, staff };
 }
 
 function logoutStaff() {
@@ -5065,6 +5517,7 @@ function enableStaff(email) {
 }
 
 async function refreshServerBuyers() {
+  try {
   const result = await authApi("buyers", {});
   if (!result.ok || !Array.isArray(result.buyers)) return false;
   const map = getAccountsMap();
@@ -5084,6 +5537,12 @@ async function refreshServerBuyers() {
   setAccountsMap(map);
   emitStoreChange();
   return true;
+  } finally {
+    if (isPortalSurface() && !buyersReady) {
+      buyersReady = true;
+      emitStoreChange();
+    }
+  }
 }
 
 function listBuyers() {
@@ -5609,7 +6068,7 @@ function hardDeleteBuyer(email) {
   setAccountsMap(map);
   try {
     const session = JSON.parse(localStorage.getItem(AUTH_KEY) || "null");
-    if (session && normalizeEmail(session.email) === key) localStorage.removeItem(AUTH_KEY);
+    if (session && normalizeEmail(session.email) === key) forgetStoredUser();
   } catch {
     /* ignore */
   }
@@ -5797,22 +6256,52 @@ async function assignRfqToBuyerRemote(id, buyerEmail) {
   return moveRfqToMember(id, buyer, remote.patch);
 }
 
-function setRfqBuyerPhone(id, phone) {
+function setRfqBuyerPhone(id, phone, otherPhone, apps) {
   const gate = requireStaff();
   if (!gate.ok) return gate;
   const nextPhone = String(phone || "").trim();
+  const hasOther = otherPhone !== undefined;
+  const nextOther = hasOther ? String(otherPhone || "").trim() : "";
+  const hasApps = apps && typeof apps === "object";
+  let whatsappOn = hasApps && (apps.whatsappOn === "1" || apps.whatsappOn === "2") ? apps.whatsappOn : "";
+  let wechatOn = hasApps && (apps.wechatOn === "1" || apps.wechatOn === "2") ? apps.wechatOn : "";
+  if (hasApps && !nextPhone) {
+    if (whatsappOn === "1") whatsappOn = "";
+    if (wechatOn === "1") wechatOn = "";
+  }
+  if (hasApps && hasOther && !nextOther) {
+    if (whatsappOn === "2") whatsappOn = "";
+    if (wechatOn === "2") wechatOn = "";
+  }
   const current = getAllRfqs().find((r) => r.id === id);
   if (!current) return { ok: false, error: "missing" };
   const email = normalizeEmail(current.buyerEmail);
   const accounts = getAccountsMap();
   if (email && accounts[email]) {
-    accounts[email] = { ...accounts[email], phone: nextPhone };
+    accounts[email] = {
+      ...accounts[email],
+      phone: nextPhone,
+      ...(hasOther ? { otherPhone: nextOther } : {}),
+      ...(hasApps ? { whatsappOn, wechatOn, phoneWhatsapp: Boolean(whatsappOn) } : {}),
+    };
     setAccountsMap(accounts);
   }
-  const saved = patchRfqById(id, (rfq) => ({ ...rfq, buyerPhone: nextPhone }));
+  const saved = patchRfqById(id, (rfq) => {
+    const next = { ...rfq, buyerPhone: nextPhone };
+    if (hasOther) next.buyerOtherPhone = nextOther;
+    if (hasApps) {
+      next.buyerWhatsappOn = whatsappOn;
+      next.buyerWechatOn = wechatOn;
+      next.buyerPhoneWhatsapp = Boolean(whatsappOn);
+    } else if (hasOther && !nextOther) {
+      if (next.buyerWhatsappOn === "2") next.buyerWhatsappOn = "";
+      if (next.buyerWechatOn === "2") next.buyerWechatOn = "";
+    }
+    return next;
+  });
   if (saved.ok && serverHeldIds.has(id)) {
     serverWritesInFlight += 1;
-    saveBuyerPhone(id, nextPhone).finally(() => {
+    saveBuyerPhone(id, nextPhone, hasOther ? nextOther : undefined, hasApps ? { whatsappOn, wechatOn } : undefined).finally(() => {
       serverWritesInFlight -= 1;
       syncServerRfqs();
     });
@@ -6932,7 +7421,8 @@ function persistProductPatches(changedIds, removedIds, { commit = true } = {}) {
       unit: p.salesUnit || p.unit,
       moq: p.moq,
       price: p.priceUponRequest || !(Number(p.price) > 0) ? null : Number(p.price),
-      priceUponRequest: Boolean(p.priceUponRequest) || !(Number(p.price) > 0),
+      priceUponRequest: !(Number(p.unit_price) > 0),
+      unit_price: Number(p.unit_price) > 0 ? Math.round(Number(p.unit_price) * 100) / 100 : null,
       leadTime: p.leadTime,
       leadTimeLabel: p.leadTimeLabel || "",
       purposes: p.purposes,
@@ -7025,12 +7515,15 @@ async function createAdminProductNow(fields) {
     imageFallbacks: Array.isArray(fields.imageFallbacks) ? fields.imageFallbacks.filter(Boolean).slice(0, 5) : [],
     imageSource: fields.image ? (fields.imageSource || "upload") : "generated",
     supplier: "Mattex",
-    specs: [],
-    price: fields.priceUponRequest || !(Number(fields.price) > 0) ? null : Number(fields.price),
-    priceUponRequest: Boolean(fields.priceUponRequest) || !(Number(fields.price) > 0),
+    specs: Array.isArray(fields.specs) ? fields.specs : [],
+    stockStatus: fields.stockStatus || "in_stock",
+    lowerDeliveryQty: Number(fields.lowerDeliveryQty) > 0 ? Number(fields.lowerDeliveryQty) : null,
+    price: null,
+    unit_price: Number(fields.unit_price) > 0 ? Math.round(Number(fields.unit_price) * 100) / 100 : null,
+    priceUponRequest: !(Number(fields.unit_price) > 0),
     published: false,
-    description: fields.sizeDesc || "",
-    standard: fields.certifications || "",
+    description: String(fields.description || "").trim(),
+    standard: String(fields.standard || fields.certifications || "").trim(),
     createdAt: Date.now() + (Number(String(tmp).replace(/\D/g, "")) || 0),
   });
   PRODUCTS.push(product);
@@ -7072,6 +7565,8 @@ async function updateAdminProductNow(id, fields) {
     green: Boolean(fields.green),
     hit: Boolean(fields.hit),
     tailorMade: Boolean(fields.tailorMade),
+    unit_price: Number(fields.unit_price) > 0 ? Math.round(Number(fields.unit_price) * 100) / 100 : null,
+    priceUponRequest: !(Number(fields.unit_price) > 0),
     image: fields.image == null ? product.image : fields.image,
     images: fields.images == null
       ? product.images
@@ -7276,14 +7771,20 @@ function adminProductCreatedAt(p) {
   return digits ? Number(digits[1]) : 1;
 }
 
+let adminListCache = null;
+let adminListEpoch = -1;
+
 function listAdminProducts() {
+  if (adminListCache && adminListEpoch === catalogEpoch) return adminListCache;
   migrateHeldProductsToDraft();
   const index = new Map(PRODUCTS.map((p, i) => [p.id, i]));
-  return PRODUCTS.slice().sort((a, b) => {
+  adminListCache = PRODUCTS.slice().sort((a, b) => {
     const createdDiff = adminProductCreatedAt(b) - adminProductCreatedAt(a);
     if (createdDiff) return createdDiff;
     return (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0);
   });
+  adminListEpoch = catalogEpoch;
+  return adminListCache;
 }
 
 async function importAdminCsv(csv) {
@@ -7822,7 +8323,7 @@ function refreshRemoteRfqs() {
 }
 
 function ensureBuyerSession() {
-  if (!isSupabaseConfigured() || isPortalSurface() || !getUser()) return Promise.resolve(false);
+  if (isPortalSurface()) return Promise.resolve(false);
   rfqRefreshChain = rfqRefreshChain
     .then(async () => {
       if (!(await verifyBuyerSession())) return;
@@ -7940,7 +8441,12 @@ function raiseServerAlerts(entries, knownIds, map) {
   alertBaseline = newest;
 }
 
+let lastPortalSyncStamp = "";
+
 function adoptPortalRfqs(entries, previousIds) {
+  const stamp = JSON.stringify(entries || []);
+  if (stamp === lastPortalSyncStamp && Object.keys(memoryRfqMap || {}).length) return false;
+  lastPortalSyncStamp = stamp;
   const nextMap = {};
   for (const entry of entries || []) {
     const row = rfqFromServerEntry(entry);
@@ -8025,8 +8531,14 @@ async function syncServerRfqs() {
     }
   } finally {
     serverSyncBusy = false;
+    if (isPortalSurface() && !portalInboxReady) {
+      portalInboxReady = true;
+      emitStoreChange();
+    }
   }
 }
+
+let serverSyncListening = false;
 
 function startServerRfqSync() {
   if (typeof window === "undefined") return;
@@ -8035,6 +8547,8 @@ function startServerRfqSync() {
   serverSyncTimer = window.setInterval(() => {
     if (document.visibilityState === "visible") syncServerRfqs();
   }, 4000);
+  if (serverSyncListening) return;
+  serverSyncListening = true;
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") syncServerRfqs();
   });
@@ -8092,7 +8606,8 @@ async function pushBuyerContentToServer(rfq, { resubmit = false } = {}) {
 }
 
 function startSharedStoreSync() {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || startSharedStoreSync.started) return;
+  startSharedStoreSync.started = true;
   window.clearInterval(sharedStoreTimer);
   const publishBuyerContact = () => {
     if (isPortalSurface()) return;
@@ -8108,7 +8623,14 @@ function startSharedStoreSync() {
       publishBuyerContact();
     });
   }
-  if (isPortalSurface()) verifyStaffSession();
+  if (isPortalSurface()) {
+    verifyStaffSession().finally(() => {
+      startServerRfqSync();
+      refreshServerBuyers();
+    });
+    return;
+  }
+  ensureBuyerSession();
   startServerRfqSync();
 }
 
@@ -8162,6 +8684,7 @@ export {
   suggestCatalogMatch,
   getProductsByIds,
   getEffectivePrice,
+  productShowsPrice,
   isHitProduct,
   formatQuoteDate,
   formatQuoteDateShort,
@@ -8205,6 +8728,7 @@ export {
   draftTotals,
   getRfqs,
   submitRfq,
+  downloadSubmittedPdf,
   sendImmediateQuote,
   sendWhatsappQuote,
   whatsappNow,

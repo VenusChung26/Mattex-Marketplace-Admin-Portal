@@ -8,15 +8,18 @@ import { inflateSync } from "node:zlib";
 import * as XLSX from "xlsx";
 import { readSession } from "./auth.js";
 import { parseBuyerDocument } from "./buyer-spec.js";
+import { circledCropsFromImage, circledFromPdf } from "./circled.js";
+import { isChatNoise, isProductDescription } from "../src/lib/buyerLine.js";
 
 const execFileAsync = promisify(execFile);
 
 const COOKIE = "mm_spec_uses";
-const DAILY_LIMIT = 3;
+const DAILY_LIMIT = 10;
 const SPEC_FETCH_MAX = 20 * 1024 * 1024;
 const SPEC_BLOB_HOST = /(^|\.)blob\.vercel-storage\.com$/i;
 const SNAPSHOT_FILE = path.join(process.cwd(), "data", "catalog-snapshot.json");
 const SEED_FILE = path.join(process.cwd(), "public", "catalog.json");
+const TESS_DIR = path.join(process.cwd(), "server", "tessdata");
 
 function secret() {
   const value = process.env.SESSION_SECRET || "";
@@ -203,9 +206,10 @@ function readableEnough(text) {
   return letters >= 8 && letters / Math.max(String(text || "").length, 1) > 0.2;
 }
 
-function pushBuyerLine(items, name, spec, qty) {
+function pushBuyerLine(items, name, spec, qty, circled) {
   const title = String(name || "").trim().slice(0, 180);
-  if (title.length < 3 || !/[a-z\u4e00-\u9fff]/i.test(title) || isPdfSyntax(title)) return;
+  if (title.length < 2 || !/[a-z\u4e00-\u9fff]/i.test(title) || isPdfSyntax(title)) return;
+  if (!circled && !isProductDescription(title)) return;
   const parsed = Math.floor(Number(qty));
   const amount = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   const key = `${title.toLowerCase()}|${amount}`;
@@ -243,7 +247,7 @@ function lineFromCells(cells) {
   return { name: texts[0] || "", spec: texts.slice(1).join(" · "), qty: qtyCell };
 }
 
-function extractBuyerLines(text) {
+function extractBuyerLines(text, circled) {
   const items = [];
   const rawLines = String(text || "")
     .split(/\r?\n/)
@@ -253,14 +257,14 @@ function extractBuyerLines(text) {
     const cells = cellsOf(line);
     if (cells.length >= 2) {
       const parsed = lineFromCells(cells);
-      if (parsed) pushBuyerLine(items, parsed.name, parsed.spec, parsed.qty);
+      if (parsed) pushBuyerLine(items, parsed.name, parsed.spec, parsed.qty, circled);
       continue;
     }
     const marked = line.match(/^(.*?)(?:\s+(?:qty|quantity)\s*(\d+(?:\.\d+)?)|\s+[x×]\s*(\d+(?:\.\d+)?))\s*$/i);
     const qty = marked ? Number(marked[2] || marked[3]) : null;
     const name = (marked ? marked[1] : line).trim();
     const words = tokens(name);
-    if (qty || words.length >= 2) pushBuyerLine(items, name, "", qty);
+    if (circled || qty || words.length >= 2 || isProductDescription(name)) pushBuyerLine(items, name, "", qty, circled);
     if (items.length >= 30) break;
   }
   return items;
@@ -275,7 +279,7 @@ function sheetItems(base64) {
       for (const row of rows) {
         const cells = (Array.isArray(row) ? row : []).map((cell) => String(cell || "").trim()).filter(Boolean);
         const parsed = lineFromCells(cells);
-        if (parsed) pushBuyerLine(items, parsed.name, parsed.spec, parsed.qty);
+        if (parsed) pushBuyerLine(items, parsed.name, parsed.spec, parsed.qty, false);
         if (items.length >= 30) return items;
       }
     }
@@ -311,32 +315,50 @@ function matchBuyerLine(line, index) {
   }));
 }
 
-function rowsFromBuyerLines(items, index) {
+function rowsFromBuyerLines(items, index, circled) {
   return items.map((line) => ({
     buyerName: line.name,
     buyerSpec: line.spec,
     qty: line.qty,
+    circled: Boolean(circled),
     matches: matchBuyerLine(line, index),
   }));
 }
 
-function buyerItems(text) {
-  const structured = parseBuyerDocument(text);
-  if (structured.length) return structured;
-  return extractBuyerLines(text);
+function buyerItems(text, circled) {
+  if (!circled) {
+    const structured = parseBuyerDocument(text).filter((item) => isProductDescription(item.name));
+    if (structured.length) return structured;
+  }
+  return extractBuyerLines(text, circled);
 }
 
-function localRows(body, index, text) {
+function fallbackItems(text, circled) {
+  const items = [];
+  for (const raw of String(text || "").split(/\n/)) {
+    const name = raw.replace(/\s+/g, " ").trim();
+    if (name.length < 2 || name.length > 180 || isChatNoise(name)) continue;
+    if (!circled && !isProductDescription(name)) continue;
+    const letters = name.replace(/[^A-Za-z0-9\u4e00-\u9fff]/g, "");
+    if (letters.length < 2) continue;
+    items.push({ name, spec: "", qty: null });
+    if (items.length >= 40) break;
+  }
+  return items;
+}
+
+function localRows(body, index, text, pictured, circled) {
   const mime = String(body?.mime || "").toLowerCase();
   const name = String(body?.name || "").toLowerCase();
   const base64 = String(body?.base64 || "");
   if (name.endsWith(".xlsx") || name.endsWith(".xls") || mime.includes("sheet") || mime.includes("excel")) {
     const items = sheetItems(base64);
-    return { unreadable: items.length === 0, rows: rowsFromBuyerLines(items, index) };
+    return { unreadable: items.length === 0, rows: rowsFromBuyerLines(items, index, false) };
   }
   if (!text) return { unreadable: true, rows: [] };
-  const items = buyerItems(text);
-  return { unreadable: items.length === 0, rows: rowsFromBuyerLines(items, index) };
+  const items = buyerItems(text, circled);
+  const rows = items.length || pictured ? items : fallbackItems(text, circled);
+  return { unreadable: rows.length === 0, rows: rowsFromBuyerLines(rows, index, circled) };
 }
 
 function isPicture(body) {
@@ -371,9 +393,9 @@ function specFileExt(body) {
   return ".jpg";
 }
 
-async function visionText(body) {
+async function appleVisionText(body) {
   const base64 = String(body?.base64 || "");
-  if (!base64 || process.platform !== "darwin") return "";
+  if (!base64 || process.platform !== "darwin" || process.env.SPEC_OCR === "server") return "";
   const ext = specFileExt(body);
   let dir = "";
   try {
@@ -388,6 +410,94 @@ async function visionText(body) {
     return "";
   } finally {
     if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+let ocrWorkerPromise = null;
+
+function resetOcrWorker() {
+  const pending = ocrWorkerPromise;
+  ocrWorkerPromise = null;
+  if (pending) pending.then((worker) => worker.terminate()).catch(() => {});
+}
+
+async function recognizeImages(pages) {
+  if (!pages.length) return "";
+  const { createWorker } = await import("tesseract.js");
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = createWorker("eng+chi_tra", 1, {
+      langPath: TESS_DIR,
+      cachePath: path.join(tmpdir(), "tessdata"),
+      gzip: true,
+    }).catch((error) => {
+      ocrWorkerPromise = null;
+      throw error;
+    });
+  }
+  const worker = await ocrWorkerPromise;
+  const parts = [];
+  for (const page of pages.slice(0, 3)) {
+    const { data } = await worker.recognize(page);
+    if (data?.text) parts.push(data.text);
+  }
+  return parts.join("\n").slice(0, 20000);
+}
+
+async function rasterPages(sharp, buffer) {
+  const meta = await sharp(buffer, { failOn: "none" }).rotate().metadata();
+  const width = meta.width || 0;
+  const height = meta.height || 0;
+  let pipeline = sharp(buffer, { failOn: "none" }).rotate();
+  if (width > 1600) pipeline = pipeline.resize({ width: 1600, withoutEnlargement: true });
+  return [await pipeline.png().toBuffer()];
+}
+
+function isPdf(body) {
+  const mime = String(body?.mime || "").toLowerCase();
+  const name = String(body?.name || "").toLowerCase();
+  return mime.includes("pdf") || name.endsWith(".pdf");
+}
+
+async function pdfServerText(buffer) {
+  const mupdf = await import("mupdf");
+  const doc = mupdf.Document.openDocument(buffer, "application/pdf");
+  const count = Math.min(doc.countPages(), 3);
+  const texts = [];
+  for (let index = 0; index < count; index += 1) {
+    texts.push(doc.loadPage(index).toStructuredText("preserve-whitespace").asText());
+  }
+  const text = texts.join("\n");
+  if (buyerItems(text).length) return text;
+  const images = [];
+  for (let index = 0; index < count && images.length < 2; index += 1) {
+    const png = Buffer.from(doc.loadPage(index).toPixmap(mupdf.Matrix.scale(1.2, 1.2), mupdf.ColorSpace.DeviceRGB, false).asPNG());
+    if (png.length > 20_000) images.push(png);
+  }
+  return recognizeImages(images);
+}
+
+async function serverOcrText(body) {
+  const base64 = String(body?.base64 || "");
+  if (!base64) return "";
+  try {
+    const buffer = Buffer.from(base64, "base64");
+    if (isPdf(body)) return await pdfServerText(buffer);
+    const sharpMod = await import("sharp");
+    const pages = await rasterPages(sharpMod.default, buffer);
+    return recognizeImages(pages);
+  } catch {
+    resetOcrWorker();
+    return "";
+  }
+}
+
+async function visionText(body) {
+  const apple = await appleVisionText(body);
+  if (String(apple || "").trim()) return apple;
+  try {
+    return await serverOcrText(body);
+  } finally {
+    resetOcrWorker();
   }
 }
 
@@ -494,14 +604,47 @@ function readableText(text) {
   return parseBuyerDocument(text).length > 0 || extractBuyerLines(text).length > 0;
 }
 
+export function specImageDataUrl(body) {
+  const given = String(body?.dataUrl || "");
+  if (given.startsWith("data:image/") && given.length <= 2_000_000) return given;
+  const mime = String(body?.mime || "").toLowerCase();
+  const base64 = String(body?.base64 || "");
+  if (!mime.startsWith("image/") || !base64) return "";
+  const url = `data:${mime};base64,${base64}`;
+  return url.length <= 2_000_000 ? url : "";
+}
+
 async function readDocument(body) {
+  const circled = await readCircled(body);
+  if (circled?.text) return { text: circled.text, pictured: false, circled: true };
   const plain = sourceText(body);
-  if (readableText(plain)) return { text: plain, pictured: false };
-  if (!isPicture(body)) return { text: plain, pictured: false };
+  if (readableText(plain)) return { text: plain, pictured: false, circled: false };
+  if (!isPicture(body)) return { text: plain, pictured: false, circled: false };
   const ocr = await visionText(body);
-  if (readableText(ocr)) return { text: ocr, pictured: true };
-  if (plain && readableText(plain)) return { text: plain, pictured: false };
-  return { text: "", pictured: true };
+  if (String(ocr || "").trim()) return { text: ocr, pictured: true, circled: false };
+  if (String(plain || "").trim()) return { text: plain, pictured: true, circled: false };
+  return { text: "", pictured: true, circled: false };
+}
+
+async function readCircled(body) {
+  const base64 = String(body?.base64 || "");
+  if (!base64 || !isPicture(body)) return null;
+  try {
+    const buffer = Buffer.from(base64, "base64");
+    if (isPdf(body)) {
+      const found = await circledFromPdf(buffer);
+      if (!found?.marked) return null;
+      if (String(found.text || "").trim()) return { text: found.text };
+      const ocr = await recognizeImages(found.crops || []);
+      return String(ocr || "").trim() ? { text: ocr } : null;
+    }
+    const crops = await circledCropsFromImage(buffer);
+    if (!crops.length) return null;
+    const ocr = await recognizeImages(crops);
+    return String(ocr || "").trim() ? { text: ocr } : null;
+  } catch {
+    return null;
+  }
 }
 
 function sourceText(body) {
@@ -537,7 +680,7 @@ function rowsFromModel(raw, index) {
   for (const row of Array.isArray(raw) ? raw : []) {
     if (Array.isArray(row?.matches) || row?.name) {
       const name = String(row?.name || "").trim();
-      if (!name) continue;
+      if (!name || isChatNoise(name) || !isProductDescription(name)) continue;
       const matches = [];
       for (const match of Array.isArray(row.matches) ? row.matches : []) {
         const product = byId.get(String(match?.productId || ""));
@@ -620,8 +763,12 @@ async function askModel({ text, imageDataUrl, index }) {
       type: "text",
       text: [
         "Match the buyer specification to this catalog. Return JSON only: {\"lines\":[...]}.",
-        "One line per item in the document: {name, spec, qty, matches}.",
-        "name and spec are the buyer's own item, copied from the document. qty comes from the document, or 1 when missing.",
+        "One line per product in the document: {name, spec, qty, matches}.",
+        "name and spec are the buyer's own product, copied from the document. qty comes from the document, or 1 when missing.",
+        "Skip greetings, salutations, and chat. Pierre，早晨！ and good morning are not products.",
+        "Keep only material and product lines, written like a Marketplace product description: the product name plus a size, grade, or thickness when the document gives one. Examples: Gypsum board 12.5mm, A142 reinforcement mesh, Equal angles S275J0.",
+        "Skip requirement sentences (shall, should, must), lines that continue a sentence (starting with and or or), locations, room names, and section headings such as Partitioning or Concrete Works.",
+        "Skip lines that are not a material or product: dates, revision, page numbers, prices such as Amount (HK$), column headings such as Qty, Unit, Rate, and Description, locations and room names, section headings such as Partitioning, Concrete Works, General requirements, Brand/Model, Material performance specification, Or approved equivalent, and a standard citation on its own such as BS476:Part22.",
         "matches is an array of {productId, confident}. Put the closest catalog product first. confident is true only when that product is the same item.",
         "Other close catalog products follow with confident false. Use an empty matches array when the catalog has no close product.",
         `Catalog: ${JSON.stringify(index)}`,
@@ -671,17 +818,20 @@ export async function handleSpecMatch(input, request) {
   if (!member && guest.count >= DAILY_LIMIT) {
     return { status: 429, cookie: guestCookie(guest.count), body: { ok: false, error: "limit", remaining: 0 } };
   }
-  const mime = String(body?.mime || "");
-  const imageDataUrl = mime.startsWith("image/") && String(body?.dataUrl || "").startsWith("data:image/") ? String(body.dataUrl).slice(0, 2_000_000) : "";
+  const imageDataUrl = specImageDataUrl(body);
   const document = await readDocument(body);
   const text = document.text;
   if (!text && !imageDataUrl && !String(body?.base64 || "")) return { status: 400, body: { ok: false, error: "file" } };
   const index = await catalogIndex();
-  let parsed = localRows(body, index, text, document.pictured);
-  if (matchKey()) {
-    const raw = await askModel({ text, imageDataUrl, index });
-    const modeled = rowsFromModel(raw, index);
-    if (modeled.length) parsed = { unreadable: false, rows: modeled };
+  let parsed = localRows(body, index, text, document.pictured, document.circled);
+  if (!document.circled && matchKey() && (text || imageDataUrl)) {
+    try {
+      const raw = await askModel({ text, imageDataUrl, index });
+      const modeled = rowsFromModel(raw, index);
+      if (modeled.length) parsed = { unreadable: false, rows: modeled };
+    } catch {
+      /* keep the rows already read from the file */
+    }
   }
   const rows = parsed.rows || [];
   const count = member ? guest.count : guest.count + 1;
@@ -691,6 +841,7 @@ export async function handleSpecMatch(input, request) {
     body: {
       ok: true,
       unreadable: Boolean(parsed.unreadable) || rows.length === 0,
+      circled: Boolean(document.circled),
       rows,
       lines: flatLines(rows),
       remaining: member ? null : Math.max(0, DAILY_LIMIT - count),

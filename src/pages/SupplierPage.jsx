@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import ProductCard, { ProductListRow } from "../components/ProductCard";
 import CatalogViewToggle from "../components/CatalogViewToggle";
@@ -10,6 +10,7 @@ import CartToast from "../components/CartToast";
 import Seo, { breadcrumbJsonLd, orgJsonLd } from "../components/Seo";
 import { useLanguage } from "../i18n";
 import { catalogGroupIndex, collapseCatalog, useCatalogGroups } from "../lib/catalogGroups";
+import { useStore } from "../hooks/useStore";
 import { jumpToId } from "../lib/jumpTo";
 import { categoriesInCatalog } from "../lib/searchOptions";
 import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
@@ -17,7 +18,7 @@ import { seoCopy } from "../lib/seoCopy";
 import { SHOW_RFQ } from "../lib/flags";
 import {
   addFromStorefront,
-  getEffectivePrice,
+  productShowsPrice,
   getProductsBySupplier,
   getSupplier,
   getTopProductsForSupplier,
@@ -38,7 +39,8 @@ function readCatalogView() {
 export default function SupplierPage() {
   const { slug } = useParams();
   const navigate = useNavigate();
-  const supplier = getSupplier(slug);
+  const { catalogEpoch, catalogLoading } = useStore();
+  const supplier = useMemo(() => getSupplier(slug), [slug, catalogEpoch]);
   const { t, lang } = useLanguage();
   const groupEpoch = useCatalogGroups();
   const [searchQuery, setSearchQuery] = useState("");
@@ -67,11 +69,11 @@ export default function SupplierPage() {
 
   const top = useMemo(
     () => collapseCatalog(supplier ? getTopProductsForSupplier(supplier.slug) : [], catalogGroupIndex()),
-    [supplier, groupEpoch]
+    [supplier, groupEpoch, catalogEpoch]
   );
   const catalog = useMemo(
     () => (supplier ? getProductsBySupplier(supplier.slug) : []),
-    [supplier]
+    [supplier, catalogEpoch]
   );
   const categoryCounts = useMemo(() => {
     const map = new Map();
@@ -91,8 +93,8 @@ export default function SupplierPage() {
       ? searched.filter((p) => p.category === selectedCategory)
       : searched;
     if (greenOnly) list = list.filter((p) => p.green);
-    if (priceFilter === "priced") list = list.filter((p) => getEffectivePrice(p).displayPrice != null);
-    if (priceFilter === "unpriced") list = list.filter((p) => getEffectivePrice(p).displayPrice == null);
+    if (priceFilter === "priced") list = list.filter((p) => productShowsPrice(p));
+    if (priceFilter === "unpriced") list = list.filter((p) => !productShowsPrice(p));
     if (priceFilter === "hot") list = list.filter((p) => isHitProduct(p));
     return collapseCatalog(list, catalogGroupIndex());
   }, [searched, selectedCategory, greenOnly, priceFilter, groupEpoch]);
@@ -143,7 +145,26 @@ export default function SupplierPage() {
     }
   }
 
+  const handleAdd = useCallback((productId, intent = "quote", qty) => {
+    const result = addFromStorefront(productId, intent, qty, lang);
+    if (!result?.ok || intent === "quote-now" || intent === "buy-now") return;
+    setToast({
+      message: t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq"),
+      href: withLocale(lang, "/rfq"),
+    });
+  }, [lang, t]);
+
   if (!supplier) {
+    if (catalogLoading) {
+      return (
+        <div className="bg-paper min-h-screen">
+          <SiteHeader />
+          <main className="max-w-7xl mx-auto px-4 py-10">
+            <p className="text-sm text-mute">{t("loadingCatalog")}</p>
+          </main>
+        </div>
+      );
+    }
     return (
       <div className="bg-paper min-h-screen">
         <SiteHeader />
@@ -158,15 +179,6 @@ export default function SupplierPage() {
         </main>
       </div>
     );
-  }
-
-  function handleAdd(productId, intent = "quote", qty) {
-    const result = addFromStorefront(productId, intent, qty, lang);
-    if (!result?.ok || intent === "quote-now" || intent === "buy-now") return;
-    setToast({
-      message: t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq"),
-      href: withLocale(lang, "/rfq"),
-    });
   }
 
   const cats = `${supplier.categories.slice(0, 3).join(", ")}${

@@ -1,3 +1,5 @@
+import { attachmentSummary } from "./guestOrder.js";
+
 const PAGE_W = 1240;
 const PAGE_H = 1754;
 const MARGIN = 72;
@@ -48,22 +50,29 @@ function makePageCanvas() {
 }
 
 function buyerRows(buyer) {
-  const email = String(buyer?.email || "").trim();
-  if (!email) return [];
-  const rows = [["電郵", email]];
-  const name = String(buyer?.name || "").trim();
-  const phone = String(buyer?.phone || "").trim();
+  const files = attachmentSummary(buyer?.attachments);
   const other = String(buyer?.otherPhone || "").trim();
-  if (name) rows.push(["姓名", name]);
-  if (phone) rows.push(["電話", phone]);
-  if (other && other !== phone) rows.push(["其他電話", other]);
+  const phone = String(buyer?.phone || "").trim();
+  const rows = [
+    ["公司", buyer?.company],
+    ["送貨地址", buyer?.address],
+    ["聯絡人", buyer?.name],
+    ["電郵", buyer?.email],
+    ["電話", phone],
+    ["項目", buyer?.project],
+    ["交貨日期", buyer?.deliveryDate],
+    ["附件", files],
+  ]
+    .map(([label, value]) => [label, String(value || "").trim()])
+    .filter(([, value]) => value);
+  if (other && other !== phone) rows.splice(5, 0, ["其他電話", other]);
   return rows;
 }
 
 function drawBuyer(ctx, rows, y) {
   ctx.fillStyle = "#143528";
   ctx.font = "700 18px 'PingFang TC', 'Noto Sans TC', sans-serif";
-  ctx.fillText("買家", MARGIN, y);
+  ctx.fillText("送貨及聯絡", MARGIN, y);
   let cursor = y + 32;
   const valueX = MARGIN + 120;
   const maxWidth = PAGE_W - MARGIN - valueX;
@@ -348,6 +357,12 @@ function jpegsToPdf(images) {
   return concatBytes(parts);
 }
 
+export function quotePdfFilename(kind, refNo) {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const slug = String(refNo || "").replace(/[^\w.-]+/g, "") || stamp;
+  return kind === "buy" ? `mattex-order-${slug}.pdf` : `mattex-quote-${slug}.pdf`;
+}
+
 export async function buildQuotePdf({ kind, items, refNo, buyer }) {
   const prepared = await Promise.all(
     (Array.isArray(items) ? items : []).map(async (item) => ({
@@ -359,9 +374,7 @@ export async function buildQuotePdf({ kind, items, refNo, buyer }) {
   const jpegs = [];
   for (const canvas of pages) jpegs.push(await canvasToJpeg(canvas));
   const bytes = jpegsToPdf(jpegs);
-  const stamp = new Date().toISOString().slice(0, 10);
-  const slug = String(refNo || "").replace(/[^\w.-]+/g, "") || stamp;
-  const filename = kind === "buy" ? `mattex-order-${slug}.pdf` : `mattex-quote-${slug}.pdf`;
+  const filename = quotePdfFilename(kind, refNo);
   const blob = new Blob([bytes], { type: "application/pdf" });
   const file = new File([blob], filename, { type: "application/pdf" });
   return { blob, file, filename, url: URL.createObjectURL(blob) };

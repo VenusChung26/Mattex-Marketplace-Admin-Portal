@@ -40,7 +40,9 @@ async function sendJson(path, options) {
 }
 
 export async function getCatalog(ifNoneMatch) {
-  const headers = {};
+  const headers = {
+    "x-mm-catalog": import.meta.env?.VITE_SURFACE === "admin" ? "portal" : "shop",
+  };
   if (ifNoneMatch) headers["If-None-Match"] = ifNoneMatch;
   const res = await send("/api/catalog", { headers, cache: "no-store" });
   if (res.status === 304) return { status: 304, ok: true, data: null };
@@ -364,10 +366,28 @@ export async function saveQuoteDraft(id, prices) {
   }
 }
 
-/** Staff only: keep the buyer contact number Sales follow up on. */
-export async function saveBuyerPhone(id, phone) {
+/** Keep uploaded order-file addresses on the order so Sales can open them. */
+export async function saveGuestFileUrls(id, files) {
   try {
-    const { res, data } = await sendJson("/api/rfq", { method: "POST", body: { action: "rfq_phone", id, phone } });
+    const { res, data } = await sendJson("/api/rfq", { method: "POST", body: { action: "rfq_files", id, files } });
+    if (res.status === 501 || res.status === 404) return { ok: false, legacy: true };
+    if (!res.ok || !data?.ok) return { ok: false, error: data?.error || `http_${res.status}` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "network" };
+  }
+}
+
+/** Staff only: keep the buyer contact numbers Sales follow up on. */
+export async function saveBuyerPhone(id, phone, otherPhone, apps) {
+  try {
+    const body = { action: "rfq_phone", id, phone };
+    if (otherPhone !== undefined) body.otherPhone = otherPhone;
+    if (apps && typeof apps === "object") {
+      body.whatsappOn = apps.whatsappOn === "1" || apps.whatsappOn === "2" ? apps.whatsappOn : "";
+      body.wechatOn = apps.wechatOn === "1" || apps.wechatOn === "2" ? apps.wechatOn : "";
+    }
+    const { res, data } = await sendJson("/api/rfq", { method: "POST", body });
     if (res.status === 501 || res.status === 404) return { ok: false, legacy: true };
     if (!res.ok || !data?.ok) return { ok: false, error: data?.error || `http_${res.status}` };
     return { ok: true };

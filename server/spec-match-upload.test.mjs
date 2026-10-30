@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx";
-import { handleSpecMatch, loadSpecUpload, specBlobUrl } from "../api/spec-match.js";
+import { handleSpecMatch, loadSpecUpload, specBlobUrl, specImageDataUrl } from "../api/spec-match.js";
 
 const request = { headers: { get: () => "" } };
 const blobUrl = "https://abc.public.blob.vercel-storage.com/rfq/specs/list.xlsx";
@@ -93,6 +93,19 @@ test("an oversized blob is not loaded", async () => {
   assert.equal(loaded.base64, undefined);
 });
 
+test("a short text line still becomes a row", async () => {
+  const result = await handleSpecMatch({ name: "items.txt", mime: "text/plain", text: "Mesh" }, request);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.unreadable, false);
+  assert.equal(result.body.rows[0].buyerName, "Mesh");
+});
+
+test("a photo sent as base64 is ready for the model", () => {
+  const url = specImageDataUrl({ mime: "image/jpeg", base64: "aGVsbG8=" });
+  assert.equal(url.startsWith("data:image/jpeg;base64,"), true);
+  assert.equal(specImageDataUrl({ mime: "application/pdf", base64: "aGVsbG8=" }), "");
+});
+
 test("a photo whose text is already extracted still becomes rows", async () => {
   const result = await handleSpecMatch(
     {
@@ -106,4 +119,30 @@ test("a photo whose text is already extracted still becomes rows", async () => {
   assert.equal(result.body.ok, true);
   assert.equal(result.body.unreadable, false);
   assert.ok(result.body.rows.some((row) => /mesh/i.test(row.buyerName)));
+});
+
+test("a greeting is not extracted as a product", async () => {
+  const previousMatch = process.env.SPEC_MATCH_API_KEY;
+  const previousOpen = process.env.OPENAI_API_KEY;
+  delete process.env.SPEC_MATCH_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  try {
+    const result = await handleSpecMatch(
+      {
+        name: "chat.txt",
+        mime: "text/plain",
+        text: "SSL Pacific LTD- Fanny\nPierre，早晨！\nT3 防火板 Wins H-Tec 1200x2400\n孔是否可以？及報價人\n8頁•PDF• 3 MB\n早晨Fanny，我check check，儘快幫你處理",
+      },
+      request
+    );
+    const names = (result.body.rows || []).map((row) => row.buyerName);
+    assert.equal(result.status, 200);
+    assert.equal(names.some((name) => /早晨/.test(name)), false);
+    assert.ok(names.some((name) => /防火板/.test(name)));
+  } finally {
+    if (previousMatch == null) delete process.env.SPEC_MATCH_API_KEY;
+    else process.env.SPEC_MATCH_API_KEY = previousMatch;
+    if (previousOpen == null) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousOpen;
+  }
 });

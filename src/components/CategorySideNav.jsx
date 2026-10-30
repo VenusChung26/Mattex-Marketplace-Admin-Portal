@@ -72,6 +72,7 @@ export default function CategorySideNav({
       onSelectCategory={onSelectCategory}
     />
     <nav
+      data-tour="categories"
       aria-label={t("categories")}
       className="hidden w-full min-w-0 max-w-full flex-col overflow-hidden lg:sticky lg:flex lg:max-h-[var(--cat-nav-max)]"
       style={{ top: offsetTop, "--cat-nav-max": maxHeight }}

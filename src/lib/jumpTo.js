@@ -6,11 +6,14 @@ function targetTop(el, gap = 8) {
   const elTop = el.getBoundingClientRect().top;
   const nav = document.getElementById("siteNav");
   let cover = nav ? Math.round(nav.getBoundingClientRect().height) : 0;
+  const elDoc = elTop + window.scrollY;
   ["catalog-toolbar", "supplier-toolbar"].forEach((id) => {
     const bar = document.getElementById(id);
-    if (!bar || bar === el) return;
+    if (!bar || bar === el || el.contains(bar)) return;
     const box = bar.getBoundingClientRect();
-    if (elTop > box.top) cover = Math.max(cover, Math.round(box.bottom));
+    const barDoc = box.top + window.scrollY;
+    if (elDoc <= barDoc + 1) return;
+    cover += Math.round(box.height);
   });
   return Math.max(0, window.scrollY + elTop - cover - gap);
 }
@@ -69,7 +72,7 @@ export function scrollToTopNow() {
   const root = document.documentElement;
   const previous = root.style.scrollBehavior;
   root.style.scrollBehavior = "auto";
-  window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  window.scrollTo(0, 0);
   root.scrollTop = 0;
   document.body.scrollTop = 0;
   window.requestAnimationFrame(() => {

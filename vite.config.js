@@ -111,6 +111,7 @@ function jsonPlugin() {
             headers: {
               cookie: String(req.headers.cookie || ""),
               "if-none-match": String(req.headers["if-none-match"] || ""),
+              "x-mm-catalog": String(req.headers["x-mm-catalog"] || ""),
             },
           });
           const result = await handleCatalogRequest(request);
@@ -380,6 +381,7 @@ export default defineConfig(({ mode }) => {
     process.env.VITE_ADMIN_ORIGIN ||
     env.VITE_ADMIN_ORIGIN ||
     (mode === "production" ? "https://subbie-admin.mattex.com.hk" : "http://localhost:5183");
+  const sentryDsn = process.env.VITE_SENTRY_DSN || env.VITE_SENTRY_DSN || "";
   return {
     plugins: [stripSupabaseFromClient(), react(), jsonPlugin(), marketplaceGaHtmlPlugin(), publicSsrHtmlPlugin()],
     envPrefix: "MM_PUBLIC_",
@@ -393,6 +395,7 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.VITE_MARKETPLACE_ORIGIN": JSON.stringify(marketplaceOrigin),
       "import.meta.env.VITE_ADMIN_ORIGIN": JSON.stringify(adminOrigin),
       "import.meta.env.VITE_GA_MEASUREMENT_ID": JSON.stringify(gaMeasurementId),
+      "import.meta.env.VITE_SENTRY_DSN": JSON.stringify(sentryDsn),
     },
     server: {
       port: 5178,

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import ProductCard from "../components/ProductCard";
 import PromoOfferLayout from "../components/PromoOfferLayout";
@@ -30,9 +30,9 @@ export default function MidAutumnPage() {
       .filter(Boolean);
   }, [active, catalogEpoch]);
 
-  function handleAdd(productId, intent = "quote", qty) {
+  const handleAdd = useCallback((productId, intent = "quote", qty) => {
     addFromStorefront(productId, intent, qty, lang);
-  }
+  }, [lang]);
 
   function select(id) {
     const next = new URLSearchParams(params);

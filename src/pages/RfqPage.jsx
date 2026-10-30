@@ -28,6 +28,7 @@ import {
   setLineRequestedPrice,
   rejectIfProductsOffline,
   submitRfq,
+  downloadSubmittedPdf,
   updateCustomLine,
   requireBuyerAuth,
   openAuthModal,
@@ -36,6 +37,7 @@ import {
   setPendingCartWhatsappSubmit,
   completeCartWhatsappSubmit,
   takeLastCartWhatsappResult,
+  currentMemberOrderSeed,
 } from "../lib/store";
 import { scrollToTopNow } from "../lib/jumpTo";
 import SiteHeader from "../components/SiteHeader";
@@ -47,6 +49,7 @@ import { VariantA, ConfirmRfqView, CUSTOM_PLACEMENT } from "./rfq-prototype/RfqD
 import { SHOW_RFQ } from "../lib/flags";
 import { useRevealFormIssue } from "../lib/formFocus";
 import { clearSpecConfirm, clearSpecMatchIfSubmitted, clearSpecQuoteDraft, readSpecConfirm, readSpecQuoteDraft, saveSpecQuoteDraft } from "../lib/specMatchSession";
+import { emptyGuestOrder, guestOrderError, guestOrderPayload } from "../lib/guestOrder";
 
 export default function RfqPage() {
   const { user, draft, lastCartWhatsappResult } = useStore();
@@ -70,6 +73,18 @@ export default function RfqPage() {
     setSpecQuote(next);
   }
 
+  function applyMemberOrder(next) {
+    setMemberInfo(next);
+    setAddress(next.address || "");
+    setProject(next.project || "");
+    setDeliveryDate(next.deliveryDate || "");
+    setDraftAddress(next.address || "");
+    setDraftProject(next.project || "");
+    setDraftDeliveryDate(next.deliveryDate || "");
+    setFormError("");
+    setFormErrorField("");
+  }
+
   function saveLogistics(fields) {
     if (specQuoteRef.current) {
       writeSpecQuote(fields);
@@ -90,10 +105,22 @@ export default function RfqPage() {
   const [note, setNote] = useState(totals.note || "");
   const [responseDate, setResponseDate] = useState(totals.responseDate || "");
   const [deliveryDate, setDeliveryDate] = useState(totals.deliveryDate || "");
+  const [guestInfo, setGuestInfo] = useState(() => emptyGuestOrder());
+  const [memberInfo, setMemberInfo] = useState(() => emptyGuestOrder());
+  const memberSeeded = useRef("");
   const [deliveryMode, setDeliveryMode] = useState(totals.deliveryMode || "one_time");
   const [deliveryLots, setDeliveryLots] = useState(totals.deliveryLots || []);
   const [project, setProject] = useState(totals.project || "");
   const [address, setAddress] = useState(totals.address || profileAddress);
+  useEffect(() => {
+    const email = String(user?.email || "");
+    if (!email || memberSeeded.current === email) return;
+    memberSeeded.current = email;
+    const seed = currentMemberOrderSeed();
+    setMemberInfo(seed);
+    if (!totals.address && seed.address) setAddress(seed.address);
+    if (!totals.project && seed.project) setProject(seed.project);
+  }, [user?.email]);
   const [canonicalCategory, setCanonicalCategory] = useState(totals.canonicalCategory || "");
   const [acceptSubstitutes, setAcceptSubstitutes] = useState(Boolean(totals.acceptSubstitutes));
   const [success, setSuccess] = useState(null);
@@ -226,8 +253,7 @@ export default function RfqPage() {
     selectableLineIds.every((id) => selectedIds.includes(id));
 
   function handleAddCustom(payload) {
-    if (!requireBuyerAuth({ custom: true })) return;
-    const result = addCustomLine(payload);
+    const result = addCustomLine({ ...payload, tailorMade: true });
     if (!result.ok) {
       setFormError(t("customNameRequired"));
       return;
@@ -306,7 +332,6 @@ export default function RfqPage() {
   }
 
   if (!totals.lines.length) {
-    const member = Boolean(user?.email);
     return (
       <Shell>
         <div className="w-full px-4 sm:px-6 lg:px-8 py-10 space-y-4">
@@ -317,41 +342,27 @@ export default function RfqPage() {
               <Link to={allProductsTo(lang)} className="btn-soft">
                 {t("browseCatalog")}
               </Link>
-              {member ? (
-                <a href="#add-custom-product" className="btn-primary">
-                  + {t("noProductsCustomCta")}
-                </a>
-              ) : (
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => requireBuyerAuth()}
-                >
-                  + {t("noProductsCustomCta")}
-                </button>
-              )}
+              <a href="#add-custom-product" className="btn-primary">
+                + {t("noProductsCustomCta")}
+              </a>
             </div>
-            {member ? (
-              <p className="mt-4 text-sm text-mute">{t("emptyDraftCustomHint")}</p>
-            ) : null}
+            <p className="mt-4 text-sm text-mute">{t("emptyDraftCustomHint")}</p>
           </div>
-          {member ? (
-            <div
-              id="add-custom-product"
-              className="bg-white border border-line rounded-xl p-6 sm:p-8"
-            >
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-600 mb-2">
-                {t("customItem")}
-              </p>
-              <h2 className="font-display text-2xl font-semibold text-brand-800 leading-tight">
-                {t("addCustomProduct")}
-              </h2>
-              <p className="mt-2 text-sm text-mute leading-relaxed">{t("customProductHint")}</p>
-              <div className="mt-5">
-                <CustomProductForm compact onSubmit={handleAddCustom} />
-              </div>
+          <div
+            id="add-custom-product"
+            className="bg-white border border-line rounded-xl p-6 sm:p-8"
+          >
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-600 mb-2">
+              {t("customItem")}
+            </p>
+            <h2 className="font-display text-2xl font-semibold text-brand-800 leading-tight">
+              {t("addCustomProduct")}
+            </h2>
+            <p className="mt-2 text-sm text-mute leading-relaxed">{t("customProductHint")}</p>
+            <div className="mt-5">
+              <CustomProductForm compact onSubmit={handleAddCustom} />
             </div>
-          ) : null}
+          </div>
         </div>
       </Shell>
     );
@@ -386,9 +397,20 @@ export default function RfqPage() {
     setFormErrorKind("");
   }
 
+  function guestErrorText(code) {
+    if (code === "company") return t("guestCompanyRequired");
+    if (code === "address") return t("guestAddressRequired");
+    if (code === "contact") return t("guestContactRequired");
+    if (code === "email") return t("guestEmailInvalid");
+    if (code === "phone" || code === "phone2") return t("guestPhoneRequired");
+    if (code === "project") return t("guestProjectRequired");
+    if (code === "delivery_date") return t("deliveryDateRequired");
+    if (code === "attachment") return t("guestAttachmentRequired");
+    return "";
+  }
+
   function onContinueKind(kind, channel = "rfq") {
     const viaWhatsapp = channel === "whatsapp";
-    if (!viaWhatsapp && !requireBuyerAuth()) return;
     const ids = totals.lines
       .filter((line) => (kind === "buy" ? line.intent === "buy" : line.intent !== "buy"))
       .map((line) => String(line.productId))
@@ -447,8 +469,31 @@ export default function RfqPage() {
     if (submitLock.current) return;
     submitLock.current = true;
     const viaWhatsapp = confirmChannel === "whatsapp";
+    const guestMode = !isLoggedIn();
     try {
-    if (!viaWhatsapp && !requireBuyerAuth()) return;
+    if (guestMode || user?.email) {
+      const source = guestMode ? guestInfo : memberInfo;
+      const missing = guestOrderError(source);
+      if (missing) {
+        setFormErrorKind(kind);
+        setFormErrorField(missing);
+        setFormError(guestErrorText(missing) || t("submitFailed"));
+        revealIssue();
+        return;
+      }
+      const payload = guestOrderPayload(source);
+      saveLogistics({
+        note,
+        responseDate,
+        deliveryDate: payload.deliveryDate,
+        deliveryMode,
+        deliveryLots,
+        project: payload.project,
+        address: payload.address,
+        canonicalCategory,
+        acceptSubstitutes,
+      });
+    } else if (!viaWhatsapp && !requireBuyerAuth()) return;
     const ids = totals.lines
       .filter((line) => (kind === "buy" ? line.intent === "buy" : line.intent !== "buy"))
       .map((line) => String(line.productId))
@@ -468,28 +513,19 @@ export default function RfqPage() {
       revealIssue();
       return;
     }
-    saveLogistics({
-      note,
-      responseDate,
-      deliveryDate,
-      deliveryMode,
-      deliveryLots,
-      project,
-      address,
-      canonicalCategory,
-      acceptSubstitutes,
-    });
+    const orderPayload = guestOrderPayload(guestMode ? guestInfo : memberInfo);
     if (viaWhatsapp) {
-      if (!isLoggedIn()) {
-        setPendingCartWhatsappSubmit({ kind, ids });
-        openAuthModal("invite");
-        return;
-      }
-      const result = await completeCartWhatsappSubmit({ kind, ids });
+      const result = await completeCartWhatsappSubmit({
+        kind,
+        ids,
+        guest: orderPayload,
+      });
       if (!result.ok) {
         setFormErrorKind(kind);
         setFormErrorField(result.error || "");
-        if (result.error === "none_selected") setFormError(t("noneSelected"));
+        const guestText = guestErrorText(result.error);
+        if (guestText) setFormError(guestText);
+        else if (result.error === "none_selected") setFormError(t("noneSelected"));
         else if (result.error === "discontinued") setFormError(t("discontinuedSubmitError"));
         else setFormError(t("submitFailed"));
         revealIssue();
@@ -508,11 +544,19 @@ export default function RfqPage() {
       return;
     }
     const quotingSpec = Boolean(specQuoteRef.current);
-    const result = await submitRfq(ids, quotingSpec ? { kind, channel: "rfq", draft: specQuoteRef.current } : { kind, channel: "rfq" });
+    const guestPayload = orderPayload;
+    const result = await submitRfq(
+      ids,
+      quotingSpec
+        ? { kind, channel: "rfq", draft: specQuoteRef.current, allowGuest: guestMode, guest: guestPayload, skipLogistics: guestMode }
+        : { kind, channel: "rfq", allowGuest: guestMode, guest: guestPayload, skipLogistics: guestMode }
+    );
     if (!result.ok) {
       setFormErrorKind(kind);
       setFormErrorField(result.error || "");
-      if (result.error === "response_date") setFormError(t("responseDateRequired"));
+      const guestText = guestErrorText(result.error);
+      if (guestText) setFormError(guestText);
+      else if (result.error === "response_date") setFormError(t("responseDateRequired"));
       else if (result.error === "delivery_date") setFormError(t("deliveryDateRequired"));
       else if (result.error === "delivery_lots") setFormError(t("deliveryLotsRequired"));
       else if (result.error === "address") setFormError(kind === "buy" ? t("buyNeedsAddress") : t("addressRequired"));
@@ -539,6 +583,7 @@ export default function RfqPage() {
     setConfirmChannel("rfq");
     setSuccess(result.rfq);
     setSuccessKind(kind);
+    void downloadSubmittedPdf(result.rfq).catch(() => {});
     } finally {
       submitLock.current = false;
     }
@@ -632,7 +677,16 @@ export default function RfqPage() {
     setDraftCanonicalCategory,
     profileProjects,
     setDraftAcceptSubstitutes,
-    marketplaceRfqEnabled: Boolean(user?.email),
+    marketplaceRfqEnabled: true,
+    signedIn: Boolean(user?.email),
+    guestInfo,
+    setGuestInfo: (next) => {
+      setGuestInfo(next);
+      setFormError("");
+      setFormErrorField("");
+    },
+    memberInfo,
+    setMemberInfo: applyMemberOrder,
     onSubmit,
     setFormError: (msg) => {
       setFormError(msg);
@@ -646,7 +700,6 @@ export default function RfqPage() {
     showAddCustom,
     setShowAddCustom,
     onToggleAddCustom: () => {
-      if (!requireBuyerAuth()) return;
       setEditingId(null);
       setShowAddCustom((v) => !v);
     },

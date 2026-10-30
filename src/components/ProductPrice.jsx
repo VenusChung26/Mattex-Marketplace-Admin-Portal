@@ -35,7 +35,8 @@ export default function ProductPrice({ product, size = "card", className = "", s
   const offer = suppressOffer ? null : findProductOffer(product?.id, promo);
   const endedOffer = showOfferEnded && !offer && !suppressOffer ? findEndedProductOffer(product?.id, promo) : null;
   const { displayPrice, status, quote } = getEffectivePrice(product);
-  const shownPrice = offer ? offer.price : displayPrice;
+  const liveOffer = displayPrice != null ? offer : null;
+  const shownPrice = liveOffer ? liveOffer.price : displayPrice;
   const large = size === "detail";
   const date = quote?.validUntil ? formatQuoteDate(quote.validUntil, lang) : "";
   const shortDate = quote?.validUntil ? formatQuoteDateShort(quote.validUntil, lang) : "";
@@ -57,9 +58,9 @@ export default function ProductPrice({ product, size = "card", className = "", s
         >
           {formatUnitPrice(shownPrice, lang)}
         </p>
-        {offer ? (
+        {liveOffer ? (
           <p className={`${large ? "text-sm px-2 py-1" : "text-[11px] px-1.5 py-1"} inline-block w-fit max-w-full leading-snug font-semibold border ${URGENCY_CHIP.soon}`}>
-            {t("offerEnds", { date: formatQuoteDate(offer.endsOn, lang) })}
+            {t("offerEnds", { date: formatQuoteDate(liveOffer.endsOn, lang) })}
           </p>
         ) : null}
         {status === "quoted" ? (

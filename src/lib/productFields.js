@@ -117,9 +117,119 @@ export function specParts(text, lang) {
     if (key === "lead") value = localizeLeadTime(value, locale);
     return { label: SPEC_LABEL[locale][key], value };
   }
+  const custom = raw.match(/^([^\n:]{1,24})\s*:\s*(.+)$/);
+  if (custom) {
+    const label = custom[1].trim();
+    if (label && !/^(sales unit|moq|unit\s*\/\s*pallet|units per pallet|pallet|cert)$/i.test(label)) {
+      return { label, value: custom[2].trim() };
+    }
+  }
   const cover = raw.match(/^~?\s*([\d.]+)\s*kg\/m²\/mm thick$/i);
   if (cover && locale === "zh") return { label: "", value: `用量約 ${cover[1]} 公斤／平方米／毫米厚` };
   return { label: "", value: raw };
+}
+
+/** The selected spec option's own product detail, stored on the option. The option name is not a size. */
+function optionFacts(option) {
+  if (!option || typeof option !== "object") return null;
+  const detail = String(option.detail || "").trim();
+  const summary = String(option.summary || "").trim();
+  const sku = String(option.sku || "").trim();
+  const specs = Array.isArray(option.specs) ? option.specs : null;
+  if (!detail && !summary && !sku && !specs) return null;
+  const facts = { detail, summary, sku };
+  if (option.moq != null && option.moq !== "") facts.moq = option.moq;
+  if (option.unit) facts.unit = option.unit;
+  if (option.leadTime) facts.leadTime = option.leadTime;
+  if (option.leadTimeLabel) facts.leadTimeLabel = option.leadTimeLabel;
+  if (specs) facts.specs = specs;
+  return facts;
+}
+
+export function pickedSpecFields(groups, picked = {}, choices = []) {
+  const choice = picked && typeof picked === "object" ? picked : {};
+  let found = { detail: "", summary: "", sku: "" };
+  for (const group of groups || []) {
+    const selected = String(choice[group?.id] || "");
+    if (!selected) continue;
+    const option = (group.options || []).find((item) => {
+      const key = item && typeof item === "object" ? String(item.key || item.label || "") : String(item || "");
+      const label = item && typeof item === "object" ? String(item.label || "") : String(item || "");
+      return key === selected || label === selected;
+    });
+    const facts = optionFacts(option);
+    if (facts) found = { ...found, ...facts };
+  }
+  const ranked = [];
+  for (const item of choices || []) {
+    const picks = item?.picks || {};
+    const keys = Object.keys(picks);
+    if (!keys.length) continue;
+    let score = 0;
+    let conflict = false;
+    for (const key of keys) {
+      const have = String(choice[key] || "");
+      if (!have) continue;
+      if (have !== picks[key]) {
+        conflict = true;
+        break;
+      }
+      score += 1;
+    }
+    if (!conflict && score > 0) ranked.push({ item, score });
+  }
+  ranked.sort((a, b) => b.score - a.score);
+  const top = ranked.filter((entry) => entry.score === ranked[0]?.score);
+  if (top.length === 1) return { ...found, ...optionFacts(top[0].item) };
+  if (top.length > 1) {
+    const detailed = top.filter((entry) => String(entry.item.detail || "").trim());
+    const skus = [...new Set(detailed.map((entry) => String(entry.item.sku || "").trim()).filter(Boolean))];
+    const picked = detailed.length === 1 ? detailed[0] : skus.length === 1 ? detailed.find((entry) => entry.item.sku) : null;
+    if (picked) return { ...found, ...optionFacts(picked.item) };
+    const details = [...new Set(detailed.map((entry) => String(entry.item.detail || "").trim()))];
+    if (details.length === 1) found = { ...found, detail: details[0] };
+  }
+  return found;
+}
+
+/** A colour name stored as a size, such as Color: Grey. It is an option name, not a dimension. */
+export function isColorLabel(value) {
+  return /^colou?r\s*:/i.test(String(value || "").trim());
+}
+
+/** A short dimension, such as 800*800mm Glazed. Longer descriptions stay in 描述. */
+export function looksLikeSize(value) {
+  const text = String(value || "").trim();
+  if (!text || text.length > 60 || /[。]/.test(text)) return false;
+  return /^\d+(?:\.\d+)?\s*[*x×]\s*\d+/i.test(text);
+}
+
+function specLineKey(line) {
+  return String(line || "")
+    .trim()
+    .replace(/^(size|packing|lead|cert|sales unit|moq|unit\s*\/\s*pallet|units per pallet|pallet)\s*:\s*/i, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
+/** Spec lines the shop table and the portal rows both read. */
+export function buyerSpecSourceLines(product) {
+  const lines = [];
+  const seen = new Set();
+  const add = (line) => {
+    const text = String(line || "").trim();
+    const key = specLineKey(text);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    lines.push(text);
+  };
+  for (const line of product?.specs || []) add(line);
+  for (const line of String(product?.specifications || "").split(/\r?\n/)) add(line);
+  const described = String(product?.description || "").trim();
+  const size = String(product?.sizeDesc || "").trim();
+  const sizeValue = size && size !== described ? size : looksLikeSize(described) ? described : looksLikeSize(size) ? size : "";
+  if (sizeValue) add(/^size\s*:/i.test(sizeValue) ? sizeValue : `Size: ${sizeValue}`);
+  return lines;
 }
 
 /** Buyer-facing specification line. */

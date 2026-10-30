@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useLanguage } from "../i18n";
 import { openUrlForAttachment } from "../lib/extractSpec";
 
@@ -29,7 +30,7 @@ export function FilePreviewOverlay({ src, name, file, onClose }) {
   const href = openUrlForAttachment(file || { url: src, name: name || "file" });
   const image = isImageFile(file || { url: src, name });
   const pdf = !image && isPdfFile(file || { url: src, name });
-  return (
+  const overlay = (
     <div
       className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4"
       onClick={onClose}
@@ -62,6 +63,50 @@ export function FilePreviewOverlay({ src, name, file, onClose }) {
         )}
       </div>
     </div>
+  );
+  if (typeof document === "undefined") return overlay;
+  return createPortal(overlay, document.body);
+}
+
+/** Order attachments. A stored file opens in the page; a name with no file stays as text. */
+export function GuestFilePreview({ files }) {
+  const [preview, setPreview] = useState(null);
+  const list = (Array.isArray(files) ? files : []).filter((file) => String(file?.name || "").trim());
+  if (!list.length) return null;
+  return (
+    <>
+      <div className="flex flex-col gap-2">
+        {list.map((file, i) => {
+          const image = Boolean(file.url) && isImageFile(file);
+          return (
+            <div key={`${file.name}-${i}`} className="flex min-w-0 items-start gap-2">
+              {image ? (
+                <button
+                  type="button"
+                  className="h-12 w-12 shrink-0 overflow-hidden border border-line bg-paper"
+                  onClick={() => setPreview(file)}
+                  aria-label={file.name}
+                >
+                  <img src={file.url} alt="" className="h-full w-full object-cover" />
+                </button>
+              ) : null}
+              {file.url ? (
+                <button
+                  type="button"
+                  className="min-w-0 break-all text-left text-brand-800 underline underline-offset-2"
+                  onClick={() => setPreview(file)}
+                >
+                  {file.name}
+                </button>
+              ) : (
+                <span className="min-w-0 break-all">{file.name}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {preview ? <FilePreviewOverlay src={preview.url} name={preview.name} file={preview} onClose={() => setPreview(null)} /> : null}
+    </>
   );
 }
 

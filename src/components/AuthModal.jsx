@@ -4,11 +4,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
-import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, cancelPendingWhatsappInvite, loginUser, setAuthInviteHidden } from "../lib/store";
+import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, cancelPendingWhatsappInvite, currentMemberOrderSeed, loginUser, setAuthInviteHidden } from "../lib/store";
 import { useRevealFormIssue } from "../lib/formFocus";
-import { PasswordInput, RequiredMark } from "./AccountForm";
-import { BuyerPhoneFields } from "./BuyerContactFields";
-import { contactPayload } from "../lib/phone";
+import { PasswordInput } from "./AccountForm";
+import GuestSubmitFields from "./GuestSubmitFields";
+import { emptyGuestOrder, guestOrderError, guestOrderPayload } from "../lib/guestOrder";
 
 function readLoginFields(form, email, password) {
   const emailValue = form?.querySelector('input[type="email"]')?.value;
@@ -19,25 +19,13 @@ function readLoginFields(form, email, password) {
   };
 }
 
-const EMPTY_PHONE = {
-  phoneRegion: "852",
-  phoneOtherCode: "",
-  phoneNational: "",
-  addPhone: false,
-  phone2Region: "852",
-  phone2OtherCode: "",
-  phone2National: "",
-  whatsappOn: "",
-  wechatOn: "",
-};
-
 export default function AuthModal({ open, onClose }) {
   const { t, lang } = useLanguage();
-  const { authModalMode } = useStore();
+  const { authModalMode, user } = useStore();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
-  const [name, setName] = useState("");
-  const [phoneForm, setPhoneForm] = useState(EMPTY_PHONE);
+  const [guestInfo, setGuestInfo] = useState(() => emptyGuestOrder());
+  const [guestField, setGuestField] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [dontShow, setDontShow] = useState(false);
@@ -47,6 +35,7 @@ export default function AuthModal({ open, onClose }) {
   const cartInvite = authModalMode === "cart-invite";
   const invite = authModalMode !== "required";
   const whatsappContact = invite && !cartInvite;
+  const memberOrder = Boolean(user?.email) && whatsappContact;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -57,8 +46,8 @@ export default function AuthModal({ open, onClose }) {
     setError("");
     setDontShow(false);
     setEmail("");
-    setName("");
-    setPhoneForm(EMPTY_PHONE);
+    setGuestInfo(user?.email && invite && !cartInvite ? currentMemberOrderSeed() : emptyGuestOrder());
+    setGuestField("");
     setPassword("");
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -102,28 +91,30 @@ export default function AuthModal({ open, onClose }) {
     else onClose?.();
   }
 
-  function setPhone(key, value) {
-    setPhoneForm((prev) => ({ ...prev, [key]: value }));
+  function guestErrorText(code) {
+    if (code === "company") return t("guestCompanyRequired");
+    if (code === "address") return t("guestAddressRequired");
+    if (code === "contact") return t("guestContactRequired");
+    if (code === "email") return t("guestEmailInvalid");
+    if (code === "phone" || code === "phone2") return t("guestPhoneRequired");
+    if (code === "project") return t("guestProjectRequired");
+    if (code === "delivery_date") return t("deliveryDateRequired");
+    if (code === "attachment") return t("guestAttachmentRequired");
+    return t("submitFailed");
   }
 
   function onGuestSubmit(e) {
     e.preventDefault();
-    const next = email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(next)) {
-      setError(t("guestEmailInvalid"));
+    const missing = guestOrderError(guestInfo);
+    if (missing) {
+      setGuestField(missing);
+      setError(guestErrorText(missing));
       revealIssue();
       return;
     }
-    const phones = contactPayload(phoneForm);
+    setGuestField("");
     finish();
-    consumePendingInviteContinue({
-      email: next,
-      name: name.trim(),
-      phone: phones.phone,
-      otherPhone: phones.otherPhone,
-      whatsappOn: phones.whatsappOn,
-      wechatOn: phones.wechatOn,
-    });
+    consumePendingInviteContinue(guestOrderPayload(guestInfo));
   }
 
   async function onSubmit(e) {
@@ -166,17 +157,21 @@ export default function AuthModal({ open, onClose }) {
     if (next) navigate(withLocale(lang, next));
   }
 
-  const title = cartInvite
-    ? t("cartAuthInviteTitle")
-    : invite
-      ? t("authInviteTitle")
-      : t("authRequiredTitle");
-  const body = cartInvite
-    ? t("cartAuthInviteBody")
-    : invite
-      ? t("authInviteBody")
-      : t("authRequiredBody");
-  const eyebrow = invite ? t("authInviteEyebrow") : t("almostThere");
+  const title = memberOrder
+    ? t("guestOrderSection")
+    : cartInvite
+      ? t("cartAuthInviteTitle")
+      : invite
+        ? t("authInviteTitle")
+        : t("authRequiredTitle");
+  const body = memberOrder
+    ? t("guestOrderHint")
+    : cartInvite
+      ? t("cartAuthInviteBody")
+      : invite
+        ? t("authInviteBody")
+        : t("authRequiredBody");
+  const eyebrow = memberOrder ? t("authInviteEyebrow") : invite ? t("authInviteEyebrow") : t("almostThere");
 
   if (!open || typeof document === "undefined") return null;
 
@@ -185,7 +180,7 @@ export default function AuthModal({ open, onClose }) {
       <div className="absolute inset-0 bg-charcoal/50 backdrop-blur-[2px]" onClick={onBackdrop} />
       <div className="relative flex min-h-full items-center justify-center p-4">
         <div
-          className="modal-panel relative bg-white border border-line w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto p-7 shadow-[0_24px_60px_rgba(16,21,19,0.25)]"
+          className={`modal-panel relative bg-white border border-line w-full ${whatsappContact ? "max-w-3xl" : "max-w-md"} max-h-[calc(100dvh-2rem)] overflow-y-auto p-7 shadow-[0_24px_60px_rgba(16,21,19,0.25)]`}
           role="dialog"
           aria-modal="true"
           aria-labelledby="auth-modal-title"
@@ -216,35 +211,15 @@ export default function AuthModal({ open, onClose }) {
                   {error}
                 </p>
               ) : null}
-              <label className="block">
-                <span className="block text-sm font-medium mb-1">
-                  {t("email")} <RequiredMark />
-                </span>
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setError("");
-                  }}
-                  placeholder={t("phEmail")}
-                  className="field-input"
-                  autoComplete="email"
-                />
-              </label>
-              <label className="block">
-                <span className="block text-sm font-medium mb-1">{t("fullName")}</span>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={t("phFullName")}
-                  className="field-input"
-                  autoComplete="name"
-                />
-              </label>
-              <BuyerPhoneFields t={t} value={phoneForm} onChange={setPhone} required={false} />
+              <GuestSubmitFields
+                value={guestInfo}
+                errorField={guestField}
+                onChange={(next) => {
+                  setGuestInfo(next);
+                  setGuestField("");
+                  setError("");
+                }}
+              />
               <button type="submit" className="btn-primary w-full !py-2.5">
                 {t("continueWhatsapp")}
               </button>
@@ -289,7 +264,7 @@ export default function AuthModal({ open, onClose }) {
             </form>
           )}
 
-          {whatsappContact ? (
+          {memberOrder ? null : whatsappContact ? (
             <p className="mt-4 text-sm text-mute">
               {t("alreadyAccount")}{" "}
               <Link to={withLocale(lang, "/login")} className="font-semibold text-brand-600 hover:underline" onClick={() => finish()}>

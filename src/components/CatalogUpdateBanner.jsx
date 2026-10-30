@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { blockProductOrders, fetchProductLive, getCatalogEtag, getStoreSnapshot, subscribeStore } from "../lib/store";
+import { blockProductOrders, fetchProductLive, getCatalogEtag, getStoreSnapshot } from "../lib/store";
 import { getCatalogVersion } from "../lib/remote";
 import { useLanguage } from "../i18n";
 
 function productIdFromPath(pathname) {
   const match = String(pathname || "").match(/^\/(?:en|zh)\/details\/([^/]+)/);
   return match ? decodeURIComponent(match[1]) : "";
+}
+
+function catalogStamp(value) {
+  return String(value || "").replace(/-ask(?:-[a-z0-9]+)*$/i, "");
 }
 
 export default function CatalogUpdateBanner() {
@@ -25,7 +29,7 @@ export default function CatalogUpdateBanner() {
         if (!res.res.ok || stop) return;
         const data = res.data || {};
         const next = String(data?.etag || "seed");
-        const changed = next !== "seed" && next !== current;
+        const changed = next !== "seed" && catalogStamp(next) !== catalogStamp(current);
         const productId = productIdFromPath(location.pathname);
         if (changed && productId) {
           const live = await fetchProductLive(productId);
@@ -42,7 +46,6 @@ export default function CatalogUpdateBanner() {
       }
     }
     check();
-    const unsub = subscribeStore(check);
     const timer = window.setInterval(() => {
       if (document.visibilityState === "hidden") return;
       check();
@@ -53,7 +56,6 @@ export default function CatalogUpdateBanner() {
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       stop = true;
-      unsub();
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };

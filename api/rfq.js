@@ -5,6 +5,7 @@ import { lookupBuyerAccount, readSession } from "./auth.js";
 import { handleCatalogGet } from "./catalog-snapshot.js";
 import { handlePromoGet } from "./promo.js";
 import { sendResendEmail } from "./send-email.js";
+import { list } from "@vercel/blob";
 import { createClient } from "@supabase/supabase-js";
 import { createStore } from "../server/rfq-core.js";
 import { fileAdapter } from "../server/rfq-file-adapter.js";
@@ -24,6 +25,37 @@ import { clientKey } from "../server/upload-limit.js";
 const MAX_LINES = 100;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const text = (value, max) => String(value ?? "").trim().slice(0, max);
+const ATTACHMENT_KINDS = new Set(["namecard", "bq", "drawing", "spec", "image", "other"]);
+
+function guestFiles(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((file) => ({
+      kind: ATTACHMENT_KINDS.has(file?.kind) ? file.kind : "other",
+      name: text(file?.name, 180),
+    }))
+    .filter((file) => file.name)
+    .slice(0, 12);
+}
+
+/** RFQ and PO, guest or member, must carry the delivery section. N/A is a valid delivery date. The submit stores names; the file address is added after upload. */
+function guestOrderMissing(body, snapshot = {}) {
+  const buyer = body?.buyer || {};
+  const delivery = body?.delivery || {};
+  const company = text(buyer.company || snapshot.buyerCompany || snapshot.companyName, 160);
+  const address = text(delivery.address || snapshot.address, 400);
+  const name = text(buyer.name || snapshot.buyerName, 120);
+  const phone = text(buyer.phone || snapshot.buyerPhone, 40);
+  const project = text(body?.project || snapshot.project, 200);
+  const date = text(delivery.date || snapshot.deliveryDate, 20);
+  const files = guestFiles(body?.attachments?.length ? body.attachments : snapshot.guestAttachments);
+  if (!company) return "company";
+  if (!address) return "address";
+  if (!name) return "contact";
+  if (!phone) return "phone";
+  if (!project) return "project";
+  if (!date) return "delivery_date";
+  return "";
+}
 
 function onVercel() {
   return Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
@@ -134,7 +166,7 @@ const MAX_SNAPSHOT_BYTES = 400_000;
  * register (bridge): the marketplace still builds its full RFQ view in the browser, but the number,
  * time and owner are issued here, and the server keeps its own copy. Later steps move each action
  * (accept, quote, cancel, assign, versions, PO) onto the server one by one.
- * A guest must send an email. Name and phone stay optional.
+ * A guest must send company, delivery address, contact, email, phone, project, delivery date (or N/A), and attachment names.
  */
 async function register(body, actor, request) {
   const kind = body?.kind === "po" ? "po" : "rfq";
@@ -151,7 +183,12 @@ async function register(body, actor, request) {
     const given = text(body?.buyer?.email, 160).toLowerCase();
     if (!EMAIL.test(given)) return { status: 400, body: { ok: false, error: "email" } };
     buyerEmail = given;
+  } else {
+    const given = text(body?.buyer?.email, 160).toLowerCase();
+    if (EMAIL.test(given)) buyerEmail = given;
   }
+  const missing = guestOrderMissing(body, snapshot);
+  if (missing) return { status: 400, body: { ok: false, error: missing } };
   const result = await rfqStore().create(
     kind,
     {
@@ -202,6 +239,13 @@ async function createPo(body, actor, request) {
   if (actor.kind === "guest") {
     buyerEmail = text(body?.buyer?.email, 160).toLowerCase();
     if (!EMAIL.test(buyerEmail)) return { status: 400, body: { ok: false, error: "email" } };
+  } else {
+    const given = text(body?.buyer?.email, 160).toLowerCase();
+    if (EMAIL.test(given)) buyerEmail = given;
+  }
+  const missing = guestOrderMissing(body);
+  if (missing) return { status: 400, body: { ok: false, error: missing } };
+  if (actor.kind === "guest") {
     const since = Date.now() - DAY_MS;
     const today = await rfqStore().countPosByVisitor(visitor, since);
     if (today >= GUEST_PO_PER_DAY) return { status: 429, body: { ok: false, error: "limit" } };
@@ -225,6 +269,8 @@ async function createPo(body, actor, request) {
       buyerName: text(body?.buyer?.name, 120),
       buyerPhone: text(body?.buyer?.phone, 40),
       companyName: text(body?.buyer?.company, 160),
+      project: text(body?.project, 200),
+      guestAttachments: guestFiles(body?.attachments),
       delivery,
       note: text(body?.note, 600),
       lines: priced.lines,
@@ -616,6 +662,45 @@ async function publicQuote(token) {
   return { status: 200, body: { ok: true, quote: publicQuoteView(snapshot) } };
 }
 
+const guestBlobCache = new Map();
+
+function guestFileIndex(pathname) {
+  const match = /\/guest-(\d+)-/.exec(String(pathname || ""));
+  return match ? Number(match[1]) : 0;
+}
+
+function guestFilesOf(record) {
+  const payload = record?.payload && typeof record.payload === "object" ? record.payload : null;
+  if (Array.isArray(payload?.guestAttachments) && payload.guestAttachments.length) return payload.guestAttachments;
+  return Array.isArray(record?.guestAttachments) ? record.guestAttachments : [];
+}
+
+/** Files already stored for this order. Sales can open them; the lookup stays on the server. */
+async function hydrateGuestFiles(record) {
+  const source = guestFilesOf(record);
+  if (!record?.id || !source.some((file) => file?.name && !file.url)) return record;
+  let blobs = guestBlobCache.get(record.id);
+  if (!blobs) {
+    try {
+      const result = await list({ prefix: `rfq/${record.id}/guest-`, limit: 20 });
+      blobs = result?.blobs || [];
+      guestBlobCache.set(record.id, blobs);
+    } catch {
+      return record;
+    }
+  }
+  if (!blobs.length) return record;
+  const byIndex = new Map();
+  for (const blob of [...blobs].sort((a, b) => String(a.uploadedAt || "").localeCompare(String(b.uploadedAt || "")))) {
+    const index = guestFileIndex(blob.pathname);
+    if (index > 0 && blob.url) byIndex.set(index, blob.url);
+  }
+  const next = source.map((file, index) => (file?.url || !byIndex.get(index + 1) ? file : { ...file, url: byIndex.get(index + 1) }));
+  if (!next.some((file, index) => file?.url && file.url !== source[index]?.url)) return record;
+  const payload = record.payload && typeof record.payload === "object" ? { ...record.payload, guestAttachments: next } : record.payload;
+  return { ...record, guestAttachments: next, payload };
+}
+
 /**
  * rfq_sync: what the server owns on the RFQs this person may see (staff: all; a member: their own).
  * `known` lists the ids the browser already holds; for the others the original request is sent too so the
@@ -627,6 +712,9 @@ async function syncRfqs(body, request) {
   if (body?.as === "staff" ? actor.kind !== "staff" : actor.kind !== "buyer") return { status: 200, body: { ok: true, rfqs: [] } };
   const known = new Set((Array.isArray(body?.known) ? body.known : []).map((id) => text(id, 40)));
   const records = await inboxRecords(actor);
+  if (actor.kind === "staff") {
+    for (let i = 0; i < records.length; i += 1) records[i] = await hydrateGuestFiles(records[i]);
+  }
   return {
     status: 200,
     body: {
@@ -695,7 +783,42 @@ async function phoneAction(body, actor, tries = 3) {
   const current = await rfqStore().get("rfq", id, actor);
   if (!current) return { status: 404, body: { ok: false, error: "not_found" } };
   const phone = text(body?.phone, 40);
-  const result = await rfqStore().update("rfq", id, current.revision, () => ({ buyerPhone: phone }), actor);
+  const hasOther = Object.prototype.hasOwnProperty.call(body || {}, "otherPhone");
+  const otherPhone = hasOther ? text(body.otherPhone, 40) : "";
+  const hasApps = Object.prototype.hasOwnProperty.call(body || {}, "whatsappOn") || Object.prototype.hasOwnProperty.call(body || {}, "wechatOn");
+  const slot = (value) => (value === "1" || value === "2" ? value : "");
+  let whatsappOn = slot(body?.whatsappOn);
+  let wechatOn = slot(body?.wechatOn);
+  const result = await rfqStore().update("rfq", id, current.revision, (record) => {
+    const payload = record.payload && typeof record.payload === "object" ? { ...record.payload } : null;
+    const patch = { buyerPhone: phone };
+    if (payload) payload.buyerPhone = phone;
+    if (hasOther) {
+      patch.buyerOtherPhone = otherPhone;
+      if (payload) payload.buyerOtherPhone = otherPhone;
+    }
+    if (hasApps) {
+      const otherNow = hasOther ? otherPhone : String(payload?.buyerOtherPhone || record.buyerOtherPhone || "").trim();
+      if (!phone) {
+        if (whatsappOn === "1") whatsappOn = "";
+        if (wechatOn === "1") wechatOn = "";
+      }
+      if (!otherNow) {
+        if (whatsappOn === "2") whatsappOn = "";
+        if (wechatOn === "2") wechatOn = "";
+      }
+      patch.buyerWhatsappOn = whatsappOn;
+      patch.buyerWechatOn = wechatOn;
+      patch.buyerPhoneWhatsapp = Boolean(whatsappOn);
+      if (payload) {
+        payload.buyerWhatsappOn = whatsappOn;
+        payload.buyerWechatOn = wechatOn;
+        payload.buyerPhoneWhatsapp = Boolean(whatsappOn);
+      }
+    }
+    if (payload) patch.payload = payload;
+    return patch;
+  }, actor);
   if (result.error === "conflict" && tries > 1) return phoneAction(body, actor, tries - 1);
   if (result.error) return { status: 409, body: { ok: false, error: result.error } };
   return { status: 200, body: { ok: true, phone } };
@@ -836,6 +959,73 @@ async function buyerContentAction(body, request, tries = 3) {
   return { status: 200, body: { ok: true, patch: plan.patch, mail } };
 }
 
+function publicGuestFileUrl(id, value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:" || !url.hostname.endsWith(".public.blob.vercel-storage.com")) return "";
+    const path = decodeURIComponent(url.pathname);
+    if (!path.includes(`/rfq/${id}/guest-`)) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function mergeGuestFileUrls(files, byName) {
+  return (Array.isArray(files) ? files : []).map((file) => {
+    const url = byName.get(String(file?.name || ""));
+    if (!url || file?.url) return file;
+    return { ...file, url };
+  });
+}
+
+/**
+ * rfq_files: after the order files are stored, keep their addresses on the order so Sales can preview them.
+ * A guest can only fill a guest order, and only with a file stored under that order's own path.
+ */
+async function guestFileAction(body, request, tries = 3) {
+  const actor = actorOf(request);
+  const id = text(body?.id, 40);
+  if (!/^(RFQ|PO)-\d{8}$/.test(id)) return { status: 400, body: { ok: false, error: "id" } };
+  const kind = id.startsWith("PO-") ? "po" : "rfq";
+  const reader = actor.kind === "guest" ? SYSTEM : actor;
+  const current = await rfqStore().get(kind, id, reader);
+  if (!current) return { status: 404, body: { ok: false, error: "not_found" } };
+  if (actor.kind === "buyer" && String(current.buyerEmail || "").toLowerCase() !== actor.email) {
+    return { status: 404, body: { ok: false, error: "not_found" } };
+  }
+  if (actor.kind === "guest" && current.buyerKind && current.buyerKind !== "guest") {
+    return { status: 403, body: { ok: false, error: "auth" } };
+  }
+  const byName = new Map();
+  for (const file of Array.isArray(body?.files) ? body.files : []) {
+    const name = text(file?.name, 180);
+    const url = publicGuestFileUrl(id, file?.url);
+    if (name && url) byName.set(name, url);
+  }
+  if (!byName.size) return { status: 400, body: { ok: false, error: "files" } };
+  const writer = actor.kind === "guest" ? SYSTEM : actor;
+  const result = await rfqStore().update(
+    kind,
+    id,
+    current.revision,
+    (record) => {
+      const payload = record.payload && typeof record.payload === "object" ? { ...record.payload } : null;
+      const source = Array.isArray(payload?.guestAttachments) && payload.guestAttachments.length ? payload.guestAttachments : record.guestAttachments;
+      const next = mergeGuestFileUrls(source, byName);
+      const added = next.some((file, index) => file?.url && file.url !== (Array.isArray(source) ? source[index]?.url : ""));
+      if (!added) return { error: "files" };
+      const patch = { guestAttachments: next };
+      if (payload) patch.payload = { ...payload, guestAttachments: next };
+      return patch;
+    },
+    writer,
+  );
+  if (result.error === "conflict" && tries > 1) return guestFileAction(body, request, tries - 1);
+  if (result.error) return { status: result.error === "files" ? 400 : 409, body: { ok: false, error: result.error } };
+  return { status: 200, body: { ok: true } };
+}
+
 async function routePost(body, request) {
   if (!storeReady()) return { status: 501, body: { ok: false, error: "use-supabase" } };
   const actor = actorOf(request);
@@ -845,6 +1035,7 @@ async function routePost(body, request) {
   if (body?.action === "rfq_decide") return decideRfqAction(body, request);
   if (body?.action === "po_from_quote") return poFromQuoteAction(body, request);
   if (body?.action === "rfq_phone") return phoneAction(body, actor);
+  if (body?.action === "rfq_files") return guestFileAction(body, request);
   if (body?.action === "rfq_draft") return draftAction(body, actor);
   if (body?.action === "rfq_buyer_content") return buyerContentAction(body, request);
   if (body?.action === "rfq_sync") return syncRfqs(body, request);

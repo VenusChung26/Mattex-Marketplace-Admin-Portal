@@ -1,3 +1,5 @@
+import { isChatNoise } from "../src/lib/buyerLine.js";
+
 const DIM = /\d+(?:\.\d+)?\s*(?:mm)?\s*[x×*]\s*\d+(?:\.\d+)?(?:\s*(?:mm)?\s*[x×*]\s*\d+(?:\.\d+)?)?(?:\s*mm)?/i;
 
 function clean(value) {
@@ -25,6 +27,7 @@ function isNoise(line) {
   const head = text.split(/[?？]/)[0];
   if (DIM.test(head) && /角|槽|鉛|介子|光砵|CHS|channel|sheet pile/i.test(head)) return false;
   if (text.length < 2 && !/^[米噸吨]$/.test(text)) return true;
+  if (isChatNoise(text)) return true;
   if (/^(today|you|你|產品名稱|product name|brand name)$/i.test(text)) return true;
   if (/^\d{1,2}:\d{2}/.test(text) || /^0:\d{2}$/.test(text)) return true;
   if (/^(上午|下午|中午)/.test(text) && text.length < 28) return true;

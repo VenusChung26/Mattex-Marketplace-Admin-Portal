@@ -86,7 +86,7 @@ export function CategorySheet({ open, onClose, categories, activeSlug = "", onPi
 }
 
 /**
- * Phone category row: scrollable tabs, the current category first, and "All categories" at the end opening the sheet.
+ * One scrolling row of category chips, in the shop category order. "All categories" stays pinned and opens the sheet.
  * In filter mode a tab filters the page in place; otherwise it opens that category page.
  */
 export default function MobileCategoryTabs({ categories, activeSlug = "", filterMode = false, onSelectAll, onSelectCategory }) {
@@ -94,13 +94,10 @@ export default function MobileCategoryTabs({ categories, activeSlug = "", filter
   const copy = COPY[lang === "zh" ? "zh" : "en"];
   const [sheet, setSheet] = useState(false);
   const allActive = !activeSlug;
-  const ordered = useMemo(() => {
-    const current = categories.find((c) => c.id === activeSlug);
-    return current ? [current, ...categories.filter((c) => c.id !== activeSlug)] : categories;
-  }, [categories, activeSlug]);
+  const ordered = categories;
 
   const chip = (active) =>
-    `shrink-0 whitespace-nowrap rounded-none border px-3.5 py-1.5 text-sm ${
+    `shrink-0 whitespace-nowrap rounded-none border px-3.5 py-1.5 text-left text-sm ${
       active ? "border-brand-600 bg-brand-600 font-semibold text-white" : "border-line bg-white text-ink"
     }`;
 
@@ -110,9 +107,9 @@ export default function MobileCategoryTabs({ categories, activeSlug = "", filter
   }
 
   return (
-    <nav aria-label={t("categories")} className="lg:hidden">
-      <div className="-mx-4 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="flex w-max items-center gap-2">
+    <nav data-tour="categories" aria-label={t("categories")} className="min-w-0 max-w-full lg:hidden">
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {filterMode && onSelectAll ? (
             <button type="button" className={chip(allActive)} aria-current={allActive ? "page" : undefined} onClick={onSelectAll}>
               {t("allProductsTitle")}
@@ -133,10 +130,10 @@ export default function MobileCategoryTabs({ categories, activeSlug = "", filter
               </Link>
             )
           )}
-          <button type="button" className={`${chip(false)} border-brand-600 font-semibold text-brand-700`} onClick={() => setSheet(true)} aria-haspopup="dialog">
-            {copy.all} ▾
-          </button>
         </div>
+        <button type="button" className={`${chip(false)} border-brand-600 font-semibold text-brand-700`} onClick={() => setSheet(true)} aria-haspopup="dialog">
+          {copy.all} ▾
+        </button>
       </div>
       <CategorySheet
         open={sheet}

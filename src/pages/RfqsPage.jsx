@@ -19,6 +19,7 @@ import QuoteVersionSelect, { RfqRequestVersionSelect } from "../components/Quote
 import CustomProductForm from "../components/CustomProductForm";
 import RfqActivityLog from "../components/RfqActivityLog";
 import MyPurchaseOrders from "../components/MyPurchaseOrders";
+import DateField from "../components/DateField";
 
 function isCodPaymentTerm(value) {
   const raw = String(value || "").toLowerCase();
@@ -155,22 +156,22 @@ function RfqDetailsSummary({ rfq, t, editing = false, onPatch }) {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-sm text-ink">
               <span className="text-mute">{t("quotationDeadlineLabel")}</span>
-              <input
-                type="date"
-                className="mt-0.5 w-full rounded border border-line bg-white px-2 py-1.5 text-sm"
+              <DateField
+                compact
+                className="mt-0.5"
                 value={responseDate}
-                onChange={(e) => setResponseDate(e.target.value)}
-                onBlur={() => save({ responseDate })}
+                onChange={setResponseDate}
+                onBlur={(iso) => save({ responseDate: iso })}
               />
             </label>
             <label className="block text-sm text-ink">
               <span className="text-mute">{t("deliveryDateLabel")}</span>
-              <input
-                type="date"
-                className="mt-0.5 w-full rounded border border-line bg-white px-2 py-1.5 text-sm"
+              <DateField
+                compact
+                className="mt-0.5"
                 value={deliveryDate}
-                onChange={(e) => setDeliveryDate(e.target.value)}
-                onBlur={() => save({ deliveryDate })}
+                onChange={setDeliveryDate}
+                onBlur={(iso) => save({ deliveryDate: iso })}
               />
             </label>
             <label className="block text-sm text-ink sm:col-span-2">

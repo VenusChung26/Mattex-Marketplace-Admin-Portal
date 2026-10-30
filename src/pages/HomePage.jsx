@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import CategorySideNav from "../components/CategorySideNav";
 import ProductCard, { FallbackImage, ProductCardSkeleton, ProductListRow } from "../components/ProductCard";
@@ -26,18 +26,18 @@ import {
   getCategoryByName,
   getCategoryBySlug,
   getCategoryDefs,
-  getEffectivePrice,
+  productShowsPrice,
   getProduct,
   getProductsByCategory,
   getGreenProducts,
   getSuppliers,
   getTopProducts,
   isHitProduct,
-  requireBuyerAuth,
   addFromStorefront,
   searchProducts,
 } from "../lib/store";
 import CartToast from "../components/CartToast";
+import MarketplaceTour, { markTourSeen, tourSeen } from "../components/MarketplaceTour";
 import { ProductSearchBox } from "../components/SearchSuggestions";
 const CATEGORY_PREVIEW_COUNT = 8;
 const SECTION_PREVIEW = 8;
@@ -130,8 +130,12 @@ export default function HomePage() {
       .map((row) => getProduct(row.productId))
       .filter(Boolean);
   }, [offerBanner, catalogEpoch]);
-  const offerCards = offerProducts.slice(0, 4);
-  const offerRest = Math.max(0, offerProducts.length - offerCards.length);
+  const offerEntries = useMemo(
+    () => collapseCatalog(offerProducts, catalogGroupIndex()),
+    [offerProducts, catalogEpoch, groupEpoch]
+  );
+  const offerCards = offerEntries.slice(0, 4);
+  const offerRest = Math.max(0, offerEntries.length - offerCards.length);
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [customOpen, setCustomOpen] = useState(false);
@@ -150,6 +154,14 @@ export default function HomePage() {
   const [catalogPinned, setCatalogPinned] = useState(false);
   const [navHeight, setNavHeight] = useState(64);
   const [toolbarHeight, setToolbarHeight] = useState(0);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourKey, setTourKey] = useState(0);
+
+  function openTour() {
+    markTourSeen();
+    setTourKey((value) => value + 1);
+    setTourOpen(true);
+  }
   const holdCatalogPinRef = useRef(false);
   const jumpToResultsRef = useRef(false);
   const searchStuck = catalogStuck || catalogPinned;
@@ -218,7 +230,7 @@ export default function HomePage() {
     };
   }, [navHeight]);
 
-  const categories = useMemo(() => getCategoryDefs(), [catalogEpoch]);
+  const categories = getCategoryDefs();
   const visibleCategories = categoriesExpanded
     ? categories
     : categories.slice(0, CATEGORY_PREVIEW_COUNT);
@@ -246,11 +258,26 @@ export default function HomePage() {
   const products = useMemo(() => {
     let list = searchProducts(searchQuery, selectedCategories, { fields: searchFields });
     if (greenOnly) list = list.filter((p) => p.green);
-    if (priceFilter === "priced") list = list.filter((p) => getEffectivePrice(p).displayPrice != null);
-    if (priceFilter === "unpriced") list = list.filter((p) => getEffectivePrice(p).displayPrice == null);
+    if (priceFilter === "priced") list = list.filter((p) => productShowsPrice(p));
+    if (priceFilter === "unpriced") list = list.filter((p) => !productShowsPrice(p));
     if (priceFilter === "hot") list = list.filter((p) => isHitProduct(p));
     return collapseCatalog(list, catalogGroupIndex());
   }, [searchQuery, selectedCategories, greenOnly, priceFilter, searchFields, catalogEpoch, groupEpoch]);
+
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("mm_tour_force") !== "1") return;
+      sessionStorage.removeItem("mm_tour_force");
+      openTour();
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (catalogLoading || !products.length || tourSeen()) return;
+    setTourOpen(true);
+  }, [catalogLoading, products.length]);
 
   useEffect(() => {
     setCatalogShown(CATALOG_BATCH);
@@ -285,12 +312,11 @@ export default function HomePage() {
   }
 
   function openCustomProduct() {
-    if (!requireBuyerAuth({ custom: true })) return;
     setCustomOpen(true);
   }
 
   function handleAddCustom(payload) {
-    const result = addCustomLine(payload);
+    const result = addCustomLine({ ...payload, tailorMade: true });
     if (!result.ok) return;
     showToast(t("addedCustomToRfq"));
   }
@@ -390,10 +416,10 @@ export default function HomePage() {
     [catalogEpoch]
   );
 
-  function scrollToResults({ animate = false } = {}) {
+  function scrollToResults({ animate = true } = {}) {
     holdCatalogPinRef.current = true;
     setCatalogPinned(true);
-    jumpToId("catalog-results", { animate });
+    jumpToId("products", { gap: -1, animate });
   }
 
   function onCatalogQueryChange(value) {
@@ -450,6 +476,7 @@ export default function HomePage() {
           clearFilters();
           scrollToCatalog();
         }}
+        onStartTour={openTour}
         onCatalogClick={() => scrollToCatalog({ animate: true })}
         onDraftClick={onCartClick}
         suggestProducts={suggestionsPool}
@@ -465,12 +492,18 @@ export default function HomePage() {
               {t("heroHeadline")}
             </h1>
             <p className="reveal reveal-delay-2 mt-4 text-base sm:text-lg text-white/65 max-w-lg leading-relaxed">
-              <strong className="font-semibold text-white">{t("heroPoint1")}</strong>
-              {t("heroPoint1Rest")}
-              <strong className="font-semibold text-white">{t("heroPoint2")}</strong>
-              {t("heroPoint2Rest")}
-              <strong className="font-semibold text-white">{t("heroPoint3")}</strong>
-              {t("heroPoint3Rest")}
+              <span className="block">
+                <strong className="font-semibold text-white">{t("heroPoint1")}</strong>
+                {t("heroPoint1Rest")}
+              </span>
+              <span className="block">
+                <strong className="font-semibold text-white">{t("heroPoint2")}</strong>
+                {t("heroPoint2Rest")}
+              </span>
+              <span className="block">
+                <strong className="font-semibold text-white">{t("heroPoint3")}</strong>
+                {t("heroPoint3Rest")}
+              </span>
             </p>
             <div className="reveal reveal-delay-2 mt-8 flex flex-wrap gap-3">
               <a
@@ -490,7 +523,7 @@ export default function HomePage() {
                 {t("openRfqDraft")}
               </Link>
               {SHOW_SPEC_MATCH ? (
-                <SpecMatchLaunch className="btn-ghost !px-6 !py-3.5">{t("uploadSpecMatch")}</SpecMatchLaunch>
+                <SpecMatchLaunch data-tour="spec-match" className="btn-ghost !px-6 !py-3.5">{t("uploadSpecMatch")}</SpecMatchLaunch>
               ) : null}
             </div>
           </div>
@@ -567,8 +600,13 @@ export default function HomePage() {
             {offerCards.length ? (
               <div className="mt-6">
                 <div className="grid min-w-0 gap-4 md:grid-cols-2 lg:grid-cols-4">
-                  {offerCards.map((product) => (
-                    <ProductCard key={product.id} product={product} onAdd={handleAdd} />
+                  {offerCards.map((entry) => (
+                    <ProductCard
+                      key={entry.product.id}
+                      product={entry.product}
+                      grouped={entry.grouped && !entry.product.specGroups?.length}
+                      onAdd={handleAdd}
+                    />
                   ))}
                 </div>
                 {offerRest > 0 ? (
@@ -1061,6 +1099,7 @@ export default function HomePage() {
         onSubmit={handleAddCustom}
       />
       <CartToast toast={toast} onDone={() => setToast(null)} />
+      <MarketplaceTour key={tourKey} open={tourOpen} onClose={() => setTourOpen(false)} />
     </>
   );
 }

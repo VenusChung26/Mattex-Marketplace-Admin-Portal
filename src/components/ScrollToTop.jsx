@@ -64,15 +64,23 @@ export default function ScrollToTop() {
     }
 
     if (isCategoryPage(pathname)) {
-      const id = document.getElementById("catalog-top")
-        ? "catalog-top"
-        : document.getElementById("catalog-results")
-          ? "catalog-results"
-          : "";
-      if (id) {
-        jumpToId(id);
-        return undefined;
-      }
+      let tries = 0;
+      let timer = 0;
+      const tick = () => {
+        const id = document.getElementById("catalog-top")
+          ? "catalog-top"
+          : document.getElementById("catalog-results")
+            ? "catalog-results"
+            : "";
+        if (id) {
+          jumpToId(id);
+          return;
+        }
+        tries += 1;
+        if (tries <= 20) timer = window.setTimeout(tick, 40);
+      };
+      tick();
+      return () => window.clearTimeout(timer);
     }
 
     scrollToTopNow();

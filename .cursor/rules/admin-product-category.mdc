@@ -7,7 +7,9 @@ alwaysApply: true
 
 Products third tab: Mattex Products | **Product Category** | Mattex Chain Products.
 
-Add / rename / delete. Delete blocked while any product (including Trash) still uses that category, and blocked for the last category. Disabled Delete uses a visible hover tooltip that opens above the button (fixed position, rendered on `document.body` so no table clips it). Edit and Delete labels never wrap onto two lines. Counts include Trash. Row open icon jumps to Mattex Products Edit. Select products to move; Add products assigns from the rest of the catalog. One product, one category. Never unassign to empty. Trash rows are read-only. Product form still has Add category.
+Left column picks a category (name wraps, plus count). Add category stays at the top of that list. Right side: category name wraps; rename and delete are icons with a hover name above the icon. Rename turns the title into a field (Enter saves, Esc cancels). Delete stays blocked while any product (including Trash) uses that category, and for the last category. Disabled Delete hover shows the reason, not only the word Delete. Counts include Trash.
+
+Product name opens the same product editor and stays on this page. Trash rows are read-only. The arrow icon jumps to Mattex Products and highlights that row; its hover says it opens the product list. Move stays visible and stays disabled until products are checked. Add products is a left-right window: search and checkbox on the left, read-only details on the right. Enter adds the checked products, or the product open on the right when none are checked. New product opens the same editor with this category filled in. The product form still has Add category. One product, one category. Never unassign to empty.
 
 ```jsx
 // ❌ BAD
@@ -15,6 +17,6 @@ deleteAdminCategory(id); // while products remain
 assignAdminProductsCategory(ids, "");
 
 // ✅ GOOD
-<button disabled={category.count > 0 || categories.length <= 1}>Delete</button>
+<button disabled={category.count > 0 || categories.length <= 1} aria-label="Delete" />
 assignAdminProductsCategory(ids, otherCategoryName);
 ```

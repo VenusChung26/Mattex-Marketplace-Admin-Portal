@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import CategorySideNav from "../components/CategorySideNav";
 import CopyLinkButton from "../components/CopyLinkButton";
@@ -20,7 +20,7 @@ import {
   getCategoryByName,
   getCategoryBySlug,
   getCategoryDefs,
-  getEffectivePrice,
+  productShowsPrice,
   getProductsByCategory,
   isHitProduct,
   searchProducts,
@@ -77,8 +77,8 @@ export default function CatalogPage() {
     if (!category) return [];
     let list = searchProducts(searchQuery, category.name, { fields: searchFields });
     if (greenOnly) list = list.filter((p) => p.green);
-    if (priceFilter === "priced") list = list.filter((p) => getEffectivePrice(p).displayPrice != null);
-    if (priceFilter === "unpriced") list = list.filter((p) => getEffectivePrice(p).displayPrice == null);
+    if (priceFilter === "priced") list = list.filter((p) => productShowsPrice(p));
+    if (priceFilter === "unpriced") list = list.filter((p) => !productShowsPrice(p));
     if (priceFilter === "hot") list = list.filter((p) => isHitProduct(p));
     return collapseCatalog(list, catalogGroupIndex());
   }, [searchQuery, category, searchFields, priceFilter, greenOnly, catalogEpoch, groupEpoch]);
@@ -87,10 +87,20 @@ export default function CatalogPage() {
     setCatalogShown(CATALOG_BATCH);
   }, [searchQuery, category?.id, searchFields, priceFilter, greenOnly]);
 
+  const handleAdd = useCallback((productId, intent = "quote", qty) => {
+    const result = addFromStorefront(productId, intent, qty, lang);
+    if (!result?.ok || intent === "quote-now" || intent === "buy-now") return;
+    setToast({
+      message: t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq"),
+      href: withLocale(lang, "/rfq"),
+    });
+  }, [lang, t]);
+
   if (!slug && catFromQuery) {
     return <Navigate to={withLocale(lang, `/catalog/${catFromQuery.id}`)} replace />;
   }
   if (!slug || !category) {
+    if (catalogLoading) return null;
     return <Navigate to={allProductsTo(lang)} replace />;
   }
 
@@ -101,15 +111,6 @@ export default function CatalogPage() {
   ];
   const hasFilters =
     Boolean(searchQuery.trim()) || priceFilter !== "all" || greenOnly || searchFields.length > 0;
-
-  function handleAdd(productId, intent = "quote", qty) {
-    const result = addFromStorefront(productId, intent, qty, lang);
-    if (!result?.ok || intent === "quote-now" || intent === "buy-now") return;
-    setToast({
-      message: t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq"),
-      href: withLocale(lang, "/rfq"),
-    });
-  }
 
   function clearFilters() {
     setSearchQuery("");
@@ -135,6 +136,15 @@ export default function CatalogPage() {
       return;
     }
     navigate(withLocale(lang, `/catalog/${next.id}`));
+  }
+
+  if (!category) {
+    return (
+      <div className="bg-paper min-h-screen">
+        <SiteHeader />
+        <main className="mx-auto max-w-7xl px-4 py-16 text-sm text-mute">載入目錄</main>
+      </div>
+    );
   }
 
   return (

@@ -1,24 +1,24 @@
 {
   "redirects": [
-    { "source": "/green", "destination": "/en/green", "statusCode": 301 },
-    { "source": "/sales", "destination": "/en", "statusCode": 301 },
+    { "source": "/green", "destination": "/zh/green", "statusCode": 301 },
+    { "source": "/sales", "destination": "/zh", "statusCode": 301 },
     { "source": "/en/sales", "destination": "/en", "statusCode": 301 },
     { "source": "/zh/sales", "destination": "/zh", "statusCode": 301 },
-    { "source": "/catalog", "destination": "/en", "statusCode": 301 },
-    { "source": "/catalog/:slug", "destination": "/en/catalog/:slug", "statusCode": 301 },
-    { "source": "/login", "destination": "/en/login", "statusCode": 301 },
-    { "source": "/signup", "destination": "/en/signup", "statusCode": 301 },
-    { "source": "/forgot-password", "destination": "/en/forgot-password", "statusCode": 301 },
-    { "source": "/reset-password", "destination": "/en/reset-password", "statusCode": 301 },
-    { "source": "/rfq", "destination": "/en/rfq", "statusCode": 301 },
-    { "source": "/rfqs", "destination": "/en/rfqs", "statusCode": 301 },
-    { "source": "/whatsapp", "destination": "/en/whatsapp", "statusCode": 301 },
-    { "source": "/whatsapp-chat", "destination": "/en/whatsapp-chat", "statusCode": 301 },
-    { "source": "/details/:id", "destination": "/en/details/:id", "statusCode": 301 },
-    { "source": "/supplier/:slug", "destination": "/en/supplier/:slug", "statusCode": 301 },
-    { "source": "/whatsapp/:id", "destination": "/en/whatsapp/:id", "statusCode": 301 },
-    { "source": "/whatsapp-chat/:rfqId", "destination": "/en/whatsapp-chat/:rfqId", "statusCode": 301 },
-    { "source": "/email-sent/:rfqId", "destination": "/en/email-sent/:rfqId", "statusCode": 301 },
+    { "source": "/catalog", "destination": "/zh", "statusCode": 301 },
+    { "source": "/catalog/:slug", "destination": "/zh/catalog/:slug", "statusCode": 301 },
+    { "source": "/login", "destination": "/zh/login", "statusCode": 301 },
+    { "source": "/signup", "destination": "/zh/signup", "statusCode": 301 },
+    { "source": "/forgot-password", "destination": "/zh/forgot-password", "statusCode": 301 },
+    { "source": "/reset-password", "destination": "/zh/reset-password", "statusCode": 301 },
+    { "source": "/rfq", "destination": "/zh/rfq", "statusCode": 301 },
+    { "source": "/rfqs", "destination": "/zh/rfqs", "statusCode": 301 },
+    { "source": "/whatsapp", "destination": "/zh/whatsapp", "statusCode": 301 },
+    { "source": "/whatsapp-chat", "destination": "/zh/whatsapp-chat", "statusCode": 301 },
+    { "source": "/details/:id", "destination": "/zh/details/:id", "statusCode": 301 },
+    { "source": "/supplier/:slug", "destination": "/zh/supplier/:slug", "statusCode": 301 },
+    { "source": "/whatsapp/:id", "destination": "/zh/whatsapp/:id", "statusCode": 301 },
+    { "source": "/whatsapp-chat/:rfqId", "destination": "/zh/whatsapp-chat/:rfqId", "statusCode": 301 },
+    { "source": "/email-sent/:rfqId", "destination": "/zh/email-sent/:rfqId", "statusCode": 301 },
     { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Reinforcement Mesh" }], "destination": "/:lang/catalog/reinforcement-mesh", "statusCode": 301 },
     { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Dense Mesh Flame Retardant Safety Net" }], "destination": "/:lang/catalog/safety-net", "statusCode": 301 },
     { "source": "/:lang(en|zh)/catalog", "has": [{ "type": "query", "key": "cat", "value": "Gypsum Block" }], "destination": "/:lang/catalog/gypsum-block", "statusCode": 301 },
@@ -60,6 +60,9 @@
   "functions": {
     "api/ssr.js": {
       "includeFiles": "public/catalog.json"
+    },
+    "api/spec-match.js": {
+      "includeFiles": "{server/tessdata/**,node_modules/tesseract.js-core/*.wasm,node_modules/mupdf/dist/*.wasm}"
     }
   },
   "rewrites": [
