@@ -214,6 +214,7 @@ export default function AuthModal({ open, onClose }) {
               <GuestSubmitFields
                 value={guestInfo}
                 errorField={guestField}
+                includeRemark
                 onChange={(next) => {
                   setGuestInfo(next);
                   setGuestField("");

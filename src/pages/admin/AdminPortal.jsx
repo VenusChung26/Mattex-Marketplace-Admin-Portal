@@ -4172,6 +4172,7 @@ function quotePdfBuyer(rfq) {
     address: rfq.address,
     project: rfqProjectName(rfq),
     deliveryDate: rfq.deliveryDate,
+    remark: String(rfq.note || "").trim(),
     attachments: rfq.guestAttachments,
   };
 }
@@ -4469,11 +4470,9 @@ function RfqDetail({
               <RfqBuyerMeta rfq={rfq} note={note} onOpenBuyer={onOpenBuyer} />
             </div>
             <RfqBuyerFacts rfq={rfq} account={account} note={note} />
-            {account ? (
-              <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-brand-700">{accountStatusLabel(account)}</p>
-            ) : (
+            {!account ? (
               <p className="mt-2 text-xs text-mute">{pt("No marketplace account for this email.")}</p>
-            )}
+            ) : null}
           </section>
           <RfqActivityLog rfq={rfq} lang="en" audience="staff" title={pt("Activity")} />
           <section className="rounded-xl border border-line bg-white p-4">
@@ -5638,6 +5637,7 @@ function RfqBuyerFacts({ rfq, account, note }) {
         [pt("Address"), rfq.address],
         [pt("Project"), rfqProjectName(rfq)],
         [pt("Delivery date"), rfq.deliveryDate],
+        [pt("Remark"), String(rfq.note || "").trim()],
         [pt("Attachment"), (Array.isArray(rfq.guestAttachments) ? rfq.guestAttachments : []).some((file) => file?.name) ? <GuestFilePreview files={rfq.guestAttachments} /> : ""],
       ]}
     />

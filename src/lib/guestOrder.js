@@ -76,6 +76,7 @@ export function emptyGuestOrder() {
     project: "",
     deliveryDate: "",
     deliveryNa: false,
+    remark: "",
     attachments: [],
   };
 }
@@ -98,6 +99,7 @@ export function guestOrderPayload(info) {
     address: String(src.address || "").trim().slice(0, 400),
     project: String(src.project || "").trim().slice(0, 200),
     deliveryDate: deliveryNa ? "N/A" : String(src.deliveryDate || "").trim().slice(0, 20),
+    remark: String(src.remark || "").trim().slice(0, 600),
     attachments: (Array.isArray(src.attachments) ? src.attachments : [])
       .map((file) => ({
         id: String(file?.id || "").slice(0, 80),

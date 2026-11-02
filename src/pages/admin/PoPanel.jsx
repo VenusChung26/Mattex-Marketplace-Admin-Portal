@@ -38,14 +38,19 @@ function PoBuyerCard({ po, pt }) {
   const callHref = phoneCallHref(phone);
   const mailHref = email ? `mailto:${email}?subject=${encodeURIComponent(po.id || "")}` : "";
   const files = (Array.isArray(po.guestAttachments) ? po.guestAttachments : []).filter((file) => file?.name);
+  const otherPhone = String(po.buyerOtherPhone || "").trim();
+  const otherText = formatBuyerPhoneDisplay(otherPhone) || otherPhone;
+  const otherCall = phoneCallHref(otherPhone);
   const rows = [
     [pt("Company"), po.companyName],
     [pt("Contact"), po.buyerName],
     [pt("Email"), mailHref ? <a href={mailHref} className="break-all text-brand-800 underline underline-offset-2" title={pt("Email")}>{email}</a> : ""],
     [pt("Phone"), callHref ? <a href={callHref} className="text-brand-800 underline underline-offset-2" title={pt("Call")}>{phoneText}</a> : phoneText],
+    [pt("Other phone"), otherCall ? <a href={otherCall} className="text-brand-800 underline underline-offset-2" title={pt("Call")}>{otherText}</a> : otherText],
     [pt("Address"), po.delivery?.address],
     [pt("Project"), po.project],
     [pt("Delivery date"), po.delivery?.date],
+    [pt("Remark"), String(po.note || po.delivery?.note || "").trim()],
     [pt("Attachment"), files.length ? <GuestFilePreview files={files} /> : ""],
   ].filter(([, value]) => {
     if (value == null || value === false) return false;
@@ -171,9 +176,14 @@ function PoOrderFacts({ po, pt }) {
   const files = (Array.isArray(po.guestAttachments) ? po.guestAttachments : []).filter((file) => file?.name);
   const rows = [
     [pt("Company"), po.companyName],
+    [pt("Contact"), po.buyerName],
+    [pt("Email"), po.buyerEmail],
+    [pt("Phone"), formatBuyerPhoneDisplay(po.buyerPhone) || po.buyerPhone],
+    [pt("Other phone"), formatBuyerPhoneDisplay(po.buyerOtherPhone) || po.buyerOtherPhone],
     [pt("Address"), po.delivery?.address],
     [pt("Project"), po.project],
     [pt("Delivery date"), po.delivery?.date],
+    [pt("Remark"), String(po.note || po.delivery?.note || "").trim()],
     [pt("Attachment"), files.length ? <GuestFilePreview files={files} /> : ""],
   ].filter(([, value]) => {
     if (value == null || value === false) return false;
@@ -258,10 +268,12 @@ export default function PoPanel({ note, po: source, guestAssign, focusId = "" })
           email: po.buyerEmail,
           name: po.buyerName,
           phone: po.buyerPhone,
+          otherPhone: po.buyerOtherPhone,
           company: po.companyName,
           address: po.delivery?.address,
           project: po.project,
           deliveryDate: po.delivery?.date,
+          remark: String(po.note || po.delivery?.note || "").trim(),
           attachments: po.guestAttachments,
         },
         items: (po.lines || []).map((line, index) => ({

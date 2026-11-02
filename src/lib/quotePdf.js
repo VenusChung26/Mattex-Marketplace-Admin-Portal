@@ -61,6 +61,7 @@ function buyerRows(buyer) {
     ["電話", phone],
     ["項目", buyer?.project],
     ["交貨日期", buyer?.deliveryDate],
+    ["備註", buyer?.remark || buyer?.note],
     ["附件", files],
   ]
     .map(([label, value]) => [label, String(value || "").trim()])

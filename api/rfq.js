@@ -197,7 +197,8 @@ async function register(body, actor, request) {
       buyerName: text(body?.buyer?.name, 120),
       buyerPhone: text(body?.buyer?.phone, 40),
       companyName: text(body?.buyer?.company, 160),
-      project: text(body?.project, 200),
+      project: text(body?.project || snapshot.project, 200),
+      note: text(body?.note || snapshot.note, 600),
       channel: text(body?.channel, 20) || "rfq",
       askKind: body?.askKind === "buy" ? "buy" : "quote",
       lines,
@@ -259,8 +260,9 @@ async function createPo(body, actor, request) {
   const delivery = {
     address: text(body?.delivery?.address, 400),
     date: text(body?.delivery?.date, 20),
-    note: text(body?.delivery?.note, 600),
+    note: text(body?.delivery?.note || body?.note, 600),
   };
+  const slotOn = (value) => (value === "1" || value === "2" ? value : "");
   const result = await rfqStore().create(
     "po",
     {
@@ -268,11 +270,14 @@ async function createPo(body, actor, request) {
       buyerEmail,
       buyerName: text(body?.buyer?.name, 120),
       buyerPhone: text(body?.buyer?.phone, 40),
+      buyerOtherPhone: text(body?.buyer?.otherPhone, 40),
+      buyerWhatsappOn: slotOn(body?.buyer?.whatsappOn),
+      buyerWechatOn: slotOn(body?.buyer?.wechatOn),
       companyName: text(body?.buyer?.company, 160),
       project: text(body?.project, 200),
       guestAttachments: guestFiles(body?.attachments),
       delivery,
-      note: text(body?.note, 600),
+      note: text(body?.note || body?.delivery?.note, 600),
       lines: priced.lines,
       total: priced.total,
       currency: "HKD",
@@ -712,8 +717,16 @@ async function syncRfqs(body, request) {
   if (body?.as === "staff" ? actor.kind !== "staff" : actor.kind !== "buyer") return { status: 200, body: { ok: true, rfqs: [] } };
   const known = new Set((Array.isArray(body?.known) ? body.known : []).map((id) => text(id, 40)));
   const records = await inboxRecords(actor);
-  if (actor.kind === "staff") {
-    for (let i = 0; i < records.length; i += 1) records[i] = await hydrateGuestFiles(records[i]);
+  /* Full request body only for ids the browser does not hold yet. Known rows get owned fields only. */
+  const needFull = records.filter((record) => !known.has(record.id));
+  if (actor.kind === "staff" && needFull.length) {
+    await Promise.all(
+      needFull.map(async (record) => {
+        const hydrated = await hydrateGuestFiles(record);
+        const idx = records.findIndex((row) => row.id === record.id);
+        if (idx >= 0) records[idx] = hydrated;
+      }),
+    );
   }
   return {
     status: 200,
@@ -721,18 +734,18 @@ async function syncRfqs(body, request) {
       ok: true,
       rfqs: records.map((record) => {
         const owned = ownedView(record, { staff: actor.kind === "staff" });
-        const full = {
+        if (known.has(record.id)) return { owned };
+        return {
           owned,
           payload: record.payload || {},
           lines: record.lines || [],
           project: record.project || "",
+          note: record.note || "",
           channel: record.channel || "",
           askKind: record.askKind || "quote",
           companyName: record.companyName || "",
+          guestAttachments: record.guestAttachments || [],
         };
-        /* Sales always gets the request itself, so a fresh Portal tab can draw the row. */
-        if (actor.kind === "staff" || !known.has(record.id)) return full;
-        return { owned };
       }),
     },
   };

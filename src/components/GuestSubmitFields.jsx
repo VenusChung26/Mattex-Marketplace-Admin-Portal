@@ -26,8 +26,9 @@ function Field({ label, error, children }) {
 /**
  * Guest RFQ / PO section. Required marks are red.
  * File names stay in form state. The bytes are not written to browser storage.
+ * `includeRemark` adds an optional Remark field (立即問價 / WhatsApp invite).
  */
-export default function GuestSubmitFields({ value, onChange, errorField = "" }) {
+export default function GuestSubmitFields({ value, onChange, errorField = "", includeRemark = false }) {
   const { t } = useLanguage();
   const row = value || {};
   const attachments = Array.isArray(row.attachments) ? row.attachments : [];
@@ -126,6 +127,18 @@ export default function GuestSubmitFields({ value, onChange, errorField = "" }) 
           onChange={(next) => patch({ deliveryDate: next, deliveryNa: false })}
         />
       </Field>
+      {includeRemark ? (
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">{t("orderNote")}</span>
+          <textarea
+            rows={2}
+            className={inputClass}
+            value={row.remark || ""}
+            placeholder={t("orderNotePlaceholder")}
+            onChange={(e) => patch({ remark: e.target.value })}
+          />
+        </label>
+      ) : null}
       <div>
         <span className="mb-1 block text-sm font-medium">{t("guestAttachments")}</span>
         <p className="mb-2 text-xs text-mute">{t("guestAttachmentsHint")}</p>

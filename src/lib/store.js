@@ -3072,13 +3072,13 @@ async function issueRfqNumber(rfq) {
     channel: rfq.channel,
     askKind: rfq.askKind,
     project: rfq.project || "",
+    note: rfq.note || "",
     buyer: {
       email: rfq.buyerEmail,
       name: rfq.buyerName,
       phone: rfq.buyerPhone,
       company: rfq.buyerCompany || "",
     },
-    project: rfq.project || "",
     delivery: { address: rfq.address || "", date: rfq.deliveryDate || "" },
     attachments: rfq.guestAttachments || [],
     lines: (rfq.lines || []).map((line) => ({
@@ -3154,6 +3154,9 @@ async function submitRfq(productIds, options = {}) {
   const buyerKind = user?.email ? "member" : "guest";
   const memberAccount = buyerKind === "member" ? { ...(getAccount(buyerEmail) || {}), ...(user || {}) } : null;
   const slotOn = (value) => (value === "1" || value === "2" ? value : "");
+  const guestRemark = String(memberOrder?.remark || guest?.remark || "").trim();
+  const projectName =
+    memberOrder?.project || joinProfileProjects(totals.projects || totals.project) || guest?.project || "";
   const rfq = {
     id: "",
     status: channel === "whatsapp" ? "whatsapp_sent" : channel === "email" ? "email_sent" : "submitted",
@@ -3161,7 +3164,7 @@ async function submitRfq(productIds, options = {}) {
     channel,
     askKind: options.kind === "buy" ? "buy" : "quote",
     submittedAt: new Date().toISOString(),
-    note: totals.note,
+    note: guestRemark || totals.note || "",
     responseDate: totals.responseDate,
     quotationDeadline: totals.responseDate,
     deliveryDate:
@@ -3171,8 +3174,12 @@ async function submitRfq(productIds, options = {}) {
       "",
     deliveryMode,
     deliveryLots: deliveryMode === "partial" ? deliveryLots.filter((lot) => lot.date || lot.note || lot.address) : [],
-    project: memberOrder?.project || joinProfileProjects(totals.projects || totals.project) || guest?.project || "",
-    projects: normalizeProfileProjects(totals.projects || totals.project),
+    project: projectName,
+    projects: normalizeProfileProjects(
+      Array.isArray(totals.projects) && totals.projects.some((row) => String(row || "").trim())
+        ? totals.projects
+        : projectName
+    ),
     address: siteAddress,
     canonicalCategory: totals.canonicalCategory,
     acceptSubstitutes: Boolean(totals.acceptSubstitutes),
@@ -3217,7 +3224,20 @@ async function submitRfq(productIds, options = {}) {
   if (!issued) return { ok: false, error: "server" };
   rfq.id = issued.id;
   if (issued.at) rfq.submittedAt = issued.at;
+  const buyerView = {
+    email: buyerEmail,
+    name: rfq.buyerName,
+    phone: rfq.buyerPhone,
+    otherPhone: rfq.buyerOtherPhone,
+    company: rfq.buyerCompany,
+    address: rfq.address,
+    project: rfq.project,
+    deliveryDate: rfq.deliveryDate,
+    attachments: rfq.guestAttachments,
+    remark: rfq.note || "",
+  };
   if (buyerKind === "guest") {
+    /* Guest PII stays on the server snapshot only — not in browser RFQ storage. */
     rfq.buyerEmail = "";
     rfq.buyerName = "";
     rfq.buyerPhone = "";
@@ -3247,7 +3267,7 @@ async function submitRfq(productIds, options = {}) {
   if (!isHeldRfq(rfq.id)) notifyAdmins({
     kind: "rfq",
     title: `New RFQ ${rfq.id}`,
-    body: `${rfq.buyerName || rfq.buyerEmail || "Buyer"} submitted ${(rfq.lines || []).length} line(s) from Mattex Marketplace.`,
+    body: `${buyerView.name || buyerView.email || "Buyer"} submitted ${(rfq.lines || []).length} line(s) from Mattex Marketplace.`,
     href: `${adminOrigin()}/?rfq=${encodeURIComponent(rfq.id)}`,
   });
   // The server mails buyer and Sales itself (every channel). Only the legacy path mails from the browser.
@@ -3258,17 +3278,7 @@ async function submitRfq(productIds, options = {}) {
   return {
     ok: true,
     rfq,
-    buyer: {
-      email: buyerEmail,
-      name: rfq.buyerName,
-      phone: rfq.buyerPhone,
-      otherPhone: rfq.buyerOtherPhone,
-      company: rfq.buyerCompany,
-      address: rfq.address,
-      project: rfq.project,
-      deliveryDate: rfq.deliveryDate,
-      attachments: rfq.guestAttachments,
-    },
+    buyer: buyerView,
   };
 }
 
@@ -4899,6 +4909,7 @@ function guestWhatsappDetails(guest, buyer) {
     phone: String(src.phone || who.phone || "").trim(),
     project: String(src.project || who.project || "").trim(),
     deliveryDate: String(src.deliveryDate || who.deliveryDate || "").trim(),
+    note: String(src.remark || who.remark || who.note || "").trim(),
     attachments: attachmentSummary(src.attachments || who.attachments),
   };
 }
@@ -5077,13 +5088,23 @@ async function placeBuyNowPo(product, qty, line, guest) {
     address: contact?.address || "",
     project: contact?.project || "",
     deliveryDate: contact?.deliveryDate || "",
+    remark: String(contact?.remark || "").trim(),
     attachments: contact?.attachments || [],
   };
   const placed = await createPurchaseOrderRemote({
     lines: [{ productId: product.id, qty }],
-    buyer: { email: buyer.email, name: buyer.name, phone: buyer.phone, company: buyer.company },
+    buyer: {
+      email: buyer.email,
+      name: buyer.name,
+      phone: buyer.phone,
+      otherPhone: buyer.otherPhone,
+      company: buyer.company,
+      whatsappOn: contact?.whatsappOn || "",
+      wechatOn: contact?.wechatOn || "",
+    },
     project: buyer.project,
-    delivery: { address: buyer.address, date: buyer.deliveryDate },
+    delivery: { address: buyer.address, date: buyer.deliveryDate, note: buyer.remark },
+    note: buyer.remark,
     attachments: buyer.attachments,
   });
   if (placed.legacy) return null;
@@ -5107,6 +5128,7 @@ async function placeBuyNowPo(product, qty, line, guest) {
         phone: buyer.phone,
         project: buyer.project,
         deliveryDate: buyer.deliveryDate,
+        note: buyer.remark,
         attachments: attachmentSummary(buyer.attachments),
       },
       guestFiles: contact?.attachments,
@@ -5163,7 +5185,10 @@ function whatsappUrl() {
 
 function rfqProjectName(rfq) {
   if (!rfq) return "";
-  return joinProfileProjects(rfq.projects || rfq.project);
+  /* Empty projects: [] is truthy — do not hide a filled project string. */
+  const fromList = joinProfileProjects(rfq.projects);
+  if (fromList) return fromList;
+  return joinProfileProjects(rfq.project);
 }
 
 const STAFF_KEY = "subbie_staff";
@@ -8379,15 +8404,33 @@ function rfqFromServerEntry(entry) {
   const owned = entry.owned || {};
   const payload = entry.payload && typeof entry.payload === "object" ? entry.payload : {};
   const lines = Array.isArray(payload.lines) && payload.lines.length ? payload.lines : Array.isArray(entry.lines) ? entry.lines : [];
+  const project =
+    joinProfileProjects(payload.projects) ||
+    String(payload.project || entry.project || "").trim() ||
+    "";
   const base = {
     ...payload,
     id: owned.id,
     lines,
     submittedAt: payload.submittedAt || owned.createdAt || "",
-    project: payload.project || entry.project || "",
+    project,
+    projects: normalizeProfileProjects(
+      Array.isArray(payload.projects) && payload.projects.some((row) => String(row || "").trim())
+        ? payload.projects
+        : project
+    ),
+    note: String(payload.note || entry.note || "").trim(),
     channel: payload.channel || entry.channel || "rfq",
     askKind: payload.askKind || entry.askKind || "quote",
-    companyName: payload.companyName || entry.companyName || "",
+    companyName: payload.buyerCompany || payload.companyName || entry.companyName || "",
+    buyerCompany: payload.buyerCompany || payload.companyName || entry.companyName || "",
+    address: payload.address || "",
+    deliveryDate: payload.deliveryDate || "",
+    guestAttachments: Array.isArray(payload.guestAttachments)
+      ? payload.guestAttachments
+      : Array.isArray(entry.guestAttachments)
+        ? entry.guestAttachments
+        : [],
   };
   return mergeOwned(base, owned);
 }
@@ -8443,15 +8486,68 @@ function raiseServerAlerts(entries, knownIds, map) {
 
 let lastPortalSyncStamp = "";
 
+/** Cheap fingerprint — never JSON.stringify full RFQ payloads on every poll. */
+function portalSyncStamp(entries) {
+  return (entries || [])
+    .map((entry) => {
+      const o = entry?.owned || {};
+      const draft = Array.isArray(o.draft?.prices)
+        ? o.draft.prices.map((row) => `${row.productId}:${row.quotedUnitPrice}:${row.noOffer ? 1 : 0}`).join(",")
+        : "";
+      return [
+        o.id,
+        o.reviewStatus || "",
+        o.quotedAt || "",
+        o.quoteDeliveredAt || "",
+        o.acceptedAt || "",
+        o.cancelStatus || "",
+        o.reverseStatus || "",
+        Array.isArray(o.activity) ? o.activity.length : 0,
+        draft,
+        entry?.payload ? "F" : "O",
+      ].join(":");
+    })
+    .join("|");
+}
+
+function portalRfqById(map) {
+  const byId = new Map();
+  for (const list of Object.values(map || {})) {
+    for (const row of Array.isArray(list) ? list : []) {
+      if (row?.id) byId.set(row.id, row);
+    }
+  }
+  return byId;
+}
+
+/**
+ * Portal inbox: merge server owned fields onto the in-memory copy.
+ * Full payload arrives only for new ids; known rows keep their request body and only patch status.
+ */
 function adoptPortalRfqs(entries, previousIds) {
-  const stamp = JSON.stringify(entries || []);
+  const stamp = portalSyncStamp(entries);
   if (stamp === lastPortalSyncStamp && Object.keys(memoryRfqMap || {}).length) return false;
   lastPortalSyncStamp = stamp;
+  const prevById = portalRfqById(memoryRfqMap);
   const nextMap = {};
   for (const entry of entries || []) {
-    const row = rfqFromServerEntry(entry);
+    const id = entry?.owned?.id;
+    if (!id) continue;
+    serverHeldIds.add(id);
+    const existing = prevById.get(id);
+    const hasPayload =
+      (entry.payload && typeof entry.payload === "object" && (Array.isArray(entry.payload.lines) || entry.payload.address || entry.payload.buyerCompany || entry.payload.project)) ||
+      (Array.isArray(entry.lines) && entry.lines.length);
+    let row = null;
+    if (hasPayload) {
+      row = rfqFromServerEntry(entry);
+      if (existing) row = mergeOwned({ ...existing, ...row, lines: row.lines?.length ? row.lines : existing.lines }, entry.owned);
+    } else if (existing) {
+      row = mergeOwned(existing, entry.owned);
+    } else {
+      continue;
+    }
     if (!row?.id) continue;
-    serverHeldIds.add(row.id);
     const key = normalizeEmail(row.buyerEmail) || GUEST_KEY;
     (nextMap[key] ||= []).push(row);
   }
@@ -8507,7 +8603,20 @@ async function syncServerRfqs() {
       if (!current && !entry.payload && !(Array.isArray(entry.lines) && entry.lines.length)) continue;
       const next = current ? mergeOwned(current, entry.owned) : rfqFromServerEntry(entry);
       const nextKey = normalizeEmail(next.buyerEmail) || GUEST_KEY;
-      if (current && nextKey === foundKey && JSON.stringify(next) === JSON.stringify(current)) continue;
+      if (
+        current &&
+        nextKey === foundKey &&
+        current.reviewStatus === next.reviewStatus &&
+        current.quotedAt === next.quotedAt &&
+        current.quoteDeliveredAt === next.quoteDeliveredAt &&
+        current.acceptedAt === next.acceptedAt &&
+        current.cancelStatus === next.cancelStatus &&
+        current.reverseStatus === next.reverseStatus &&
+        (current.activity || []).length === (next.activity || []).length &&
+        JSON.stringify(current.draft || null) === JSON.stringify(next.draft || null)
+      ) {
+        continue;
+      }
       if (current) latest[foundKey] = latest[foundKey].filter((r) => r.id !== id);
       latest[nextKey] = [next, ...(Array.isArray(latest[nextKey]) ? latest[nextKey] : [])];
       changed = true;
@@ -8544,9 +8653,10 @@ function startServerRfqSync() {
   if (typeof window === "undefined") return;
   window.clearInterval(serverSyncTimer);
   syncServerRfqs();
+  /* After the first full inbox load, poll status only — payloads stay local until a new id appears. */
   serverSyncTimer = window.setInterval(() => {
     if (document.visibilityState === "visible") syncServerRfqs();
-  }, 4000);
+  }, isPortalSurface() ? 10000 : 4000);
   if (serverSyncListening) return;
   serverSyncListening = true;
   document.addEventListener("visibilitychange", () => {
