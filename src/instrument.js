@@ -23,7 +23,6 @@ if (dsn && !admin) {
         matchRoutes,
       }),
       Sentry.replayIntegration(),
-      Sentry.feedbackIntegration({ colorScheme: "system" }),
     ],
     tracesSampleRate: 1.0,
     tracePropagationTargets: [/^\//],
