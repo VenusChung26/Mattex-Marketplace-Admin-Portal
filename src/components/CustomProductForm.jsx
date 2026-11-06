@@ -67,10 +67,13 @@ export default function CustomProductForm({
   const [specOver, setSpecOver] = useState(false);
   const [imageOver, setImageOver] = useState(false);
   const { formRef, revealIssue } = useRevealFormIssue();
+  // Q9-B: last applied prefill; only overwrite description when user has not edited away from it
+  const appliedDescRef = useRef(initial.description || "");
 
   useEffect(() => {
     extractTokenRef.current += 1;
     setName(initial.name || "");
+    appliedDescRef.current = initial.description || "";
     setDescription(initial.description || "");
     setQty(initial.qty || 1);
     const list = Array.isArray(initial.images) ? initial.images : [];
@@ -83,7 +86,18 @@ export default function CustomProductForm({
     setExtracting(false);
     setFilledFrom("");
     setError("");
-  }, [initial.name, initial.description, initial.qty, initial.image, initial.category, mode]);
+  }, [initial.name, initial.qty, initial.image, initial.category, initial.prefillKey, mode]);
+
+  useEffect(() => {
+    const next = initial.description || "";
+    setDescription((prev) => {
+      if (prev === appliedDescRef.current) {
+        appliedDescRef.current = next;
+        return next;
+      }
+      return prev;
+    });
+  }, [initial.description]);
 
   async function handleImages(fileList) {
     const picked = Array.from(fileList || []).filter((file) => String(file.type || "").startsWith("image/") || /\.webp$/i.test(file.name || ""));
@@ -187,7 +201,10 @@ export default function CustomProductForm({
       return;
     }
     setError("");
-    const sizeNote = initial.dimensions
+    const hasDim =
+      initial.dimensions &&
+      [lengthMm, widthMm, thicknessMm].some((v) => Number(v) > 0);
+    const sizeNote = hasDim
       ? `(${lengthMm || "0"} mm) x (${widthMm || "0"} mm) x (${thicknessMm || "0"} mm)`
       : "";
     onSubmit({
@@ -201,6 +218,7 @@ export default function CustomProductForm({
     });
     if (mode === "add") {
       setName("");
+      appliedDescRef.current = "";
       setDescription("");
       setQty(1);
       setImages([]);

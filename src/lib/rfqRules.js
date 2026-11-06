@@ -380,6 +380,14 @@ export function freezeQuoteLines(lines) {
     const line = salesLine(raw);
     const qty = Number(line.qty) || 0;
     const unitPrice = line.noOffer ? null : Number(line.quotedUnitPrice) > 0 ? Number(line.quotedUnitPrice) : null;
+    const picks =
+      line.pickedSpecs && typeof line.pickedSpecs === "object" && !Array.isArray(line.pickedSpecs)
+        ? Object.fromEntries(
+            Object.entries(line.pickedSpecs)
+              .map(([key, value]) => [String(key || "").trim(), String(value ?? "").trim()])
+              .filter(([key, value]) => key && value)
+          )
+        : null;
     return {
       productId: line.productId,
       name: line.name || "",
@@ -389,8 +397,17 @@ export function freezeQuoteLines(lines) {
       quotedUnitPrice: unitPrice,
       noOffer: Boolean(line.noOffer),
       custom: Boolean(line.custom),
+      description: String(line.description || ""),
+      descriptionBaseline: String(line.descriptionBaseline || ""),
       remark: String(line.remark || ""),
       image: snapshotLineImage(line),
+      category: String(line.category || "").trim(),
+      tailorMade: Boolean(line.tailorMade),
+      baseProductId: String(line.baseProductId || "").trim(),
+      baseProductNo: String(line.baseProductNo || "").trim(),
+      attachments: Array.isArray(line.attachments) ? line.attachments : [],
+      ...(picks && Object.keys(picks).length ? { pickedSpecs: picks } : {}),
+      ...(String(line.pickedSize || "").trim() ? { pickedSize: String(line.pickedSize).trim() } : {}),
       lineTotal: unitPrice != null ? unitPrice * qty : 0,
     };
   });

@@ -9,7 +9,9 @@ import { activeOfferPrice } from "./offer.js";
 import { activityDedupeKey, applyDecision, applyDeliveredQuoteVersion, buildDeliveredQuoteVersion, freezeQuoteLines, nextQuoteVersionNo, planLoadQuoteVersion, planQuoteSubmit, quoteDraftIsDirty, quoteEffectiveVersionNo, quoteVersionLines, quoteVersionList, snapshotLineImage, canBuyerRequestCancel, canBuyerReverse, getQuoteVersion, inboxStatus, planAssign, planCancelReverse, planDecision, mergeOwned, draftPricesOf, deliveredLinePrices, salesLine, planPoFromQuote, rfqBuyerKind, pushRfqActivity, rfqNeedsSalesReverse } from "./rfqRules.js";
 import { adoptGuestSpecMatch } from "./specMatchSession.js";
 import { foldHan } from "./han.js";
-import { buyerSpecSourceLines, displaySku, isTailorMade, localizeLeadTime, orderMinimum, productImageUrl, sellingAmount } from "./productFields.js";
+import { buyerSpecSourceLines, displaySku, isLeadSpec, isTailorMade, localizeLeadTime, orderMinimum, productImageUrl, sellingAmount, specParts } from "./productFields.js";
+import { staffCertText } from "./editedProductText.js";
+import { shopTitle, splitSizeChoices } from "./catalogGroup.js";
 import { contactFormFromAccount, normalizeRoles } from "./phone.js";
 import {
   accountCreatedEmailHtml,
@@ -2364,7 +2366,23 @@ function listSalesUnits() {
   return [...units].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
-function addToCart(productId, { intent, qty, silentInvite = false } = {}) {
+function normalizePickedSpecs(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const next = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const id = String(key || "").trim();
+    const pick = String(raw ?? "").trim();
+    if (!id || !pick) continue;
+    next[id] = pick;
+  }
+  return Object.keys(next).length ? next : null;
+}
+
+function normalizePickedSize(value) {
+  return String(value || "").trim().slice(0, 120);
+}
+
+function addToCart(productId, { intent, qty, silentInvite = false, pickedSpecs = null, pickedSize = "" } = {}) {
   const product = getProduct(productId);
   if (!product || isDiscontinued(product) || !isOrderable(product) || isProductOrderBlocked(productId)) return getCart();
   const guest = !isLoggedIn();
@@ -2372,12 +2390,22 @@ function addToCart(productId, { intent, qty, silentInvite = false } = {}) {
   const minQty = Math.max(1, Number(product.moq) || 1);
   const addQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
   const nextIntent = intent || (canDirectBuy(product) ? "buy" : "quote");
+  const picks = normalizePickedSpecs(pickedSpecs);
+  const size = normalizePickedSize(pickedSize);
   const existing = draft.lines.find((l) => l.productId === productId && !l.custom);
   if (existing) {
     if (existing.intent !== nextIntent) existing.intent = nextIntent;
     else existing.qty = (existing.qty || 0) + addQty;
+    if (picks) existing.pickedSpecs = picks;
+    if (size) existing.pickedSize = size;
   } else {
-    draft.lines.push({ productId, qty: addQty, intent: nextIntent });
+    draft.lines.push({
+      productId,
+      qty: addQty,
+      intent: nextIntent,
+      ...(picks ? { pickedSpecs: picks } : {}),
+      ...(size ? { pickedSize: size } : {}),
+    });
   }
   setDraft(draft);
   if (guest && !silentInvite) maybeShowCartAuthInvite();
@@ -2416,6 +2444,7 @@ function customPhotoList(image, images) {
 function addCustomLine({
   name,
   description = "",
+  descriptionBaseline = "",
   qty = 1,
   category = "",
   attachments,
@@ -2424,6 +2453,8 @@ function addCustomLine({
   tailorMade = false,
   baseProductId = "",
   baseProductNo = "",
+  pickedSpecs = null,
+  pickedSize = "",
 } = {}) {
   if (!tailorMade && !isLoggedIn()) {
     requireBuyerAuth({ custom: true });
@@ -2434,21 +2465,26 @@ function addCustomLine({
   const nextQty = Math.floor(Number(qty));
   const draft = getDraft();
   const productId = newCustomProductId();
-    draft.lines.push({
-      productId,
-      qty: Number.isFinite(nextQty) && nextQty >= 1 ? nextQty : 1,
-      custom: true,
-      intent: "quote",
-      name: trimmed,
-      description: String(description || "").trim(),
-      category: String(category || "").trim(),
-      attachments: normalizeAttachments(attachments),
-      image: customPhotoList(image, images)[0] || "",
-      images: customPhotoList(image, images).slice(1),
-      tailorMade: Boolean(tailorMade),
-      baseProductId: String(baseProductId || "").trim(),
-      baseProductNo: String(baseProductNo || "").trim(),
-    });
+  const picks = normalizePickedSpecs(pickedSpecs);
+  const size = normalizePickedSize(pickedSize) || (tailorMade && baseProductId ? "Customize" : "");
+  draft.lines.push({
+    productId,
+    qty: Number.isFinite(nextQty) && nextQty >= 1 ? nextQty : 1,
+    custom: true,
+    intent: "quote",
+    name: trimmed,
+    description: String(description || "").trim(),
+    descriptionBaseline: String(descriptionBaseline || "").trim(),
+    category: String(category || "").trim(),
+    attachments: normalizeAttachments(attachments),
+    image: customPhotoList(image, images)[0] || "",
+    images: customPhotoList(image, images).slice(1),
+    tailorMade: Boolean(tailorMade),
+    baseProductId: String(baseProductId || "").trim(),
+    baseProductNo: String(baseProductNo || "").trim(),
+    ...(picks ? { pickedSpecs: picks } : {}),
+    ...(size ? { pickedSize: size } : {}),
+  });
   setDraft(draft);
   return { ok: true, productId };
 }
@@ -2926,6 +2962,9 @@ function draftTotals(draft, productIds) {
         tailorMade: Boolean(line.tailorMade),
         baseProductId: line.baseProductId || "",
         baseProductNo: line.baseProductNo || "",
+        descriptionBaseline: line.descriptionBaseline || "",
+        pickedSpecs: normalizePickedSpecs(line.pickedSpecs),
+        pickedSize: normalizePickedSize(line.pickedSize),
       };
     }
     const product = getProduct(line.productId);
@@ -2953,6 +2992,8 @@ function draftTotals(draft, productIds) {
       productNo: product ? product.productNo : "",
       category: product ? product.category : "",
       green: Boolean(product?.green),
+      pickedSpecs: normalizePickedSpecs(line.pickedSpecs),
+      pickedSize: normalizePickedSize(line.pickedSize),
     };
   });
   return {
@@ -3205,6 +3246,9 @@ async function submitRfq(productIds, options = {}) {
       tailorMade: Boolean(l.tailorMade),
       baseProductId: l.baseProductId || "",
       baseProductNo: l.baseProductNo || "",
+      descriptionBaseline: l.descriptionBaseline || "",
+      pickedSpecs: normalizePickedSpecs(l.pickedSpecs),
+      pickedSize: normalizePickedSize(l.pickedSize),
     })),
     pricedSubtotal: totals.pricedSubtotal,
     unpricedCount: totals.unpricedCount,
@@ -3416,6 +3460,9 @@ function reorderRfq(id) {
           tailorMade: Boolean(l.tailorMade),
           baseProductId: l.baseProductId || "",
           baseProductNo: l.baseProductNo || "",
+          descriptionBaseline: l.descriptionBaseline || "",
+          pickedSpecs: normalizePickedSpecs(l.pickedSpecs),
+          pickedSize: normalizePickedSize(l.pickedSize),
         };
       }
       return { productId: l.productId, qty: l.qty, intent: l.intent || "quote" };
@@ -3939,14 +3986,26 @@ function logoutUser() {
   emitStoreChange();
 }
 
-function setPendingCart(productId, intent, qty) {
+function setPendingCart(productId, intent, qty, options = null) {
   if (!productId) return;
+  let picks = null;
+  let size = "";
+  if (options && typeof options === "object") {
+    if ("pickedSpecs" in options || "pickedSize" in options) {
+      picks = normalizePickedSpecs(options.pickedSpecs);
+      size = normalizePickedSize(options.pickedSize);
+    } else {
+      picks = normalizePickedSpecs(options);
+    }
+  }
   sessionStorage.setItem(
     PENDING_CART_KEY,
     JSON.stringify({
       productId,
       intent: intent || "quote",
       qty: qty || null,
+      ...(picks ? { pickedSpecs: picks } : {}),
+      ...(size ? { pickedSize: size } : {}),
     })
   );
 }
@@ -4085,7 +4144,12 @@ function inviteBuyerAuth() {
 
 function requireBuyerAuth(pending = {}) {
   if (isLoggedIn()) return true;
-  if (pending.productId) setPendingCart(pending.productId, pending.intent || "quote", pending.qty);
+  if (pending.productId) {
+    setPendingCart(pending.productId, pending.intent || "quote", pending.qty, {
+      pickedSpecs: pending.pickedSpecs,
+      pickedSize: pending.pickedSize,
+    });
+  }
   if (pending.custom || pending.tailorFrom) {
     setPendingCustom(pending.tailorFrom ? { tailorFrom: pending.tailorFrom } : { custom: true });
   }
@@ -4093,13 +4157,15 @@ function requireBuyerAuth(pending = {}) {
   return false;
 }
 
-function addFromStorefront(productId, intent = "quote", qty) {
+function addFromStorefront(productId, intent = "quote", qty, _lang, options = {}) {
+  const pickedSpecs = normalizePickedSpecs(options?.pickedSpecs);
+  const pickedSize = normalizePickedSize(options?.pickedSize);
   if (intent === "quote-now" || intent === "buy-now") {
-    setPendingCart(productId, intent, qty);
+    setPendingCart(productId, intent, qty, { pickedSpecs, pickedSize });
     openAuthModal("invite");
     return { ok: false, error: "auth_invite" };
   }
-  addToCart(productId, { intent, qty });
+  addToCart(productId, { intent, qty, pickedSpecs, pickedSize });
   return { ok: true };
 }
 
@@ -4127,39 +4193,47 @@ function cancelPendingWhatsappInvite() {
   }
 }
 
-function consumePendingInviteContinue(contact) {
+async function consumePendingInviteContinue(contact) {
   const guest = readGuestContact(contact);
   const pendingWaSubmit = readPendingCartWhatsappSubmit();
   if (pendingWaSubmit) {
-    if (!guest && !isLoggedIn()) return;
+    if (!guest && !isLoggedIn()) return { ok: false, error: "email" };
     clearPendingCartWhatsappSubmit();
-    completeCartWhatsappSubmit({ ...pendingWaSubmit, guest }, { announce: true });
-    return;
+    return completeCartWhatsappSubmit({ ...pendingWaSubmit, guest }, { announce: true });
   }
   const pendingCart = sessionStorage.getItem(PENDING_CART_KEY);
-  if (!pendingCart) return;
+  if (!pendingCart) return { ok: false, error: "missing" };
   let productId = "";
   let intent = "";
   let qty;
+  let pickedSpecs = null;
+  let pickedSize = "";
   try {
     const parsed = JSON.parse(pendingCart);
     productId = parsed?.productId || "";
     intent = parsed?.intent || "";
     qty = parsed?.qty;
+    pickedSpecs = normalizePickedSpecs(parsed?.pickedSpecs);
+    pickedSize = normalizePickedSize(parsed?.pickedSize);
   } catch {
     sessionStorage.removeItem(PENDING_CART_KEY);
-    return;
+    return { ok: false, error: "missing" };
   }
-  if ((intent === "quote-now" || intent === "buy-now") && productId && !guest && !isLoggedIn()) return;
-  sessionStorage.removeItem(PENDING_CART_KEY);
   if ((intent === "quote-now" || intent === "buy-now") && productId) {
-    whatsappNow(productId, {
+    if (!guest && !isLoggedIn()) return { ok: false, error: "email" };
+    const result = await whatsappNow(productId, {
       qty,
       kind: intent === "buy-now" ? "buy" : "quote",
       skipCart: true,
       guest,
+      pickedSpecs,
+      pickedSize,
     });
+    if (result?.ok) sessionStorage.removeItem(PENDING_CART_KEY);
+    return result?.ok ? result : { ok: false, error: result?.error || "server" };
   }
+  sessionStorage.removeItem(PENDING_CART_KEY);
+  return { ok: true };
 }
 
 function consumePendingAfterAuth() {
@@ -4184,22 +4258,26 @@ function consumePendingAfterAuth() {
     let productId = pendingCart;
     let intent = "quote";
     let qty;
+    let pickedSpecs = null;
+    let pickedSize = "";
     try {
       const parsed = JSON.parse(pendingCart);
       if (parsed && parsed.productId) {
         productId = parsed.productId;
         intent = parsed.intent || "quote";
         qty = parsed.qty;
+        pickedSpecs = normalizePickedSpecs(parsed.pickedSpecs);
+        pickedSize = normalizePickedSize(parsed.pickedSize);
       }
     } catch {
       productId = pendingCart;
     }
     if (intent === "quote-now" || intent === "buy-now") {
-      setPendingCart(productId, intent, qty);
+      setPendingCart(productId, intent, qty, { pickedSpecs, pickedSize });
       openAuthModal("invite");
       stayPut = true;
     } else {
-      addToCart(productId, { intent, qty, silentInvite: true });
+      addToCart(productId, { intent, qty, silentInvite: true, pickedSpecs, pickedSize });
     }
   }
   if (pendingWa) {
@@ -4232,15 +4310,19 @@ function enrichCartLine(line) {
       productId: line.productId,
       custom: true,
       description: line.description || "",
+      descriptionBaseline: line.descriptionBaseline || "",
       qty: line.qty || 1,
       unit: line.unit || "",
       unitPrice: line.unitPrice ?? null,
       supplier: line.supplier || "",
       image: line.image || "",
       attachments: Array.isArray(line.attachments) ? line.attachments : [],
+      category: line.category || "",
       tailorMade: Boolean(line.tailorMade),
       baseProductId: line.baseProductId || "",
       baseProductNo: line.baseProductNo || "",
+      pickedSpecs: normalizePickedSpecs(line.pickedSpecs),
+      pickedSize: normalizePickedSize(line.pickedSize),
     };
   }
   const product = getProduct(line.productId);
@@ -4256,6 +4338,9 @@ function enrichCartLine(line) {
     supplier: line.supplier || product?.supplier || "",
     image: line.image || product?.image || "",
     attachments: Array.isArray(line.attachments) ? line.attachments : [],
+    category: line.category || product?.category || "",
+    pickedSpecs: normalizePickedSpecs(line.pickedSpecs),
+    pickedSize: normalizePickedSize(line.pickedSize),
   };
 }
 
@@ -4756,14 +4841,273 @@ function firstImageAttachmentUrl(files) {
   return found?.url || "";
 }
 
+function pdfSpecOptionLabel(option) {
+  if (option && typeof option === "object") return String(option.label || option.key || "").trim();
+  return String(option || "").trim();
+}
+
+function pdfSpecOptionKey(option) {
+  if (option && typeof option === "object") return String(option.key || option.label || "").trim();
+  return String(option || "").trim();
+}
+
+function pdfSpecGroupLabel(group, index) {
+  const raw = String(group?.title || group?.name || group?.label || "").trim();
+  if (raw && !/^categor(y|ies)\s*\d*$/i.test(raw) && !/^分類\s*\d*$/i.test(raw)) return raw;
+  const fixed = {
+    colour: "顏色",
+    "paving-colour": "顏色",
+    "mesh-size": "尺寸",
+    "marble-size": "尺寸",
+    "tile-size": "尺寸",
+    "mosaic-size": "尺寸",
+    "gypsum-size": "尺寸",
+    "floor-size": "尺寸",
+    "clad-size": "尺寸",
+    "cover-size": "尺寸",
+    "slab-size": "尺寸",
+    "kerb-length": "長度",
+    "cable-length": "長度",
+    diameter: "直徑",
+    "block-thickness": "厚度",
+    "tile-series": "系列",
+    "cover-series": "系列",
+    "tile-rating": "防滑等級",
+    "slip-rating": "防滑等級",
+    "vinyl-type": "類型",
+    "floor-type": "類型",
+    material: "材料",
+  }[String(group?.id || "")];
+  if (fixed) return fixed;
+  return `規格 ${index + 1}`;
+}
+
+/** One PDF row per SpecGroupPicker section the buyer chose. */
+function pdfPickedSpecRows(product, picked) {
+  const choice = normalizePickedSpecs(picked);
+  if (!choice) return [];
+  const groups = Array.isArray(product?.specGroups) ? product.specGroups : [];
+  const rows = [];
+  groups.forEach((group, index) => {
+    if (!group) return;
+    const selected = String(choice[group.id] || "").trim();
+    if (!selected) return;
+    const label = pdfSpecGroupLabel(group, index);
+    if (group.field === "length") {
+      rows.push({ label, value: `${selected}${group.unit ? ` ${group.unit}` : ""}` });
+      return;
+    }
+    const options = Array.isArray(group.options) ? group.options : [];
+    const option = options.find((item) => pdfSpecOptionKey(item) === selected || pdfSpecOptionLabel(item) === selected);
+    const value = option ? pdfSpecOptionLabel(option) || selected : selected;
+    if (!value) return;
+    rows.push({ label, value });
+  });
+  return rows;
+}
+
+function pdfIsMetaSpec(text) {
+  return /^(sales unit|moq|unit\s*\/\s*pallet|units per pallet|pallet)\s*:/i.test(String(text || "").trim());
+}
+
+function pdfSizeDisplay(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^(customize|customization|customize size|customize drawing upload)$/i.test(raw)) {
+    return "自訂規格 · 圖則";
+  }
+  return raw;
+}
+
+function isCustomizeSizeValue(value) {
+  return /^(customize|customization|customize size|customize drawing upload)$/i.test(String(value || "").trim());
+}
+
+function pdfModelLabel(product) {
+  const parent = String(product?.parentProduct || "").trim();
+  if (parent) return parent;
+  const fromName = String(product?.name || "").trim().match(/^([A-Z]{1,3}\d{2,4})\b/);
+  if (fromName) return fromName[1];
+  const fromSku = String(product?.productNo || "").trim().match(/(?:^|-)([A-Z]{1,3}\d{2,4})$/i);
+  return fromSku ? fromSku[1].toUpperCase() : "";
+}
+
+/**
+ * Q8-C: prefill 規格／備註 as multiline — name/SKU headline + 型號／尺寸 (+ SpecGroup picks).
+ * Used when buyer taps 自訂規格 · 圖則.
+ */
+function buildTailorPrefillDescription(product, { pickedSize = "", pickedSpecs = null } = {}) {
+  if (!product) return "";
+  const lines = [];
+  const model = pdfModelLabel(product);
+  const title = shopTitle(product) || String(product.name || "").trim();
+  const sku = productSkuId(product) || String(product.productNo || "").trim();
+  if (model && title) lines.push(`${model} — ${title}`);
+  else if (title) lines.push(title);
+  else if (sku) lines.push(sku);
+  if (sku && !(model && title)) lines.push(`貨號：${sku}`);
+  else if (sku && model && title && sku.toUpperCase() !== model.toUpperCase()) lines.push(`貨號：${sku}`);
+  if (model) lines.push(`型號：${model}`);
+  const sizeRaw = normalizePickedSize(pickedSize);
+  const sizeLabel = isCustomizeSizeValue(sizeRaw) || !sizeRaw
+    ? "自訂規格 · 圖則"
+    : pdfSizeDisplay(sizeRaw) || pdfSizeDisplay(pdfSizeFromProduct(product));
+  if (sizeLabel) lines.push(`尺寸：${sizeLabel}`);
+  for (const row of pdfPickedSpecRows(product, pickedSpecs)) {
+    if (!row?.label || !row?.value) continue;
+    if (row.label === "型號" || row.label === "尺寸") continue;
+    lines.push(`${row.label}：${row.value}`);
+  }
+  return lines.join("\n");
+}
+
+/** Strip all-zero tailor dimension note so unchanged mm fields do not count as edits. */
+function stripZeroDimensionNote(text) {
+  return String(text || "")
+    .replace(/^\(0\s*mm\)\s*x\s*\(0\s*mm\)\s*x\s*\(0\s*mm\)\s*\n?/i, "")
+    .trim();
+}
+
+function pdfCustomSpecText(line) {
+  const raw = String(line?.description || "").trim();
+  if (!raw) return "";
+  const cleaned = stripZeroDimensionNote(raw);
+  if (!cleaned) return "";
+  const baseline = stripZeroDimensionNote(line?.descriptionBaseline || "");
+  // Q5c-A: skip unchanged prefilled description
+  if (baseline && cleaned === baseline) return "";
+  return flattenWaSpec(cleaned);
+}
+
+function pdfSizeFromProduct(product) {
+  const own = String(product?.sizeDesc || product?.primarySpec || "").split("\n")[0].trim();
+  if (own) {
+    const parts = splitSizeChoices(own);
+    if (parts.length) return parts[0];
+    return own.split(/\s*\/\s*/)[0].trim();
+  }
+  for (const text of buyerSpecSourceLines(product) || []) {
+    if (!/^size\s*:/i.test(text)) continue;
+    const value = String(text).replace(/^size\s*:\s*/i, "").trim();
+    const parts = splitSizeChoices(value);
+    return parts[0] || value.split(/\s*\/\s*/)[0].trim();
+  }
+  // Sibling in the same category may hold the shared size strip (e.g. mesh C785 vs A142).
+  const cat = String(product?.category || "").trim();
+  if (!cat) return "";
+  for (const other of PRODUCTS) {
+    if (!other || other.id === product?.id || other.category !== cat) continue;
+    const text = String(other.sizeDesc || other.primarySpec || "").split("\n")[0].trim();
+    if (!text) continue;
+    const parts = splitSizeChoices(text);
+    if (parts.length >= 2) return parts[0];
+  }
+  return "";
+}
+
+/** Model / size chips on folded cards (型號 + 尺寸), not Sales unit / MOQ. */
+function pdfVariantSpecRows(line, product) {
+  if (!product || line?.custom) return [];
+  const rows = [];
+  const model = String(line?.pickedModel || "").trim() || pdfModelLabel(product);
+  if (model) rows.push({ label: "型號", value: model });
+  const picked = normalizePickedSize(line?.pickedSize);
+  const size = pdfSizeDisplay(picked || pdfSizeFromProduct(product));
+  if (size) rows.push({ label: "尺寸", value: size });
+  return rows;
+}
+
+/** Catalog facts when the line has no saved picks: each real spec section is its own row. */
+function pdfCatalogSpecRows(product, { skipSize = false } = {}) {
+  if (!product) return [];
+  const rows = [];
+  const seen = new Set();
+  for (const text of buyerSpecSourceLines(product)) {
+    if (isLeadSpec(text) || /^Cert:\s*/i.test(text) || pdfIsMetaSpec(text)) continue;
+    if (skipSize && /^size\s*:/i.test(text)) continue;
+    const parts = specParts(text, "zh");
+    const value = String(parts.value || "").trim();
+    if (!value) continue;
+    const key = value.replace(/\s+/g, "").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ label: parts.label || "規格", value });
+  }
+  return rows;
+}
+
+function pdfProductInfoRows(line, product) {
+  const rows = [];
+  const isTailorCustom = Boolean(line?.custom && line?.tailorMade);
+
+  if (isTailorCustom) {
+    // Q1-C / Q2-A: always show 尺寸 as 自訂規格 · 圖則; model from base when known
+    const model = product ? pdfModelLabel(product) : "";
+    if (model) rows.push({ label: "型號", value: model });
+    rows.push({ label: "尺寸", value: "自訂規格 · 圖則" });
+    const baseName = String(product?.name || "").trim();
+    const lineName = String(line?.name || "").trim();
+    // Q5a-A / Q5b-A: 原產品 only when name changed
+    if (baseName && lineName && baseName !== lineName) {
+      const sku =
+        (product ? productSkuId(product) : "") ||
+        String(product?.productNo || line?.baseProductNo || "").trim();
+      rows.push({ label: "原產品", value: sku ? `${baseName}（${sku}）` : baseName });
+    }
+  } else {
+    const pickRows = pdfPickedSpecRows(product, line?.pickedSpecs);
+    const variantRows = pdfVariantSpecRows(line, product);
+    if (pickRows.length) {
+      rows.push(...pickRows);
+      for (const row of variantRows) {
+        if (!rows.some((existing) => existing.label === row.label)) rows.push(row);
+      }
+    } else if (variantRows.length) {
+      rows.push(...variantRows);
+      rows.push(...pdfCatalogSpecRows(product, { skipSize: true }));
+    } else if (!line?.custom) {
+      rows.push(...pdfCatalogSpecRows(product));
+    }
+  }
+
+  const category = String(line?.category || product?.category || "").trim();
+  if (category) rows.push({ label: "產品分類", value: category });
+
+  const deliverySource = product
+    ? {
+        ...product,
+        leadTimeLabel: line?.leadTimeLabel || product.leadTimeLabel,
+        leadTime: line?.leadTime || product.leadTime,
+        lead_time: line?.lead_time || product.lead_time,
+      }
+    : line?.leadTimeLabel || line?.leadTime
+      ? { leadTimeLabel: line.leadTimeLabel || "", leadTime: line.leadTime || null }
+      : null;
+  const delivery = deliverySource ? displayLeadTime(deliverySource, "zh") : "";
+  if (delivery) rows.push({ label: "交貨期", value: delivery });
+
+  const standard = String(
+    line?.standard || line?.certifications || (product ? staffCertText(product) || product.standard : "") || ""
+  ).trim();
+  if (standard) rows.push({ label: "文件列明標準", value: standard });
+
+  return rows;
+}
+
 function quotePdfItems(rows) {
   return rows.map(salesLine).map((line, i) => {
     const isCustom = Boolean(line.custom);
+    const baseProduct = line.baseProductId ? getProduct(line.baseProductId) : null;
+    const product = !isCustom
+      ? getProduct(line.productId) || baseProduct
+      : line.tailorMade
+        ? baseProduct
+        : null;
     const attachments = Array.isArray(line.attachments) ? line.attachments : [];
     return {
       index: i + 1,
       name: String(line.name || (isCustom ? "度身訂造產品" : line.productId) || "-").trim(),
-      sku: line.productNo || (isCustom ? "度身訂造" : line.productId) || "-",
+      sku: line.productNo || line.sku || (isCustom ? "度身訂造" : line.productId) || "-",
       qty: `${line.qty}${line.unit ? ` ${line.unit}` : ""}`,
       price: line.noOffer
         ? "不報價"
@@ -4772,9 +5116,10 @@ function quotePdfItems(rows) {
           : line.unitPrice != null
             ? formatPrice(line.unitPrice)
             : "待報價",
-      spec: isCustom ? flattenWaSpec(line.description) : "",
+      spec: isCustom ? pdfCustomSpecText(line) : "",
+      infoRows: pdfProductInfoRows(line, product),
       attachments: waAttachmentNames(attachments),
-      image: line.image || firstImageAttachmentUrl(attachments) || "",
+      image: line.image || product?.image || firstImageAttachmentUrl(attachments) || "",
     };
   });
 }
@@ -4816,6 +5161,7 @@ function quotePdfFingerprint(kind, items, refNo, buyer, guestFiles) {
       item.spec || "",
       item.attachments || "",
       item.image || "",
+      (Array.isArray(item.infoRows) ? item.infoRows : []).map((row) => [row.label, row.value]),
     ]),
   });
 }
@@ -5136,13 +5482,21 @@ async function placeBuyNowPo(product, qty, line, guest) {
   };
 }
 
-async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false, guest } = {}) {
+async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false, guest, pickedSpecs = null, pickedSize = "" } = {}) {
   const product = getProduct(productId);
   if (!product || isDiscontinued(product) || !isOrderable(product) || isProductOrderBlocked(productId)) return { ok: false, error: "discontinued" };
   const intent = kind === "buy" ? "buy" : "quote";
   const minQty = Math.max(1, Number(product.moq) || 1);
   const addQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
-  const line = { productId, qty: addQty, intent };
+  const picks = normalizePickedSpecs(pickedSpecs);
+  const size = normalizePickedSize(pickedSize);
+  const line = {
+    productId,
+    qty: addQty,
+    intent,
+    ...(picks ? { pickedSpecs: picks } : {}),
+    ...(size ? { pickedSize: size } : {}),
+  };
   if (intent === "buy" && canDirectBuy(product)) {
     const placed = await placeBuyNowPo(product, addQty, line, guest);
     if (placed) return placed;
@@ -5153,7 +5507,7 @@ async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false
     const others = snapshot.lines.filter((row) => String(row.productId) !== String(productId) || row.custom);
     setDraft({ ...snapshot, lines: [...others, line] });
   } else {
-    addToCart(productId, { intent, qty: addQty });
+    addToCart(productId, { intent, qty: addQty, pickedSpecs: picks, pickedSize: size });
   }
   // submitRfq reads the draft before its first await, so the cart can be put back straight away.
   const pending = submitRfq([productId], {
@@ -6704,16 +7058,12 @@ function getGuestQuoteSnapshot(token) {
 }
 
 function snapshotQuotePdfItems(snapshot) {
-  return (snapshot?.lines || []).map((line, index) => ({
-    index: index + 1,
-    name: String(line.name || line.productId || "-").trim(),
-    sku: line.productNo || line.productId || "-",
-    qty: `${line.qty}${line.unit ? ` ${line.unit}` : ""}`,
-    price: line.noOffer ? "不報價" : line.quotedUnitPrice != null ? formatPrice(line.quotedUnitPrice) : "待報價",
-    spec: "",
-    attachments: "",
-    image: snapshotLineImage(line),
-  }));
+  return quotePdfItems(
+    (snapshot?.lines || []).map((line) => ({
+      ...line,
+      image: snapshotLineImage(line) || line.image,
+    }))
+  );
 }
 
 function rfqQuotedOffline(rfq) {
@@ -7284,8 +7634,11 @@ function updateBuyerRfqDetails(id, patch = {}) {
           tailorMade: Boolean(row.tailorMade),
           baseProductId: String(row.baseProductId || "").trim(),
           baseProductNo: String(row.baseProductNo || "").trim(),
+          descriptionBaseline: String(row.descriptionBaseline || "").trim(),
           productNo: String(row.productNo || "").trim(),
           supplier: String(row.supplier || "").trim(),
+          pickedSpecs: normalizePickedSpecs(row.pickedSpecs),
+          pickedSize: normalizePickedSize(row.pickedSize),
         });
       });
     }
@@ -8809,6 +9162,7 @@ export {
   cartCount,
   addToCart,
   addCustomLine,
+  buildTailorPrefillDescription,
   addSpecMatchLines,
   commitSpecMatch,
   matchSpecToCatalog,

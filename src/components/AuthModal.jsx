@@ -100,11 +100,13 @@ export default function AuthModal({ open, onClose }) {
     if (code === "project") return t("guestProjectRequired");
     if (code === "delivery_date") return t("deliveryDateRequired");
     if (code === "attachment") return t("guestAttachmentRequired");
+    if (code === "server" || code === "storage" || code === "network") return t("submitFailed");
     return t("submitFailed");
   }
 
-  function onGuestSubmit(e) {
+  async function onGuestSubmit(e) {
     e.preventDefault();
+    if (busy) return;
     const missing = guestOrderError(guestInfo);
     if (missing) {
       setGuestField(missing);
@@ -113,8 +115,22 @@ export default function AuthModal({ open, onClose }) {
       return;
     }
     setGuestField("");
+    setError("");
+    setBusy(true);
+    let result;
+    try {
+      result = await consumePendingInviteContinue(guestOrderPayload(guestInfo));
+    } catch {
+      result = { ok: false, error: "network" };
+    } finally {
+      setBusy(false);
+    }
+    if (!result?.ok) {
+      setError(guestErrorText(result?.error) || t("submitFailed"));
+      revealIssue();
+      return;
+    }
     finish();
-    consumePendingInviteContinue(guestOrderPayload(guestInfo));
   }
 
   async function onSubmit(e) {
@@ -221,8 +237,8 @@ export default function AuthModal({ open, onClose }) {
                   setError("");
                 }}
               />
-              <button type="submit" className="btn-primary w-full !py-2.5">
-                {t("continueWhatsapp")}
+              <button type="submit" disabled={busy} className="btn-primary w-full !py-2.5 disabled:opacity-60">
+                {busy ? `${t("continueWhatsapp")}…` : t("continueWhatsapp")}
               </button>
             </form>
           ) : (

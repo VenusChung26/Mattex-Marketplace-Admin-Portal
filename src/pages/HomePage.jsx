@@ -380,8 +380,8 @@ export default function HomePage() {
     return () => window.clearTimeout(timer);
   }, [urlQ, urlCat, urlFilter, urlGreen, lang, navigate, params]);
 
-  function handleAdd(productId, intent = "quote", qty) {
-    const result = addFromStorefront(productId, intent, qty, lang);
+  function handleAdd(productId, intent = "quote", qty, options) {
+    const result = addFromStorefront(productId, intent, qty, lang, options || {});
     if (!result?.ok || intent === "quote-now" || intent === "buy-now") return;
     showToast({
       message: t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq"),

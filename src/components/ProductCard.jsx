@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { displayLeadTime, getProduct, isBuyerVisible, isHitProduct, productSkuId, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, requireBuyerAuth, catalogPathForCategory, canDirectBuy } from "../lib/store";
+import { displayLeadTime, getProduct, isBuyerVisible, isHitProduct, productSkuId, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, buildTailorPrefillDescription, requireBuyerAuth, catalogPathForCategory, canDirectBuy } from "../lib/store";
 import { displayUnit, lowerDeliveryQty, orderMinimum, productImageUrl } from "../lib/productFields";
 import { groupOf, useCatalogGroups } from "../lib/catalogGroups";
 import { groupSizeChoices, localizeSpecText, optionLabels, sharedOptionPrefix, shopTitle, stripOptionPrefix } from "../lib/catalogGroup";
@@ -390,26 +390,24 @@ export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card",
   );
 }
 
-function tailorInitialFromProduct(product, qty) {
-  const bits = [
-    product.sizeDesc || product.description || "",
-    productSkuId(product) ? `Base SKU: ${productSkuId(product)}` : "",
-    product.certifications || product.standard
-      ? `Cert: ${product.certifications || product.standard}`
-      : "",
-  ].filter(Boolean);
+function tailorInitialFromProduct(product, qty, { pickedSize = "", pickedSpecs = null, dimensions = false } = {}) {
+  const sizeForPrefill = pickedSize || "Customize";
   return {
     name: product.name || "",
-    description: bits.join("\n"),
+    description: buildTailorPrefillDescription(product, {
+      pickedSize: sizeForPrefill,
+      pickedSpecs,
+    }),
     qty: Math.max(1, Number(qty) || Number(orderMinimum(product)) || 1),
     image: productImageUrl(product),
     category: product.category || "",
     attachments: [],
-    dimensions: Boolean(product.tailorSize),
+    dimensions: Boolean(dimensions || product.tailorSize),
+    prefillKey: `${product.id}|${sizeForPrefill}|${JSON.stringify(pickedSpecs || {})}`,
   };
 }
 
-export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, onQtyChange, hideQty = false, autoOpenTailor = false, tailorNonce = 0, tailorDimensions = false, disabled = false }) {
+export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, onQtyChange, hideQty = false, autoOpenTailor = false, tailorNonce = 0, tailorDimensions = false, disabled = false, pickedSpecs = null, pickedSize = "" }) {
   const { t } = useLanguage();
   usePromo();
   const line = useCartLine(product.id);
@@ -429,7 +427,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
 
   useEffect(() => {
     if (!autoOpenTailor || !product?.tailorMade) return;
-    setTailorInitial(tailorInitialFromProduct(product, qty));
+    setTailorInitial(tailorInitialFromProduct(product, qty, { pickedSize, pickedSpecs }));
     setTailorOpen(true);
   }, [autoOpenTailor, product?.id, product?.tailorMade]);
 
@@ -437,10 +435,28 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
     if (!tailorNonce) return;
     const wide = window.matchMedia("(min-width: 1024px)").matches;
     if ((size === "bar" && wide) || (size === "detail" && !wide)) return;
-    const base = tailorInitialFromProduct(product, qty);
-    setTailorInitial(tailorDimensions ? { ...base, dimensions: true } : base);
+    setTailorInitial(
+      tailorInitialFromProduct(product, qty, {
+        pickedSize,
+        pickedSpecs,
+        dimensions: tailorDimensions,
+      })
+    );
     setTailorOpen(true);
   }, [tailorNonce, tailorDimensions]);
+
+  const picksKey = JSON.stringify(pickedSpecs || {});
+  // Q9-B: while modal open, refresh prefill when model/size picks change (form keeps dirty text).
+  useEffect(() => {
+    if (!tailorOpen) return;
+    setTailorInitial(
+      tailorInitialFromProduct(product, qty, {
+        pickedSize,
+        pickedSpecs,
+        dimensions: tailorDimensions,
+      })
+    );
+  }, [product.id, pickedSize, picksKey, tailorOpen, tailorDimensions]);
 
   function setQty(next) {
     const n = Math.floor(Number(next));
@@ -453,20 +469,30 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
     if (disabled || qty < minQty) return;
     const guestCartOk = intent === "quote-now" || intent === "buy-now" || intent === "quote" || intent === "buy";
     if (!guestCartOk && !requireBuyerAuth({ productId: product.id, intent, qty })) return;
-    onAdd?.(product.id, intent, qty);
+    onAdd?.(product.id, intent, qty, {
+      pickedSpecs: pickedSpecs || undefined,
+      pickedSize: pickedSize || undefined,
+    });
   }
 
   function openTailor() {
-    setTailorInitial(tailorInitialFromProduct(product, qty));
+    setTailorInitial(tailorInitialFromProduct(product, qty, { pickedSize, pickedSpecs }));
     setTailorOpen(true);
   }
 
   function submitTailor(payload) {
+    const baseline = tailorInitial?.description || buildTailorPrefillDescription(product, {
+      pickedSize: pickedSize || "Customize",
+      pickedSpecs,
+    });
     const result = addCustomLine({
       ...payload,
+      descriptionBaseline: baseline,
       tailorMade: true,
       baseProductId: product.id,
       baseProductNo: product.productNo || "",
+      pickedSpecs: pickedSpecs || undefined,
+      pickedSize: pickedSize || "Customize",
     });
     if (!result.ok) return;
     setTailorNote(t("addedTailorToRfq"));
@@ -1188,7 +1214,7 @@ function isCustomizeChoice(label) {
   return /^(customize|customization|customize size|customize drawing upload)$/i.test(String(label || "").trim());
 }
 
-export function SizeChoicePicker({ choices, className = "", onCustomize, compact = false, title = "" }) {
+export function SizeChoicePicker({ choices, className = "", onCustomize, onPick, compact = false, title = "" }) {
   const { lang } = useLanguage();
   const key = (choices || []).join("\n");
   const [picked, setPicked] = useState(() => (choices || [])[0] || "");
@@ -1196,6 +1222,9 @@ export function SizeChoicePicker({ choices, className = "", onCustomize, compact
     const list = key ? key.split("\n") : [];
     setPicked((current) => (list.includes(current) ? current : list[0] || ""));
   }, [key]);
+  useEffect(() => {
+    onPick?.(picked);
+  }, [onPick, picked]);
   const list = key ? key.split("\n") : [];
   if (list.length < 2) return null;
   const chipClass = (on) =>
@@ -1237,7 +1266,7 @@ export function SizeChoicePicker({ choices, className = "", onCustomize, compact
   );
 }
 
-function ModelAndSizeSpecs({ members, selectedId, onSelect, moreHref, moreLabel, onCustomize, compact = false, sectionOffset = 0, sectionTotal = 0 }) {
+function ModelAndSizeSpecs({ members, selectedId, onSelect, moreHref, moreLabel, onCustomize, onSizePick, compact = false, sectionOffset = 0, sectionTotal = 0 }) {
   const { lang, t } = useLanguage();
   const sizes = groupSizeChoices(members);
   const showVariants = members.length >= 2;
@@ -1271,7 +1300,7 @@ function ModelAndSizeSpecs({ members, selectedId, onSelect, moreHref, moreLabel,
         </>
       ) : null}
       {showSizes ? (
-        <SizeChoicePicker choices={sizes} compact={compact} className="mt-3" onCustomize={onCustomize} title={sizeHeading} />
+        <SizeChoicePicker choices={sizes} compact={compact} className="mt-3" onCustomize={onCustomize} onPick={onSizePick} title={sizeHeading} />
       ) : null}
     </>
   );
@@ -1319,6 +1348,8 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
     setTailorNonce((n) => n + 1);
   }
   const [specImage, setSpecImage] = useState("");
+  const [pickedSpecs, setPickedSpecs] = useState(null);
+  const [pickedSize, setPickedSize] = useState("");
   const label = shopTitle(selected, lang);
   const sections = sectionPlan(selected, members);
 
@@ -1360,7 +1391,7 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
             <ProductPrice product={selected} className="!mt-0" />
           </div>
           {selected.specGroups?.length ? (
-            <SpecGroupPicker groups={selected.specGroups} className="mt-3" compact moreHref={withLocale(lang, `/details/${selected.id}`)} onImage={setSpecImage} onCustomize={openTailor} extraSections={sections.extra} />
+            <SpecGroupPicker key={selected.id} groups={selected.specGroups} className="mt-3" compact moreHref={withLocale(lang, `/details/${selected.id}`)} onImage={setSpecImage} onPick={setPickedSpecs} onCustomize={openTailor} extraSections={sections.extra} />
           ) : null}
           <ModelAndSizeSpecs
             members={members}
@@ -1369,6 +1400,7 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
             moreHref={withLocale(lang, `/details/${selected.id}`)}
             moreLabel={t("moreOptions", { n: Math.max(members.length - 2, 0) })}
             onCustomize={openTailor}
+            onSizePick={setPickedSize}
             compact
             sectionOffset={sections.specCount}
             sectionTotal={sections.sectionTotal}
@@ -1381,7 +1413,7 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
       </div>
       <div className="min-w-0 self-start sm:w-60 sm:shrink-0">
         <ProductActions product={selected} onAdd={onAdd} size="row" tailorNonce={tailorNonce}
-            tailorDimensions={tailorDimensions} />
+            tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} />
       </div>
     </article>
   );
@@ -1397,6 +1429,8 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
     setTailorNonce((n) => n + 1);
   }
   const [specImage, setSpecImage] = useState("");
+  const [pickedSpecs, setPickedSpecs] = useState(null);
+  const [pickedSize, setPickedSize] = useState("");
   const supplierName = supplierDisplayName(selected.supplier);
   const label = shopTitle(selected, lang);
   const sections = sectionPlan(selected, members);
@@ -1442,7 +1476,7 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
         </p>
         <ProductRating product={selected} className="mt-1" />
         {selected.specGroups?.length ? (
-          <SpecGroupPicker groups={selected.specGroups} className="mt-3" compact moreHref={withLocale(lang, `/details/${selected.id}`)} onImage={setSpecImage} onCustomize={openTailor} extraSections={sections.extra} />
+          <SpecGroupPicker key={selected.id} groups={selected.specGroups} className="mt-3" compact moreHref={withLocale(lang, `/details/${selected.id}`)} onImage={setSpecImage} onPick={setPickedSpecs} onCustomize={openTailor} extraSections={sections.extra} />
         ) : null}
         <ModelAndSizeSpecs
           members={members}
@@ -1451,6 +1485,7 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
           moreHref={withLocale(lang, `/details/${selected.id}`)}
           moreLabel={t("moreOptions", { n: Math.max(members.length - 2, 0) })}
           onCustomize={openTailor}
+          onSizePick={setPickedSize}
           compact
           sectionOffset={sections.specCount}
           sectionTotal={sections.sectionTotal}
@@ -1460,7 +1495,7 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
           <ProductPrice product={selected} className="!mt-0" showOfferEnded={showOfferEnded} />
           <div className="mt-2.5 min-[752px]:mt-3">
             <ProductActions product={selected} onAdd={onAdd} size="card" tailorNonce={tailorNonce}
-            tailorDimensions={tailorDimensions} />
+            tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} />
           </div>
         </div>
       </div>

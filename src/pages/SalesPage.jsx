@@ -48,8 +48,8 @@ export default function SalesPage() {
     jumpToId("catalog-results");
   }
 
-  const handleAdd = useCallback((productId, intent = "quote", qty) => {
-    const result = addFromStorefront(productId, intent, qty, lang);
+  const handleAdd = useCallback((productId, intent = "quote", qty, options) => {
+    const result = addFromStorefront(productId, intent, qty, lang, options || {});
     if (!result?.ok || intent === "quote-now" || intent === "buy-now") return;
     setToast({
       message: t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq"),

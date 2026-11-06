@@ -92,6 +92,7 @@ export default function DetailsPage() {
   usePromo();
   const [qty, setQty] = useState(1);
   const [pickedSpecs, setPickedSpecs] = useState(null);
+  const [sizeChoice, setSizeChoice] = useState("");
   const pickedFields = pickedSpecFields(product?.specGroups, pickedSpecs || {}, product?.specChoices);
   const orderMoq = Math.max(1, Number(pickedFields.moq != null && pickedFields.moq !== "" ? pickedFields.moq : product?.moq) || 1);
   useEffect(() => {
@@ -112,6 +113,7 @@ export default function DetailsPage() {
   // product.images/image references and must not wipe the buyer's selections.
   useEffect(() => {
     setPickedSpecs(null);
+    setSizeChoice("");
     setQty(product?.moq || 1);
     const next = productImageList(product);
     setActiveImage(next[0] || product?.image || "");
@@ -221,7 +223,10 @@ export default function DetailsPage() {
         return;
       }
       const sendQty = Math.max(minQty, Math.floor(Number(nextQty)) || minQty);
-      const result = addFromStorefront(product.id, intent, sendQty, lang);
+      const result = addFromStorefront(product.id, intent, sendQty, lang, {
+        pickedSpecs: pickedSpecs || undefined,
+        pickedSize: sizeChoice || undefined,
+      });
       if (result?.ok && intent !== "quote-now" && intent !== "buy-now") {
         setToast({
           message: t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq"),
@@ -381,7 +386,7 @@ export default function DetailsPage() {
                   })()}
                 </div>
                 {sizeChoices.length >= 2 ? (
-                  <SizeChoicePicker choices={sizeChoices} onCustomize={openTailor} title={lang === "zh" ? "尺寸" : "Size"} />
+                  <SizeChoicePicker choices={sizeChoices} onCustomize={openTailor} onPick={setSizeChoice} title={lang === "zh" ? "尺寸" : "Size"} />
                 ) : null}
               </div>
             ) : null}
@@ -430,6 +435,8 @@ export default function DetailsPage() {
                   autoOpenTailor={autoOpenTailor}
                   tailorNonce={tailorNonce}
                   tailorDimensions={tailorDimensions}
+                  pickedSpecs={pickedSpecs}
+                  pickedSize={sizeChoice}
                 />
               )}
             </div>
@@ -541,6 +548,8 @@ export default function DetailsPage() {
               size="bar"
               tailorNonce={tailorNonce}
               tailorDimensions={tailorDimensions}
+              pickedSpecs={pickedSpecs}
+              pickedSize={sizeChoice}
             />
           </div>
         )}

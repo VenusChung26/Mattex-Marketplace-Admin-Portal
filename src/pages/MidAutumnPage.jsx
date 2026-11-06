@@ -30,8 +30,8 @@ export default function MidAutumnPage() {
       .filter(Boolean);
   }, [active, catalogEpoch]);
 
-  const handleAdd = useCallback((productId, intent = "quote", qty) => {
-    addFromStorefront(productId, intent, qty, lang);
+  const handleAdd = useCallback((productId, intent = "quote", qty, options) => {
+    addFromStorefront(productId, intent, qty, lang, options || {});
   }, [lang]);
 
   function select(id) {
