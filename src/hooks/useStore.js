@@ -1,3 +1,4 @@
+import { selectionKey } from "../lib/productSelection.js";
 import { useSyncExternalStore } from "react";
 import { subscribeStore, getStoreSnapshot } from "../lib/store";
 
@@ -8,10 +9,10 @@ export function useStore() {
 const emptyCartLine = { qty: 0, intent: "" };
 const cartLineCache = new Map();
 
-function cartLineSnapshot(productId) {
-  const id = String(productId || "");
+function cartLineSnapshot(reference) {
+  const id = String(reference || "");
   const draft = getStoreSnapshot().draft;
-  const line = (draft?.lines || []).find((row) => String(row.productId) === id && !row.custom) || null;
+  const line = (draft?.lines || []).find((row) => selectionKey(row) === id && !row.custom) || null;
   const qty = line?.qty || 0;
   const intent = line?.intent || "";
   const prev = cartLineCache.get(id);
@@ -21,7 +22,7 @@ function cartLineSnapshot(productId) {
   return next;
 }
 
-export function useCartLine(productId) {
-  const id = String(productId || "");
+export function useCartLine(productId, options = {}) {
+  const id = selectionKey({ productId, ...options });
   return useSyncExternalStore(subscribeStore, () => cartLineSnapshot(id), () => cartLineSnapshot(id));
 }

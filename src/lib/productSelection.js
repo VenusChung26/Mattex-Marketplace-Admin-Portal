@@ -1,5 +1,5 @@
 import { splitSizeChoices } from "./catalogGroup.js";
-import { pickedSpecFields } from "./productFields.js";
+import { pickedSpecFields, findPickedSpecOption } from "./productFields.js";
 
 export function normalizePickedSpecs(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -38,7 +38,7 @@ export function findSelectionLine(lines, reference) {
 
 export function selectedProduct(product, line) {
   if (!product) return null;
-  const facts = pickedSpecFields(product.specGroups, line?.pickedSpecs || {}, product.specChoices);
+  const facts = pickedSpecFields(preparedSpecGroups(product.specGroups), line?.pickedSpecs || {}, product.specChoices);
   return { ...product, ...(Object.hasOwn(facts, "unit_price") ? { unit_price: facts.unit_price } : {}), ...Object.fromEntries(Object.entries({
     productNo: facts.sku, description: facts.summary || facts.detail, moq: facts.moq,
     unit: facts.unit, leadTime: facts.leadTime, leadTimeLabel: facts.leadTimeLabel, specs: facts.specs,
@@ -53,7 +53,7 @@ export function snapshotSelection(product, line) {
     "image", "imageUrl", "imageFallback", "standard", "certifications", "tailorMade"];
   const facts = Object.fromEntries(fields.filter((key) => chosen[key] !== undefined).map((key) => [key, chosen[key]]));
   facts.specGroups = (product.specGroups || []).map((group) => ({ ...group,
-    options: (group.options || []).filter((option) => selectionOptionKey(option) === line?.pickedSpecs?.[group.id] || selectionOptionLabel(option) === line?.pickedSpecs?.[group.id]),
+    options: (group.options || []).filter((option) => option === findPickedSpecOption(group, line?.pickedSpecs || {})),
   }));
   return { product: structuredClone(facts), pickedSpecs: normalizePickedSpecs(line?.pickedSpecs), pickedSize: normalizePickedSize(line?.pickedSize) };
 }
@@ -61,7 +61,7 @@ export function snapshotSelection(product, line) {
 export function selectionDescription(product, line) {
   const rows = (product.specGroups || []).map((group) => {
     const pick = line?.pickedSpecs?.[group.id];
-    const option = (group.options || []).find((o) => selectionOptionKey(o) === pick || selectionOptionLabel(o) === pick);
+    const option = findPickedSpecOption(group, line?.pickedSpecs || {});
     return pick ? `${group.label || group.labelEn || group.id}: ${selectionOptionLabel(option) || pick}` : "";
   }).filter(Boolean);
   if (line?.pickedSize) rows.push(`尺寸: ${line.pickedSize}`);
@@ -163,10 +163,7 @@ export function resolveSelection(product, line) {
       if (value && !(Number(value) > 0 && Number.isFinite(Number(value)))) invalid.push(group.id);
       continue;
     }
-    const parent = group.dependsOn ? picks[group.dependsOn] : "";
-    const option = (group.options || []).find((option) =>
-      (selectionOptionKey(option) === value || selectionOptionLabel(option) === value) &&
-      (!option?.parent || option.parent === parent));
+    const option = findPickedSpecOption(group, picks);
     if (!option || isCustomSelection(selectionOptionLabel(option))) invalid.push(group.id);
   }
   const size = normalizePickedSize(line?.pickedSize);

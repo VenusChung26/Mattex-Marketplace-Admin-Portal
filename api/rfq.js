@@ -1,4 +1,4 @@
-import { lineReference } from "../src/lib/productSelection.js";
+import { lineReference, findSelectionLine } from "../src/lib/productSelection.js";
 import { verifySelections, selectionFailure } from "../server/verify-selections.js";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -11,7 +11,7 @@ import { getDb } from "../server/db.js";
 import { createStore } from "../server/rfq-core.js";
 import { fileAdapter } from "../server/rfq-file-adapter.js";
 import { createSupabaseStore } from "../server/rfq-supabase.js";
-import { CANCEL_REVERSE_BUYER, CANCEL_REVERSE_STAFF, applyDecision, planAssign, planCancelReverse, planDecision, planQuoteSubmit, planWhatsappFreeze, planWhatsappSent, publicQuoteView, ownedView, planBuyerContent, planPoFromQuote, pushRfqActivity, inboxStatus } from "../src/lib/rfqRules.js";
+import { snapshotRfqRequest, rfqRequestVersionList, CANCEL_REVERSE_BUYER, CANCEL_REVERSE_STAFF, applyDecision, planAssign, planCancelReverse, planDecision, planQuoteSubmit, planWhatsappFreeze, planWhatsappSent, publicQuoteView, ownedView, planBuyerContent, planPoFromQuote, pushRfqActivity, inboxStatus } from "../src/lib/rfqRules.js";
 import { priceOrderLines } from "../server/pricing.js";
 import { deliver, mailEventFor, mergeMailLog } from "../server/rfq-mail.js";
 import { clientKey } from "../server/upload-limit.js";
@@ -956,6 +956,11 @@ async function buyerContentAction(body, request, tries = 3) {
   const content = body?.content && typeof body.content === "object" ? body.content : {};
   let lines = content.lines === undefined ? current.lines : cleanLines(content.lines);
   if (!lines) return { status: 400, body: { ok: false, error: "lines" } };
+  if (Array.isArray(content.lines)) lines = lines.map((line, index) => {
+    const original = content.lines[index];
+    const saved = findSelectionLine(current.lines, lineReference(original));
+    return { ...saved, ...original, ...line, selectionSnapshot: saved?.selectionSnapshot };
+  });
   const payloadChange = {};
   for (const key of CONTENT_TEXT) if (content[key] !== undefined) payloadChange[key] = text(content[key], 2000);
   if (body?.resubmit) {
@@ -964,8 +969,16 @@ async function buyerContentAction(body, request, tries = 3) {
     lines = checked.lines.map((line, index) => ({ ...(content.lines || current.lines)[index], ...line }));
   }
   if (Array.isArray(content.lines) || body?.resubmit) payloadChange.lines = lines;
-  for (const key of ["projects", "requestVersions", "deliveryLots"]) if (Array.isArray(content[key])) payloadChange[key] = content[key];
-  if (Number.isFinite(Number(content.requestEffectiveVersion))) payloadChange.requestEffectiveVersion = Number(content.requestEffectiveVersion);
+  for (const key of ["projects", "deliveryLots"]) if (Array.isArray(content[key])) payloadChange[key] = content[key];
+  const requestVersions = rfqRequestVersionList(merged);
+  payloadChange.requestVersions = requestVersions;
+  if (body?.resubmit && inboxStatus(merged) === "revising") {
+    const version = requestVersions.reduce((max, row) => Math.max(max, Number(row.version) || 0), 0) + 1;
+    const snapshot = snapshotRfqRequest({ ...merged, ...payloadChange, lines }, { version, createdAt: plan.patch.fields.resubmittedAt });
+    payloadChange.requestVersions = [...requestVersions, snapshot];
+    payloadChange.requestEffectiveVersion = version;
+    Object.assign(plan.patch.fields, { requestVersions: payloadChange.requestVersions, requestEffectiveVersion: version });
+  }
   if (JSON.stringify(payloadChange).length > MAX_SNAPSHOT_BYTES) return { status: 413, body: { ok: false, error: "too_large" } };
 
   const result = await rfqStore().update(

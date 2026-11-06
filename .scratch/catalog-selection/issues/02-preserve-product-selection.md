@@ -18,3 +18,5 @@
 ## Comments
 
 - 2026-11-07：`server/product-selection.test.mjs` 以真實 store 驗證刷新及訪客登入後仍保留兩個規格與各自數量；共用選擇資料、快照及行識別。
+
+- Review 修正：新行使用獨立 UUID；重選後再加入原規格、複製舊需求及規格匯入，不會撞行或覆寫其他選擇。

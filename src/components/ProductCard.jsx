@@ -1,3 +1,4 @@
+import { findPickedSpecOption } from "../lib/productFields.js";
 import { preparedSpecGroups, initialSpecPicks, resolveSelection, selectedProduct, selectionMessage } from "../lib/productSelection.js";
 import { memo, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -411,7 +412,7 @@ function tailorInitialFromProduct(product, qty, { pickedSize = "", pickedSpecs =
 export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, onQtyChange, hideQty = false, autoOpenTailor = false, tailorNonce = 0, tailorDimensions = false, disabled = false, pickedSpecs = null, pickedSize = "" }) {
   const { t, lang } = useLanguage();
   usePromo();
-  const line = useCartLine(product.id);
+  const line = useCartLine(product.id, { pickedSpecs, pickedSize });
   const chosen = selectedProduct(product, { pickedSpecs, pickedSize });
   const minQty = Math.max(1, Number(chosen.moq) || 1);
   const [innerQty, setInnerQty] = useState(minQty);
@@ -1040,17 +1041,7 @@ function optionMatchesParent(option, parent) {
 
 /** Resolve the concrete option row for the current parent pick (needed when labels repeat). */
 function resolveGroupOption(group, labelOrKey, picked) {
-  const options = group?.options || [];
-  const parent = group?.dependsOn ? picked?.[group.dependsOn] : "";
-  const want = String(labelOrKey || "").trim();
-  if (!want) return null;
-  const matches = options.filter((option) => {
-    const label = specOptionLabel(option);
-    const key = specOptionKey(option);
-    return label === want || key === want;
-  });
-  if (!matches.length) return null;
-  return matches.find((option) => optionMatchesParent(option, parent)) || null;
+  return findPickedSpecOption(group, { ...picked, [group.id]: labelOrKey });
 }
 
 function isGroupOptionEnabled(group, option, picked) {
@@ -1129,6 +1120,12 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
     }`;
   return (
     <div data-tour="specs" className={`space-y-4 ${className}`}>
+      {obsolete.length ? <div className="text-sm text-amber-800">
+        <p>{lang === "en" ? "Some previous options have been removed. Confirm the current specifications." : "部分原有規格已移除，請確認目前規格；其他選擇會保留。"}</p>
+        <button type="button" className="mt-1 underline" onClick={() => setPicked(Object.fromEntries(Object.entries(picked).filter(([id]) => !obsolete.includes(id))))}>
+          {lang === "en" ? "Confirm current specifications" : "確認目前規格"}
+        </button>
+      </div> : null}
       {visible.map((group, index) => {
         const options = group.field === "length" ? [] : displayGroupOptions(group);
         const named = groupHeading(group, index, total, lang, t("variantOption"));
@@ -1388,9 +1385,9 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
             {selected.supplier ? ` · ${t("by")} ${supplierDisplayName(selected.supplier)}` : ""}
           </p>
           <div className="mt-1 sm:hidden">
-            <ProductPrice product={selected} className="!mt-0" />
+            <ProductPrice product={selectedProduct(selected, { pickedSpecs, pickedSize })} className="!mt-0" />
           </div>
-          {selected.specGroups?.length ? (
+          {selected.specGroups?.length || Object.keys(pickedSpecs || {}).length ? (
             <SpecGroupPicker key={selected.id} groups={selected.specGroups} className="mt-3" compact moreHref={withLocale(lang, `/details/${selected.id}`)} onImage={setSpecImage} onPick={setPickedSpecs} onCustomize={openTailor} extraSections={sections.extra} />
           ) : null}
           <ModelAndSizeSpecs
@@ -1409,7 +1406,7 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
         </div>
       </div>
       <div className="hidden shrink-0 self-start sm:block sm:w-32">
-        <ProductPrice product={selected} className="!mt-0" />
+        <ProductPrice product={selectedProduct(selected, { pickedSpecs, pickedSize })} className="!mt-0" />
       </div>
       <div className="min-w-0 self-start sm:w-60 sm:shrink-0">
         <ProductActions product={selected} onAdd={onAdd} size="row" tailorNonce={tailorNonce}
@@ -1475,7 +1472,7 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
           )}
         </p>
         <ProductRating product={selected} className="mt-1" />
-        {selected.specGroups?.length ? (
+        {selected.specGroups?.length || Object.keys(pickedSpecs || {}).length ? (
           <SpecGroupPicker key={selected.id} groups={selected.specGroups} className="mt-3" compact moreHref={withLocale(lang, `/details/${selected.id}`)} onImage={setSpecImage} onPick={setPickedSpecs} onCustomize={openTailor} extraSections={sections.extra} />
         ) : null}
         <ModelAndSizeSpecs
@@ -1492,7 +1489,7 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
         />
         <ProductMetaChips product={selected} className="mt-2.5" />
         <div className="mt-auto pt-3 min-[752px]:pt-4">
-          <ProductPrice product={selected} className="!mt-0" showOfferEnded={showOfferEnded} />
+          <ProductPrice product={selectedProduct(selected, { pickedSpecs, pickedSize })} className="!mt-0" showOfferEnded={showOfferEnded} />
           <div className="mt-2.5 min-[752px]:mt-3">
             <ProductActions product={selected} onAdd={onAdd} size="card" tailorNonce={tailorNonce}
             tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} />

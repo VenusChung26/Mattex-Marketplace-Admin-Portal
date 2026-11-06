@@ -337,7 +337,7 @@ export default function DetailsPage() {
                 </Link>
               </p>
             ) : null}
-            {product.specGroups?.length ? (
+            {product.specGroups?.length || Object.keys(pickedSpecs || {}).length ? (
               <SpecGroupPicker
                     value={pickedSpecs}
                 key={product.id}
@@ -396,6 +396,21 @@ export default function DetailsPage() {
                 ) : null}
               </div>
             ) : null}
+            {editingLine ? (
+              <div className="mb-3 space-y-2 rounded border border-amber-200 bg-amber-50 p-3 text-sm">
+                <p>{lang === "en" ? "Review this draft line and apply your selection." : "請重新選擇此行規格，再套用至草稿。"}</p>
+                {!selectionStatus.ok ? <p role="alert">{selectionMessage(selectionStatus.error, lang, orderMoq)}</p> : null}
+                {selectionStatus.invalidGroups?.includes("size") && !sizeChoices.length ? (
+                  <button type="button" className="underline" onClick={() => setSizeChoice("")}>
+                    {lang === "en" ? "Confirm current standard size" : "確認目前標準尺寸"}
+                  </button>
+                ) : null}
+                <button type="button" className="btn-primary disabled:opacity-40" disabled={!selectionStatus.ok} onClick={() => {
+                  const result = replaceDraftSelection(editRef, product.id, { qty, pickedSpecs, pickedSize: sizeChoice });
+                  if (result.ok) navigate(withLocale(lang, "/rfq"));
+                }}>{lang === "en" ? "Apply to draft" : "套用至草稿"}</button>
+              </div>
+            ) : null}
             {discontinued ? null : (
               <div className="mt-4 hidden lg:block">
                 <QtyStepper
@@ -431,15 +446,6 @@ export default function DetailsPage() {
                 </span>
               ) : (
                 <>
-                {editingLine ? <div className="mb-3 space-y-2 rounded border border-amber-200 bg-amber-50 p-3 text-sm">
-                  <p>{lang === "en" ? "Review this draft line and apply your selection." : "請重新選擇此行規格，再套用至草稿。"}</p>
-                  {!selectionStatus.ok ? <p role="alert">{selectionMessage(selectionStatus.error, lang, orderMoq)}</p> : null}
-                  {selectionStatus.invalidGroups?.includes("size") && !sizeChoices.length ? <button type="button" className="underline" onClick={() => setSizeChoice("")}>{lang === "en" ? "Confirm current standard size" : "確認目前標準尺寸"}</button> : null}
-                  <button type="button" className="btn-primary disabled:opacity-40" disabled={!selectionStatus.ok} onClick={() => {
-                    const result = replaceDraftSelection(editRef, product.id, { qty, pickedSpecs, pickedSize: sizeChoice });
-                    if (result.ok) navigate(withLocale(lang, "/rfq"));
-                  }}>{lang === "en" ? "Apply to draft" : "套用至草稿"}</button>
-                </div> : null}
                 <ProductActions
                   product={product}
                   qty={qty}

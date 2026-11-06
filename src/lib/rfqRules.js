@@ -716,6 +716,7 @@ export const SERVER_OWNED_FIELDS = [
   "cancelStatus", "cancelKind", "cancelRequestedAt", "cancelledAt", "cancelledBy", "cancelDeclinedAt",
   "reverseStatus", "reverseRequestedAt", "reverseDeclinedAt",
   "buyerEmail", "buyerName", "buyerKind", "buyerPhone", "assignedFromGuest", "assignedAt",
+  "requestVersions", "requestEffectiveVersion",
   "quoteVersions", "quoteEffectiveVersion", "quotedSubtotal", "quotedAt", "quoteNote",
   "quoteDelivery", "quoteDeliveredAt", "quotePublicToken", "quotePublicTokens", "buyerPo",
 ];
@@ -845,4 +846,37 @@ export function planPoFromQuote(rfq) {
   });
   const total = Math.round(lines.reduce((sum, line) => sum + line.lineTotal, 0) * 100) / 100;
   return { ok: true, lines, total, quoteVersion: Number(effective.version) || 1 };
+}
+
+export function normalizeProfileProjects(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((row) => String(row || "").trim()).filter(Boolean))];
+  }
+  const one = String(value || "").trim();
+  return one ? [one] : [];
+}
+
+export function snapshotRfqRequest(rfq, { version = 1, createdAt } = {}) {
+  return {
+    version,
+    createdAt: createdAt || rfq?.submittedAt || rfq?.createdAt || new Date().toISOString(),
+    note: rfq?.note || "",
+    address: rfq?.address || "",
+    responseDate: rfq?.responseDate || "",
+    quotationDeadline: rfq?.quotationDeadline || rfq?.responseDate || "",
+    deliveryDate: rfq?.deliveryDate || "",
+    deliveryMode: rfq?.deliveryMode || "one_time",
+    deliveryLots: Array.isArray(rfq?.deliveryLots) ? rfq.deliveryLots.map((lot) => ({ ...lot })) : [],
+    project: rfq?.project || "",
+    projects: normalizeProfileProjects(rfq?.projects || rfq?.project),
+    canonicalCategory: rfq?.canonicalCategory || "",
+    acceptSubstitutes: Boolean(rfq?.acceptSubstitutes),
+    lines: structuredClone(rfq?.lines || []),
+  };
+}
+
+export function rfqRequestVersionList(rfq) {
+  if (Array.isArray(rfq?.requestVersions) && rfq.requestVersions.length) return rfq.requestVersions;
+  if (!rfq?.id) return [];
+  return [snapshotRfqRequest(rfq, { version: 1, createdAt: rfq.submittedAt })];
 }

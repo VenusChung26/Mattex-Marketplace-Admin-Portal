@@ -17,3 +17,5 @@
 ## Comments
 
 - 2026-11-07：`server/selection-submit.test.mjs` 透過實際 RFQ handler 驗證兩行選擇及各自數量、SKU、提交快照；買家及銷售行操作按 lineId。
+
+- Review 修正：買家修改保留標準選擇快照與訂製描述；修訂重新提交保存原 v1 與驗證後 v2。

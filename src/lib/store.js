@@ -7,7 +7,7 @@ import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedSto
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
 import { SHOW_TMS_LINK } from "./flags.js";
 import { activeOfferPrice } from "./offer.js";
-import { activityDedupeKey, applyDecision, applyDeliveredQuoteVersion, buildDeliveredQuoteVersion, freezeQuoteLines, nextQuoteVersionNo, planLoadQuoteVersion, planQuoteSubmit, quoteDraftIsDirty, quoteEffectiveVersionNo, quoteVersionLines, quoteVersionList, snapshotLineImage, canBuyerRequestCancel, canBuyerReverse, getQuoteVersion, inboxStatus, planAssign, planCancelReverse, planDecision, mergeOwned, draftPricesOf, deliveredLinePrices, salesLine, planPoFromQuote, rfqBuyerKind, pushRfqActivity, rfqNeedsSalesReverse } from "./rfqRules.js";
+import { normalizeProfileProjects, snapshotRfqRequest, rfqRequestVersionList, activityDedupeKey, applyDecision, applyDeliveredQuoteVersion, buildDeliveredQuoteVersion, freezeQuoteLines, nextQuoteVersionNo, planLoadQuoteVersion, planQuoteSubmit, quoteDraftIsDirty, quoteEffectiveVersionNo, quoteVersionLines, quoteVersionList, snapshotLineImage, canBuyerRequestCancel, canBuyerReverse, getQuoteVersion, inboxStatus, planAssign, planCancelReverse, planDecision, mergeOwned, draftPricesOf, deliveredLinePrices, salesLine, planPoFromQuote, rfqBuyerKind, pushRfqActivity, rfqNeedsSalesReverse } from "./rfqRules.js";
 import { adoptGuestSpecMatch } from "./specMatchSession.js";
 import { foldHan } from "./han.js";
 import { buyerSpecSourceLines, displaySku, isLeadSpec, isTailorMade, localizeLeadTime, orderMinimum, productImageUrl, sellingAmount, specParts } from "./productFields.js";
@@ -1996,13 +1996,6 @@ function isLoggedIn() {
   return Boolean(data && data.email);
 }
 
-function normalizeProfileProjects(value) {
-  if (Array.isArray(value)) {
-    return [...new Set(value.map((row) => String(row || "").trim()).filter(Boolean))];
-  }
-  const one = String(value || "").trim();
-  return one ? [one] : [];
-}
 
 function normalizeProfileProject(value) {
   return normalizeProfileProjects(value)[0] || "";
@@ -2402,7 +2395,7 @@ function addToCart(productId, { intent, qty, silentInvite = false, pickedSpecs =
   } else {
     draft.lines.push({
       productId,
-      lineId: selectionKey(choice),
+      lineId: `line_${crypto.randomUUID()}`,
       selectionSnapshot: snapshotSelection(product, choice),
       qty: addQty,
       intent: nextIntent,
@@ -2517,10 +2510,10 @@ function addSpecMatchLines({ lines, specFile } = {}) {
       });
       continue;
     }
-    const addQty = Math.max(Math.max(1, Number(product.moq) || 1), qty);
-    const existing = draft.lines.find((row) => row.productId === product.id && !row.custom);
+    const addQty = qty;
+    const existing = draft.lines.find((row) => !row.custom && selectionKey(row) === selectionKey({ productId: product.id }));
     if (existing) existing.qty = (existing.qty || 0) + addQty;
-    else draft.lines.push({ productId: product.id, qty: addQty, intent: "quote" });
+    else draft.lines.push({ productId: product.id, lineId: `line_${crypto.randomUUID()}`, qty: addQty, intent: "quote" });
   }
   if (specFile?.url) draft.specFile = { name: String(specFile.name || "spec").slice(0, 180), url: String(specFile.url) };
   setDraft(draft);
@@ -2543,7 +2536,8 @@ function commitSpecMatch({ rows, mode, specFile } = {}) {
   const bindings = [];
   for (const row of decided) {
     const previous = String(row.boundId || "");
-    if (previous) draft.lines = draft.lines.filter((line) => String(line.productId) !== previous);
+    const previousLine = previous ? findSelectionLine(draft.lines, previous) : null;
+    if (previousLine) draft.lines = draft.lines.filter((line) => line !== previousLine);
     const qty = Math.max(1, Math.floor(Number(row.qty)) || 1);
     if (row.choice === "mm" || row.choice === "catalog") {
       const product = getProduct(row.shownId || row.productId);
@@ -2551,11 +2545,10 @@ function commitSpecMatch({ rows, mode, specFile } = {}) {
         bindings.push({ key: row.key, boundId: "" });
         continue;
       }
-      const moq = Math.max(1, Number(product.moq) || 1);
-      const nextQty = Math.max(moq, qty);
+      const nextQty = qty;
       const priced = getEffectivePrice(product).displayPrice != null;
       const intent = mode === "quote" ? "quote" : priced ? "buy" : "quote";
-      const existing = draft.lines.find((line) => String(line.productId) === String(product.id) && !line.custom);
+      const existing = draft.lines.find((line) => !line.custom && selectionKey(line) === selectionKey({ productId: product.id }));
       const attachments = normalizeAttachments(row.attachments);
       if (existing) {
         existing.qty = nextQty;
@@ -2569,9 +2562,9 @@ function commitSpecMatch({ rows, mode, specFile } = {}) {
           });
         }
       } else {
-        draft.lines.push({ productId: product.id, qty: nextQty, intent, attachments });
+        draft.lines.push({ productId: product.id, lineId: `line_${crypto.randomUUID()}`, qty: nextQty, intent, attachments });
       }
-      bindings.push({ key: row.key, boundId: product.id });
+      bindings.push({ key: row.key, boundId: lineReference(existing || draft.lines[draft.lines.length - 1]) });
       continue;
     }
     const customId = previous.startsWith("custom_") ? previous : newCustomProductId();
@@ -6761,34 +6754,7 @@ function freezeGuestQuotePayload(rfq) {
   };
 }
 
-function snapshotRfqRequest(rfq, { version = 1, createdAt } = {}) {
-  return {
-    version,
-    createdAt: createdAt || rfq?.submittedAt || new Date().toISOString(),
-    note: rfq?.note || "",
-    address: rfq?.address || "",
-    responseDate: rfq?.responseDate || "",
-    quotationDeadline: rfq?.quotationDeadline || rfq?.responseDate || "",
-    deliveryDate: rfq?.deliveryDate || "",
-    deliveryMode: rfq?.deliveryMode || "one_time",
-    deliveryLots: Array.isArray(rfq?.deliveryLots) ? rfq.deliveryLots.map((lot) => ({ ...lot })) : [],
-    project: rfq?.project || "",
-    projects: normalizeProfileProjects(rfq?.projects || rfq?.project),
-    canonicalCategory: rfq?.canonicalCategory || "",
-    acceptSubstitutes: Boolean(rfq?.acceptSubstitutes),
-    lines: (rfq?.lines || []).map((line) => ({ ...line })),
-  };
-}
 
-function rfqRequestVersionList(rfq) {
-  if (Array.isArray(rfq?.requestVersions) && rfq.requestVersions.length) return rfq.requestVersions;
-  if (!rfq?.id) return [];
-  return [snapshotRfqRequest(rfq, { version: 1, createdAt: rfq.submittedAt })];
-}
-
-function nextRfqRequestVersionNo(rfq) {
-  return rfqRequestVersionList(rfq).reduce((max, row) => Math.max(max, Number(row?.version) || 0), 0) + 1;
-}
 
 function rfqRequestEffectiveVersionNo(rfq) {
   const listed = rfqRequestVersionList(rfq);
@@ -7343,7 +7309,7 @@ function copyRfqToDraft(rfq) {
     const id = selectionKey(line);
     if (!id || existing.has(id)) return;
     existing.add(id);
-    draft.lines.push({ ...line });
+    draft.lines.push({ ...line, lineId: `line_${crypto.randomUUID()}` });
   });
   draft.note = rfq.note || draft.note;
   draft.responseDate = rfq.responseDate || rfq.quotationDeadline || draft.responseDate;

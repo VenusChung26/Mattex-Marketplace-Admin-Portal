@@ -760,10 +760,10 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
     custom: filterCustom,
     listed: filterListed,
   };
-  const [focusProductId, setFocusProductId] = useState((requestLines[0] ? lineReference(requestLines[0]) : null) || null);
-  const focusLine = requestLines.find((l) => lineReference(l) === focusProductId) || requestLines[0];
+  const [focusLineRef, setFocusLineRef] = useState((requestLines[0] ? lineReference(requestLines[0]) : null) || null);
+  const focusLine = requestLines.find((l) => lineReference(l) === focusLineRef) || requestLines[0];
   const [picks, setPicks] = useState(() => acceptance?.picks || {});
-  const [detailProductId, setDetailProductId] = useState((requestLines[0] ? lineReference(requestLines[0]) : null) || null);
+  const [detailLineRef, setDetailLineRef] = useState((requestLines[0] ? lineReference(requestLines[0]) : null) || null);
 
   const categories = useMemo(
     () => [...new Set(requestLines.map((l) => l.category).filter(Boolean))].sort(),
@@ -817,10 +817,10 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
 
   useEffect(() => {
     if (!visibleLines.length) return;
-    if (!visibleLines.some((l) => lineReference(l) === focusProductId)) {
-      setFocusProductId(visibleLines[0].productId);
+    if (!visibleLines.some((l) => lineReference(l) === focusLineRef)) {
+      setFocusLineRef(lineReference(visibleLines[0]));
     }
-  }, [visibleLines, focusProductId]);
+  }, [visibleLines, focusLineRef]);
 
   useEffect(() => {
     if (acceptance?.picks) setPicks(acceptance.picks);
@@ -873,7 +873,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
   function pickLine(productId, quoteId) {
     if (locked) return;
     setPicks((prev) => ({ ...prev, [productId]: quoteId }));
-    setDetailProductId(productId);
+    setDetailLineRef(productId);
     const quote = quotes.find((q) => q.id === quoteId);
     const line = quote?.lines.find((l) => String(lineReference(l)) === String(productId));
     clearSetPartsForProduct(productId, line?.isSet ? quoteId : null);
@@ -1216,7 +1216,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                 <button
                   key={lineReference(req)}
                   type="button"
-                  onClick={() => setFocusProductId(lineReference(req))}
+                  onClick={() => setFocusLineRef(lineReference(req))}
                   className={`shrink-0 max-w-[14rem] text-left border rounded-xl px-3 py-2.5 ${
                     active ? "border-brand-600 bg-brand-50" : "border-line bg-white hover:border-brand-600/40"
                   }`}
@@ -1443,11 +1443,11 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                         setPartPicks
                       )
                     : null;
-                  const showDetail = detailProductId === lineReference(req) && pickedOffer && !pickedOffer.isSet;
+                  const showDetail = detailLineRef === lineReference(req) && pickedOffer && !pickedOffer.isSet;
 
                   return (
                     <Fragment key={lineReference(req)}>
-                      <tr onClick={() => setDetailProductId(lineReference(req))}>
+                      <tr onClick={() => setDetailLineRef(lineReference(req))}>
                         <th
                           scope="row"
                           className="sticky left-0 z-10 w-44 min-w-44 max-w-44 text-left font-medium px-3 py-3 border-b border-r border-line align-top cursor-pointer bg-white overflow-hidden"

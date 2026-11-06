@@ -99,3 +99,38 @@ test("重選成已有規格時只合併相同選擇，保留買家確認的總�
   assert.equal(store.getDraft().lines[0].qty,5);
   assert.equal(store.getDraft().lines[0].lineId,ref);
 });
+
+test("重選後再加入原規格，兩行仍可獨立修改", async () => {
+  localStorage.clear();
+  await store.seedCatalogSnapshot({products:[product]});
+  store.addToCart(product.id,{silentInvite:true,qty:2,pickedSpecs:{thickness:"80mm"}});
+  const ref=store.getDraft().lines[0].lineId;
+  store.replaceDraftSelection(ref,product.id,{qty:2,pickedSpecs:{thickness:"100mm"}});
+  store.addToCart(product.id,{silentInvite:true,qty:3,pickedSpecs:{thickness:"80mm"}});
+  const lines=store.getDraft().lines;
+  assert.notEqual(lines[0].lineId,lines[1].lineId);
+  store.setLineQty(lines[1].lineId,4);
+  assert.deepEqual(store.getDraft().lines.map(l=>l.qty),[2,4]);
+});
+
+test("由已提交需求複製回草稿時不重用已改選行的識別", async () => {
+  localStorage.clear();
+  await store.seedCatalogSnapshot({products:[product]});
+  store.addToCart(product.id,{silentInvite:true,qty:2,pickedSpecs:{thickness:"80mm"}});
+  const original=structuredClone(store.getDraft().lines[0]);
+  store.replaceDraftSelection(original.lineId,product.id,{qty:2,pickedSpecs:{thickness:"100mm"}});
+  store.copyRfqToDraft({lines:[original]});
+  assert.equal(store.getDraft().lines.length,2);
+  assert.notEqual(store.getDraft().lines[0].lineId,store.getDraft().lines[1].lineId);
+});
+
+test("匯入待確認規格不覆寫另一已選規格，重新匯入亦只改自己的行", async () => {
+  localStorage.clear();
+  await store.seedCatalogSnapshot({products:[product]});
+  store.addToCart(product.id,{silentInvite:true,qty:2,pickedSpecs:{thickness:"80mm"}});
+  const imported=store.commitSpecMatch({mode:"quote",rows:[{key:"row-1",choice:"catalog",productId:product.id,qty:1}]});
+  assert.equal(imported.ok,true);
+  assert.deepEqual(store.getDraft().lines.map(l=>l.qty),[2,1]);
+  store.commitSpecMatch({mode:"quote",rows:[{key:"row-1",choice:"catalog",productId:product.id,boundId:imported.bindings[0].boundId,qty:3}]});
+  assert.deepEqual(store.getDraft().lines.map(l=>l.qty),[2,3]);
+});

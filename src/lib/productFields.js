@@ -136,7 +136,7 @@ function optionFacts(option) {
   const summary = String(option.summary || "").trim();
   const sku = String(option.sku || "").trim();
   const specs = Array.isArray(option.specs) ? option.specs : null;
-  if (!detail && !summary && !sku && !specs && option.moq == null && option.unit_price == null && !option.unit) return null;
+  if (!detail && !summary && !sku && !specs && option.moq == null && !Object.hasOwn(option, "unit_price") && !option.unit) return null;
   const facts = { detail, summary, sku };
   if (Object.hasOwn(option, "unit_price")) facts.unit_price = finiteNumber(option.unit_price);
   if (option.moq != null && option.moq !== "") facts.moq = option.moq;
@@ -147,17 +147,25 @@ function optionFacts(option) {
   return facts;
 }
 
+/** Resolve repeated labels against the current upstream option, on screen and at submission. */
+export function findPickedSpecOption(group, picked = {}) {
+  const selected = String(picked[group?.id] || "");
+  if (!selected) return null;
+  const parent = group?.dependsOn ? picked[group.dependsOn] : "";
+  return (group.options || []).find((item) => {
+    const key = item && typeof item === "object" ? String(item.key || item.label || "") : String(item || "");
+    const label = item && typeof item === "object" ? String(item.label || "") : String(item || "");
+    return (key === selected || label === selected) && (!item?.parent || item.parent === parent);
+  }) || null;
+}
+
 export function pickedSpecFields(groups, picked = {}, choices = []) {
   const choice = picked && typeof picked === "object" ? picked : {};
   let found = { detail: "", summary: "", sku: "" };
   for (const group of groups || []) {
     const selected = String(choice[group?.id] || "");
     if (!selected) continue;
-    const option = (group.options || []).find((item) => {
-      const key = item && typeof item === "object" ? String(item.key || item.label || "") : String(item || "");
-      const label = item && typeof item === "object" ? String(item.label || "") : String(item || "");
-      return key === selected || label === selected;
-    });
+    const option = findPickedSpecOption(group, choice);
     const facts = optionFacts(option);
     if (facts) found = { ...found, ...facts };
   }
