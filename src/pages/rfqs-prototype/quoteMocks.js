@@ -1,3 +1,4 @@
+import { lineReference } from "../../lib/productSelection.js";
 /**
  * PROTOTYPE — mock multi-supplier quotes for an RFQ.
  * In-memory only; not persisted.
@@ -5,7 +6,7 @@
  * Buyer may request 1 product; a supplier can reply with a SET (2+ SKUs)
  * that maps to that same RFQ line (productId).
  */
-import { getProduct, supplierDisplayName, getQuoteVersion, getEffectiveQuoteVersion } from "../../lib/store";
+import { supplierDisplayName, getQuoteVersion, getEffectiveQuoteVersion } from "../../lib/store";
 
 const SUPPLIER_POOL = [
   { name: "Harbor Precast Co.", leadDays: 5, note: "Ex-works + site unload", paymentTerms: "Net 30" },
@@ -25,7 +26,7 @@ function money(n) {
 }
 
 function catalogMeta(line) {
-  const product = line?.custom ? null : getProduct(line.productId);
+  const product = line?.selectionSnapshot?.product || null;
   return {
     product,
     description: String(product?.description || line?.description || "").trim(),
@@ -100,6 +101,8 @@ export function buildPrototypeQuotes(rfq) {
         const lineTotal = money(parts.reduce((s, p) => s + p.lineTotal, 0));
         lines.push({
           productId: l.productId,
+          lineId: lineReference(l),
+          selectionSnapshot: l.selectionSnapshot,
           requestName: l.name,
           name: `Set: ${l.name} + kit`,
           description: meta.description
@@ -127,6 +130,8 @@ export function buildPrototypeQuotes(rfq) {
 
       lines.push({
         productId: l.productId,
+          lineId: lineReference(l),
+          selectionSnapshot: l.selectionSnapshot,
         requestName: l.name,
         name: offeredName,
         description: meta.description,
@@ -150,6 +155,8 @@ export function buildPrototypeQuotes(rfq) {
       const unitPrice = l.unitPrice == null ? 100 : Number(l.unitPrice);
       lines.push({
         productId: l.productId,
+          lineId: lineReference(l),
+          selectionSnapshot: l.selectionSnapshot,
         requestName: l.name,
         name: l.name,
         description: meta.description,
@@ -201,6 +208,8 @@ export function buildSalesQuote(rfq, versionNo) {
           : null;
       return {
         productId: l.productId,
+          lineId: lineReference(l),
+          selectionSnapshot: l.selectionSnapshot,
         requestName: l.name,
         name: l.name,
         description: meta.description,

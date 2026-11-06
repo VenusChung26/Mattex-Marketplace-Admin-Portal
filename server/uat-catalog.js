@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { getDb } from "./db.js";
 
 const UAT_HOST = "eyvvazelsuinsaweswup.supabase.co";
 const PAGE = 1000;
 
-let client = null;
 let cached = null;
 let cachedAt = 0;
 
@@ -19,11 +18,7 @@ function projectKey() {
 }
 
 function db() {
-  const url = projectUrl();
-  const key = projectKey();
-  if (!url || !key) return null;
-  if (!client) client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-  return client;
+  return getDb({ url: projectUrl(), key: projectKey() });
 }
 
 function categoryName(row) {
@@ -107,10 +102,10 @@ function toProduct(row, category, supplier, images) {
   };
 }
 
-export async function readUatCatalog() {
+export async function readUatCatalog({ fresh = false, strict = false } = {}) {
   const sb = db();
   if (!sb) return null;
-  if (cached && Date.now() - cachedAt < 60000) return cached;
+  if (!fresh && cached && Date.now() - cachedAt < 60000) return cached;
   try {
     const [products, categories, suppliers, files] = await Promise.all([
       eachPage(
@@ -145,7 +140,10 @@ export async function readUatCatalog() {
         )
       )
       .filter((row) => row.id && row.name));
-    if (!mapped.length) return null;
+    if (!mapped.length) {
+      if (strict) throw new Error("catalog_unavailable");
+      return null;
+    }
     const names = [...new Set(mapped.map((row) => row.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     const body = JSON.stringify(mapped.map((row) => [row.id, row.unit_price, row.name]));
     const etag = createHash("sha256").update(body).digest("hex").slice(0, 16);
@@ -158,6 +156,7 @@ export async function readUatCatalog() {
     cachedAt = Date.now();
     return cached;
   } catch (error) {
+    if (strict) throw error;
     console.warn("uat catalog", error?.message || error);
     return null;
   }

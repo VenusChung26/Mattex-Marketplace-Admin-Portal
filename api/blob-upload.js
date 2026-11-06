@@ -113,7 +113,12 @@ export async function handleRfqBlobUpload(body, request) {
 }
 
 export async function POST(request) {
-  const body = await request.json();
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "invalid json" }, { status: 400 });
+  }
   try {
     const json = await handleRfqBlobUpload(body, request);
     return Response.json(json);

@@ -1,3 +1,4 @@
+import { lineReference } from "../../lib/productSelection.js";
 import { AdminSearchBar, FilterTabs } from "./AdminControls";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -3430,6 +3431,7 @@ function rfqProductLabel(line) {
 
 function productForLine(line) {
   if (!line) return null;
+  if (line.selectionSnapshot?.product) return line.selectionSnapshot.product;
   const byId = line.productId ? getProduct(line.productId) : null;
   if (byId) return byId;
   const sku = String(line.productNo || line.baseProductNo || "").trim().toUpperCase();
@@ -3520,7 +3522,7 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
   function savePrice(raw) {
     const current = line.quotedUnitPrice != null ? String(line.quotedUnitPrice) : "";
     if (String(raw ?? "") === current) return;
-    const result = setRfqLineQuotedPrice(rfq.id, line.productId, raw);
+    const result = setRfqLineQuotedPrice(rfq.id, lineReference(line), raw);
     note?.(result, raw === "" || raw == null ? "Price cleared" : "Price saved");
   }
 
@@ -3530,12 +3532,12 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
       setQty(String(next));
       return;
     }
-    note?.(setRfqLineQty(rfq.id, line.productId, next), pt("Qty saved"));
+    note?.(setRfqLineQty(rfq.id, lineReference(line), next), pt("Qty saved"));
   }
 
   function saveRemark() {
     if (String(remark) === String(sales.remark || "")) return;
-    note?.(setRfqLineRemark(rfq.id, line.productId, remark), pt("Remark saved"));
+    note?.(setRfqLineRemark(rfq.id, lineReference(line), remark), pt("Remark saved"));
   }
 
   return (
@@ -3559,8 +3561,8 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
               {sales.remark ? <span className="ml-2 text-mute">{sales.remark}</span> : null}
             </p>
           )}
-          {line.custom && line.description ? (
-            <p className="mt-1 whitespace-pre-wrap text-[11px] text-ink">{line.description}</p>
+          {(line.description || line.spec) ? (
+            <p className="mt-1 whitespace-pre-wrap text-[11px] text-ink">{line.description || line.spec}</p>
           ) : null}
           {line.custom && lineAttachmentList(line).length ? (
             <AttachmentLinks files={lineAttachmentList(line)} className="mt-1 text-[11px] text-brand-800" label={pt("Attachment")} />
@@ -3592,7 +3594,7 @@ function RfqLineRow({ rfq, line, showPricing, compact, note, readOnly = false })
             <button
               type="button"
               className="rounded-lg border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-50"
-              onClick={() => note?.(setRfqLineNoOffer(rfq.id, line.productId, !line.noOffer), line.noOffer ? pt("Offer restored") : pt("Item marked no offer"))}
+              onClick={() => note?.(setRfqLineNoOffer(rfq.id, lineReference(line), !line.noOffer), line.noOffer ? pt("Offer restored") : pt("Item marked no offer"))}
             >
               {line.noOffer ? pt("Undo no offer") : pt("No offer")}
             </button>
@@ -4418,7 +4420,7 @@ function RfqDetail({
           <ul className="mt-3 space-y-2">
             {(previewLines || []).map((line, index) => (
               <RfqLineRow
-                key={`${rfq.id}-${line.productId || index}-${historicalRequest ? viewingRequestNo : viewingDraft ? "draft" : viewMode}`}
+                key={`${rfq.id}-${line.lineId || line.productId || index}-${historicalRequest ? viewingRequestNo : viewingDraft ? "draft" : viewMode}`}
                 rfq={historicalRequest ? requestPreview : rfq}
                 line={line}
                 note={note}
@@ -5038,7 +5040,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", updatedAt = 0, onRefresh,
                       <ul className="space-y-2">
                         {lines.map((l) => (
                           <RfqLineRow
-                            key={`${r.id}-${l.productId}`}
+                            key={`${r.id}-${lineReference(l)}`}
                             rfq={r}
                             line={l}
                             note={note}
@@ -5109,7 +5111,7 @@ function RfqPanel({ rfqs: rawRfqs, note, focusId = "", updatedAt = 0, onRefresh,
                 <ul className="mt-3 space-y-2">
                   {(r.lines || []).map((l) => (
                     <RfqLineRow
-                      key={`${r.id}-${l.productId}`}
+                      key={`${r.id}-${lineReference(l)}`}
                       rfq={r}
                       line={l}
                       note={note}

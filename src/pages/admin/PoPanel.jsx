@@ -127,11 +127,12 @@ function PoDetail({ po, note, busy, pdfBusy, onBack, onConfirm, onPreviewPdf, on
               const product = getProduct(line.productId);
               const image = product?.image || "";
               return (
-                <li key={`${po.id}-${line.productId || index}`} className="flex min-w-0 items-start gap-2.5 rounded-lg border border-line/80 bg-paper/40 p-2.5">
+                <li key={`${po.id}-${line.lineId || line.productId || index}`} className="flex min-w-0 items-start gap-2.5 rounded-lg border border-line/80 bg-paper/40 p-2.5">
                   {image ? <img src={image} alt="" className="h-14 w-14 shrink-0 border border-line bg-white object-cover" /> : null}
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-ink">{line.name || line.sku || pt("Product")}</p>
                     <p className="text-[11px] text-mute">{line.sku || line.productId || "—"}</p>
+                    {line.description || line.spec ? <p className="whitespace-pre-line text-xs text-ink">{line.description || line.spec}</p> : null}
                     <p className="mt-1 text-[11px] text-ink">
                       <span className="font-semibold uppercase tracking-wide text-mute">{pt("Qty")}</span> {line.qty} {line.unit}
                       <span className="ml-2 text-mute">{money(line.unitPrice)} = <span className="font-semibold text-ink">{money(line.lineTotal)}</span></span>
@@ -450,7 +451,7 @@ export default function PoPanel({ note, po: source, guestAssign, focusId = "" })
                           const product = getProduct(line.productId);
                           const image = product?.image || line.image || "";
                           return (
-                            <li key={`${row.id}-${line.productId || index}`} className="overflow-hidden rounded-lg border border-line/80 bg-paper/40 p-2">
+                            <li key={`${row.id}-${line.lineId || line.productId || index}`} className="overflow-hidden rounded-lg border border-line/80 bg-paper/40 p-2">
                               <div className="flex min-w-0 items-start gap-2.5">
                                 {image ? (
                                   <img src={image} alt="" className="h-11 w-11 shrink-0 rounded-md border border-line bg-white object-cover" />
@@ -460,6 +461,7 @@ export default function PoPanel({ note, po: source, guestAssign, focusId = "" })
                                 <div className="min-w-0 flex-1 overflow-hidden">
                                   <p className="text-sm font-medium text-ink">{line.name || line.sku || pt("Product")}</p>
                                   <p className="text-[11px] text-mute">{line.sku || line.productId || "—"}</p>
+                    {line.description || line.spec ? <p className="whitespace-pre-line text-xs text-ink">{line.description || line.spec}</p> : null}
                                   <p className="mt-1 text-[11px] text-ink">
                                     <span className="font-semibold uppercase tracking-wide text-mute">{pt("Qty")}</span> {line.qty}{line.unit ? ` ${line.unit}` : ""}
                                   </p>
@@ -548,7 +550,7 @@ export default function PoPanel({ note, po: source, guestAssign, focusId = "" })
 
               <ul className="mt-3 divide-y divide-line text-sm">
                 {(po.lines || []).map((line) => (
-                  <li key={`${po.id}-${line.productId}`} className="flex flex-wrap items-baseline justify-between gap-2 py-1.5">
+                  <li key={`${po.id}-${line.lineId || line.productId}`} className="flex flex-wrap items-baseline justify-between gap-2 py-1.5">
                     <span className="min-w-0">
                       <span className="font-medium text-ink">{line.name}</span>
                       <span className="ml-2 text-mute">{line.sku}</span>

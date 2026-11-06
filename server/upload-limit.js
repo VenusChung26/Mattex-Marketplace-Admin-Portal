@@ -1,17 +1,8 @@
 import { createHash } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { getDb as db } from "./db.js";
 
 const WINDOW_MS = 60 * 60 * 1000; // one counting window per hour
 const memory = new Map();
-let client = null;
-
-function db() {
-  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!url || !key) return null;
-  if (!client) client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-  return client;
-}
 
 export function clientKey(request) {
   const forwarded = String(request?.headers?.get?.("x-forwarded-for") || "").split(",")[0].trim();

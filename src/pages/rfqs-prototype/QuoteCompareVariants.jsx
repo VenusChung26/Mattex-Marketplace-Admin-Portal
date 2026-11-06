@@ -1,3 +1,4 @@
+import { lineReference } from "../../lib/productSelection.js";
 /**
  * PROTOTYPE — Multi-supplier quote compare + accept on /rfqs?variant=
  * Question: How should a buyer compare 3–4 supplier quotes and accept one?
@@ -21,7 +22,7 @@ function normalizeAcceptance(quotes, payload) {
   const quoteId = typeof payload === "string" ? payload : payload?.quoteId;
   const quote = quotes.find((q) => q.id === quoteId);
   if (!quote) return null;
-  const picks = Object.fromEntries(quote.lines.map((l) => [l.productId, quote.id]));
+  const picks = Object.fromEntries(quote.lines.map((l) => [lineReference(l), quote.id]));
   // Build via full quote lines — rfq not needed if we synthesize
   return {
     mode: "full",
@@ -29,6 +30,7 @@ function normalizeAcceptance(quotes, payload) {
     picks,
     lines: quote.lines.map((l) => ({
       productId: l.productId,
+      lineId: lineReference(l),
       requestName: l.requestName || l.name,
       quoteId: quote.id,
       supplierName: quote.supplierName,
@@ -88,7 +90,7 @@ function ProtoState({ rfq, quotes, acceptance }) {
 /** B — matrix: rows = lines, columns = suppliers; one Accept for selected column. */
 export function VariantB({ rfq, quotes, acceptance, onAccept, onReset }) {
   const locked = Boolean(acceptance);
-  const lineKeys = rfq.lines.map((l) => l.productId);
+  const lineKeys = rfq.lines.map((l) => lineReference(l));
   const [pickedId, setPickedId] = useState(acceptance?.quoteId || quotes[0]?.id);
   const selectedId = acceptance?.quoteId || pickedId;
   const selected = quotes.find((q) => q.id === selectedId);
@@ -133,7 +135,7 @@ export function VariantB({ rfq, quotes, acceptance, onAccept, onReset }) {
           </thead>
           <tbody className="divide-y divide-line">
             {lineKeys.map((pid) => {
-              const label = rfq.lines.find((l) => l.productId === pid);
+              const label = rfq.lines.find((l) => lineReference(l) === pid);
               return (
                 <tr key={pid}>
                   <td className="px-3 py-2.5 sticky left-0 bg-white text-ink font-medium max-w-[10rem]">
@@ -141,7 +143,7 @@ export function VariantB({ rfq, quotes, acceptance, onAccept, onReset }) {
                     <span className="text-xs text-mute">×{label?.qty}</span>
                   </td>
                   {quotes.map((q) => {
-                    const cell = q.lines.find((l) => l.productId === pid);
+                    const cell = q.lines.find((l) => lineReference(l) === pid);
                     const isCol = q.id === selectedId;
                     return (
                       <td
@@ -244,7 +246,7 @@ export function VariantC({ rfq, quotes, acceptance, onAccept, onReset }) {
                 <div className="px-4 pb-4 border-t border-line bg-paper/40">
                   <ul className="mt-3 divide-y divide-line text-sm">
                     {q.lines.map((l) => (
-                      <li key={l.productId} className="flex justify-between gap-3 py-2">
+                      <li key={lineReference(l)} className="flex justify-between gap-3 py-2">
                         <span>
                           {l.name} ×{l.qty}
                           {l.isSet ? (

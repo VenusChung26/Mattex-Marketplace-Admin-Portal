@@ -1,8 +1,9 @@
+import { normalizePickedSpecs, normalizePickedSize, selectionKey, lineReference, identifyLine, findSelectionLine, resolveSelection, selectedProduct, snapshotSelection } from "./productSelection.js";
 import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappFileLinks, fitWhatsappUrls, publishCustomLineMedia, uploadGuestOrderFiles, uploadRfqPdf } from "./rfqBlob.js";
 import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
 import { attachmentSummary, guestOrderError, guestOrderPayload, guestUploadFiles, memberOrderSeed, releaseGuestUploadFiles } from "./guestOrder.js";
 import { fetchQuoteSnapshot, fetchRemoteKv, fetchRemoteRfqs, fetchRfqStamp, fetchSessionState, isSupabaseConfigured, persistCatalogTables, persistKv, persistKvNow, probeRemoteData, shouldUseLocalSharedStore } from "./supabasePersist.js";
-import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedStore, postAuth, postEmail, postSharedStore, registerRfq, createPurchaseOrderRemote, decideRfqOnServer, assignRfqOnServer, submitQuoteOnServer, freezeWhatsappQuoteOnServer, markWhatsappSentOnServer, syncRfqsFromServer, pushBuyerContent, saveQuoteDraft, saveBuyerPhone, saveGuestFileUrls, createPoFromQuote } from "./remote.js";
+import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedStore, postAuth, postEmail, postSharedStore, registerRfq, createPurchaseOrderRemote, decideRfqOnServer, assignRfqOnServer, submitQuoteOnServer, freezeWhatsappQuoteOnServer, markWhatsappSentOnServer, syncRfqsFromServer, pushBuyerContent, saveQuoteDraft, saveBuyerPhone, saveGuestFileUrls, createPoFromQuote, verifyProductSelections } from "./remote.js";
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
 import { SHOW_TMS_LINK } from "./flags.js";
 import { activeOfferPrice } from "./offer.js";
@@ -2129,7 +2130,7 @@ function normalizeDeliveryLots(list, { mode, deliveryDate, address } = {}) {
 function normalizeDraft(draft) {
   const src = draft || {};
   return {
-    lines: Array.isArray(src.lines) ? src.lines : [],
+    lines: Array.isArray(src.lines) ? src.lines.map(identifyLine) : [],
     note: src.note || "",
     responseDate: src.responseDate || src.quotationDeadline || "",
     deliveryDate: src.deliveryDate || "",
@@ -2259,7 +2260,7 @@ function mergeGuestCartIntoUser() {
       lines.push({ ...guestLine });
       continue;
     }
-    const existing = lines.find((row) => !row.custom && String(row.productId) === String(guestLine.productId));
+    const existing = lines.find((row) => !row.custom && selectionKey(row) === selectionKey(guestLine));
     if (existing) {
       existing.qty = (Number(existing.qty) || 0) + (Number(guestLine.qty) || 0);
     } else {
@@ -2366,20 +2367,19 @@ function listSalesUnits() {
   return [...units].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
-function normalizePickedSpecs(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const next = {};
-  for (const [key, raw] of Object.entries(value)) {
-    const id = String(key || "").trim();
-    const pick = String(raw ?? "").trim();
-    if (!id || !pick) continue;
-    next[id] = pick;
-  }
-  return Object.keys(next).length ? next : null;
-}
-
-function normalizePickedSize(value) {
-  return String(value || "").trim().slice(0, 120);
+function replaceDraftSelection(reference, productId, options) {
+  const draft = getDraft();
+  const line = findSelectionLine(draft.lines, reference);
+  if (!line) return { ok: false, error: "missing" };
+  const next = { ...line, productId, pickedSpecs: normalizePickedSpecs(options.pickedSpecs), pickedSize: normalizePickedSize(options.pickedSize), qty: options.qty };
+  const checked = resolveSelection(getProduct(productId), next);
+  if (!checked.ok) return checked;
+  Object.assign(line, checked.line, { lineId: lineReference(line) });
+  const sameChoice = draft.lines.filter((other) => other !== line && selectionKey(other) === selectionKey(line));
+  line.qty += sameChoice.reduce((sum, other) => sum + Number(other.qty || 0), 0);
+  draft.lines = draft.lines.filter((other) => !sameChoice.includes(other));
+  setDraft(draft);
+  return { ok: true };
 }
 
 function addToCart(productId, { intent, qty, silentInvite = false, pickedSpecs = null, pickedSize = "" } = {}) {
@@ -2388,11 +2388,12 @@ function addToCart(productId, { intent, qty, silentInvite = false, pickedSpecs =
   const guest = !isLoggedIn();
   const draft = getDraft();
   const minQty = Math.max(1, Number(product.moq) || 1);
-  const addQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
+  const addQty = Math.floor(Number(qty)) || minQty;
   const nextIntent = intent || (canDirectBuy(product) ? "buy" : "quote");
   const picks = normalizePickedSpecs(pickedSpecs);
   const size = normalizePickedSize(pickedSize);
-  const existing = draft.lines.find((l) => l.productId === productId && !l.custom);
+  const choice = { productId, pickedSpecs: picks, pickedSize: size };
+  const existing = draft.lines.find((l) => !l.custom && selectionKey(l) === selectionKey(choice));
   if (existing) {
     if (existing.intent !== nextIntent) existing.intent = nextIntent;
     else existing.qty = (existing.qty || 0) + addQty;
@@ -2401,6 +2402,8 @@ function addToCart(productId, { intent, qty, silentInvite = false, pickedSpecs =
   } else {
     draft.lines.push({
       productId,
+      lineId: selectionKey(choice),
+      selectionSnapshot: snapshotSelection(product, choice),
       qty: addQty,
       intent: nextIntent,
       ...(picks ? { pickedSpecs: picks } : {}),
@@ -2748,7 +2751,7 @@ function matchSpecToCatalog(name, spec) {
 
 function updateCustomLine(productId, patch = {}) {
   const draft = getDraft();
-  const line = draft.lines.find((l) => String(l.productId) === String(productId));
+  const line = findSelectionLine(draft.lines, productId);
   if (!line || !line.custom) return { ok: false, error: "not_found" };
   if (patch.name != null) {
     const trimmed = String(patch.name).trim();
@@ -2783,7 +2786,7 @@ function updateCustomLine(productId, patch = {}) {
 
 function setLineQty(productId, qty) {
   const draft = getDraft();
-  const line = draft.lines.find((l) => String(l.productId) === String(productId));
+  const line = findSelectionLine(draft.lines, productId);
   if (!line) return draft;
   const next = Math.floor(Number(qty));
   if (!Number.isFinite(next) || next < 1) return draft;
@@ -2794,7 +2797,7 @@ function setLineQty(productId, qty) {
 
 function setLineIntent(productId, intent) {
   const draft = getDraft();
-  const line = draft.lines.find((l) => String(l.productId) === String(productId));
+  const line = findSelectionLine(draft.lines, productId);
   if (!line) return { ok: false, reason: "missing" };
   const next = intent === "buy" ? "buy" : "quote";
   if (next === "buy") {
@@ -2810,7 +2813,7 @@ function setLineIntent(productId, intent) {
 
 function setLineRequestedPrice(productId, value) {
   const draft = getDraft();
-  const line = draft.lines.find((l) => String(l.productId) === String(productId));
+  const line = findSelectionLine(draft.lines, productId);
   if (!line || line.custom) return draft;
   const product = getProduct(line.productId);
   const listPrice = product ? getEffectivePrice(product).displayPrice : null;
@@ -2829,7 +2832,8 @@ function setLineRequestedPrice(productId, value) {
 
 function removeLine(productId) {
   const draft = getDraft();
-  draft.lines = draft.lines.filter((l) => String(l.productId) !== String(productId));
+  const target = findSelectionLine(draft.lines, productId);
+  draft.lines = draft.lines.filter((l) => l !== target);
   setDraft(draft);
   return draft;
 }
@@ -2838,7 +2842,8 @@ function removeLines(productIds) {
   const ids = new Set((productIds || []).map((id) => String(id)));
   if (!ids.size) return getDraft();
   const draft = getDraft();
-  draft.lines = draft.lines.filter((l) => !ids.has(String(l.productId)));
+  const targets = new Set([...ids].map((id) => findSelectionLine(draft.lines, id)).filter(Boolean));
+  draft.lines = draft.lines.filter((l) => !targets.has(l));
   setDraft(draft);
   return draft;
 }
@@ -2937,13 +2942,16 @@ function draftTotals(draft, productIds) {
   const hasFilter = arguments.length > 1;
   const idFilter = hasFilter ? new Set((productIds || []).map(String)) : null;
   const sourceLines = idFilter
-    ? (draft.lines || []).filter((line) => idFilter.has(String(line.productId)))
+    ? (draft.lines || []).filter((line) => idFilter.has(lineReference(line)))
     : draft.lines || [];
   const enriched = sourceLines.map((line) => {
     if (line.custom) {
       unpricedCount += 1;
       return {
         productId: line.productId,
+      lineId: lineReference(line),
+      selectionIssue: line.custom ? "" : (resolveSelection(getProduct(line.productId), line).error || ""),
+      selectionSnapshot: line.selectionSnapshot,
         qty: line.qty,
         name: line.name || "Tailor Made Product",
         description: line.description || "",
@@ -2967,7 +2975,7 @@ function draftTotals(draft, productIds) {
         pickedSize: normalizePickedSize(line.pickedSize),
       };
     }
-    const product = getProduct(line.productId);
+    const product = selectedProduct(getProduct(line.productId), line);
     const listPrice = product ? getEffectivePrice(product).displayPrice : null;
     const offerPrice = listPrice != null && product ? activeOfferPrice(product.id) : null;
     const unitPrice = offerPrice != null ? offerPrice : listPrice;
@@ -2975,6 +2983,9 @@ function draftTotals(draft, productIds) {
     else pricedSubtotal += unitPrice * line.qty;
     return {
       productId: line.productId,
+      lineId: lineReference(line),
+      selectionIssue: line.custom ? "" : (resolveSelection(getProduct(line.productId), line).error || ""),
+      selectionSnapshot: line.selectionSnapshot,
       qty: line.qty,
       name: product ? product.name : line.productId,
       description: product ? product.description : "",
@@ -3062,7 +3073,7 @@ function lineMediaSignature(line) {
 
 function applyPublishedMedia(lines, published) {
   return (lines || []).map((line) => {
-    const next = published.find((row) => String(row.productId) === String(line.productId));
+    const next = published.find((row) => String(row.lineId || row.productId) === lineReference(line));
     if (!next) return line;
     return {
       ...line,
@@ -3124,6 +3135,10 @@ async function issueRfqNumber(rfq) {
     attachments: rfq.guestAttachments || [],
     lines: (rfq.lines || []).map((line) => ({
       productId: line.productId,
+      lineId: lineReference(line),
+      custom: Boolean(line.custom),
+      pickedSpecs: line.pickedSpecs,
+      pickedSize: line.pickedSize,
       sku: line.productNo,
       name: line.name || line.productNo || String(line.productId || "Item"),
       spec: line.description,
@@ -3134,10 +3149,11 @@ async function issueRfqNumber(rfq) {
     snapshot: leanSharedRfq(rfq),
   });
   if (issued.ok) {
+    if (issued.lines) rfq.lines = issued.lines;
     serverHeldIds.add(issued.id);
     return { id: issued.id, at: issued.createdAt, mailed: Boolean(issued.mailed) };
   }
-  return null;
+  return { error: issued.error || "server" };
 }
 
 async function submitRfq(productIds, options = {}) {
@@ -3180,14 +3196,17 @@ async function submitRfq(productIds, options = {}) {
   const selectedIds =
     Array.isArray(productIds) && productIds.length
       ? productIds.map(String)
-      : draft.lines.map((l) => String(l.productId));
+      : draft.lines.map(lineReference);
   const selectedSet = new Set(selectedIds);
-  const selectedLines = draft.lines.filter((l) => selectedSet.has(String(l.productId)));
+  const selectedLines = draft.lines.filter((l) => selectedSet.has(lineReference(l)));
   if (!selectedLines.length) return { ok: false, error: "none_selected" };
   const blocked = selectedLines.filter((l) => !l.custom && (isProductOrderBlocked(l.productId) || !isOrderable(getProduct(l.productId))));
   if (blocked.length) return { ok: false, error: "discontinued" };
 
-  const totals = draftTotals({ ...draft, lines: selectedLines });
+  const verified = await verifyProductSelections(selectedLines);
+  if (!verified.ok) return verified;
+  const verifiedById = new Map(verified.lines.map((line) => [lineReference(line), line]));
+  const totals = draftTotals({ ...draft, lines: selectedLines.map((line) => verifiedById.get(lineReference(line)) || line) });
   const channel =
     options.channel === "whatsapp" ? "whatsapp" : options.channel === "email" ? "email" : "rfq";
   restoreSessionBuyerAccount();
@@ -3226,6 +3245,8 @@ async function submitRfq(productIds, options = {}) {
     acceptSubstitutes: Boolean(totals.acceptSubstitutes),
     lines: totals.lines.map((l) => ({
       productId: l.productId,
+      lineId: lineReference(l),
+      selectionSnapshot: l.selectionSnapshot,
       name: l.name,
       supplier: l.supplier,
       qty: l.qty,
@@ -3264,8 +3285,21 @@ async function submitRfq(productIds, options = {}) {
     buyerKind,
     specFile: draft.specFile?.url ? draft.specFile : null,
   };
+  if (options.kind === "buy" && rfq.lines.every((line) => !line.custom)) {
+    const placed = await createPurchaseOrderRemote({
+      lines: verified.lines,
+      buyer: { email: rfq.buyerEmail, name: rfq.buyerName, phone: rfq.buyerPhone, company: rfq.buyerCompany },
+      project: rfq.project, delivery: { address: rfq.address, date: rfq.deliveryDate, note: rfq.note },
+      note: rfq.note, attachments: rfq.guestAttachments,
+    });
+    if (!placed.ok) return placed;
+    return { ok: true, po: placed.po, rfq: { ...rfq, ...placed.po, askKind: "buy" }, buyer: {
+      email: rfq.buyerEmail, name: rfq.buyerName, phone: rfq.buyerPhone, company: rfq.buyerCompany,
+      address: rfq.address, project: rfq.project, deliveryDate: rfq.deliveryDate, attachments: rfq.guestAttachments,
+    } };
+  }
   const issued = await issueRfqNumber(rfq);
-  if (!issued) return { ok: false, error: "server" };
+  if (!issued?.id) return { ok: false, error: issued?.error || "server" };
   rfq.id = issued.id;
   if (issued.at) rfq.submittedAt = issued.at;
   const buyerView = {
@@ -3377,8 +3411,8 @@ async function completeCartWhatsappSubmit(spec = {}, { announce = false } = {}) 
     deliveryDate: submitted.rfq?.deliveryDate || spec.guest?.deliveryDate || "",
     attachments: attachmentSummary(spec.guest?.attachments || submitted.buyer?.attachments),
   };
-  const lines = getDraft().lines.filter((line) => ids.includes(String(line.productId)));
-  openWhatsappDraft(lines, kind, {
+  const lines = getDraft().lines.filter((line) => ids.includes(lineReference(line)));
+  openWhatsappDraft(submitted.po?.lines || submitted.rfq.lines || lines, kind, {
     refNo: submitted.rfq.id,
     details,
     buyer: submitted.buyer,
@@ -3465,7 +3499,7 @@ function reorderRfq(id) {
           pickedSize: normalizePickedSize(l.pickedSize),
         };
       }
-      return { productId: l.productId, qty: l.qty, intent: l.intent || "quote" };
+      return identifyLine({ productId: l.productId, qty: l.qty, intent: l.intent || "quote", pickedSpecs: normalizePickedSpecs(l.pickedSpecs), pickedSize: normalizePickedSize(l.pickedSize), selectionSnapshot: l.selectionSnapshot });
     }),
   });
   return { ok: true };
@@ -4160,6 +4194,8 @@ function requireBuyerAuth(pending = {}) {
 function addFromStorefront(productId, intent = "quote", qty, _lang, options = {}) {
   const pickedSpecs = normalizePickedSpecs(options?.pickedSpecs);
   const pickedSize = normalizePickedSize(options?.pickedSize);
+  const check = resolveSelection(getProduct(productId), { productId, qty, pickedSpecs, pickedSize });
+  if (!check.ok) return check;
   if (intent === "quote-now" || intent === "buy-now") {
     setPendingCart(productId, intent, qty, { pickedSpecs, pickedSize });
     openAuthModal("invite");
@@ -4308,6 +4344,8 @@ function enrichCartLine(line) {
       name: line.name || "Tailor Made Product",
       productNo: line.baseProductNo || line.productNo || "",
       productId: line.productId,
+      lineId: lineReference(line),
+      selectionSnapshot: line.selectionSnapshot,
       custom: true,
       description: line.description || "",
       descriptionBaseline: line.descriptionBaseline || "",
@@ -4330,6 +4368,8 @@ function enrichCartLine(line) {
     name: line.name || product?.name || line.productId,
     productNo: line.productNo || product?.productNo || "",
     productId: line.productId,
+    lineId: lineReference(line),
+    selectionSnapshot: line.selectionSnapshot,
     custom: false,
     description: line.description || "",
     qty: line.qty || 1,
@@ -5099,11 +5139,7 @@ function quotePdfItems(rows) {
   return rows.map(salesLine).map((line, i) => {
     const isCustom = Boolean(line.custom);
     const baseProduct = line.baseProductId ? getProduct(line.baseProductId) : null;
-    const product = !isCustom
-      ? getProduct(line.productId) || baseProduct
-      : line.tailorMade
-        ? baseProduct
-        : null;
+    const product = line.selectionSnapshot?.product || null;
     const attachments = Array.isArray(line.attachments) ? line.attachments : [];
     return {
       index: i + 1,
@@ -5118,7 +5154,7 @@ function quotePdfItems(rows) {
             ? formatPrice(line.unitPrice)
             : "待報價",
       spec: isCustom ? pdfCustomSpecText(line) : "",
-      infoRows: pdfProductInfoRows(line, product),
+      infoRows: [...(!product && !isCustom && (line.description || line.spec) ? [{ label: "規格", value: line.description || line.spec }] : []), ...pdfProductInfoRows(line, product)],
       attachments: waAttachmentNames(attachments),
       image: line.image || product?.image || firstImageAttachmentUrl(attachments) || "",
     };
@@ -5439,7 +5475,7 @@ async function placeBuyNowPo(product, qty, line, guest) {
     attachments: contact?.attachments || [],
   };
   const placed = await createPurchaseOrderRemote({
-    lines: [{ productId: product.id, qty }],
+    lines: [{ productId: product.id, qty, pickedSpecs: line.pickedSpecs, pickedSize: line.pickedSize }],
     buyer: {
       email: buyer.email,
       name: buyer.name,
@@ -5464,7 +5500,7 @@ async function placeBuyNowPo(product, qty, line, guest) {
   return {
     ok: true,
     po: placed.po,
-    ...openWhatsappDraft([line], "buy", {
+    ...openWhatsappDraft(placed.po.lines, "buy", {
       refNo: placed.po.id,
       buyer,
       details: {
@@ -5488,7 +5524,7 @@ async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false
   if (!product || isDiscontinued(product) || !isOrderable(product) || isProductOrderBlocked(productId)) return { ok: false, error: "discontinued" };
   const intent = kind === "buy" ? "buy" : "quote";
   const minQty = Math.max(1, Number(product.moq) || 1);
-  const addQty = Math.max(minQty, Math.floor(Number(qty)) || minQty);
+  const addQty = Math.floor(Number(qty)) || minQty;
   const picks = normalizePickedSpecs(pickedSpecs);
   const size = normalizePickedSize(pickedSize);
   const line = {
@@ -6535,7 +6571,7 @@ function setRfqLineQuotedPrice(id, productId, price) {
   const patched = patchRfqById(id, (rfq) => ({
     ...rfq,
     lines: (rfq.lines || []).map((line) =>
-      String(line.productId) === String(productId) ? { ...line, quotedUnitPrice: nextPrice, noOffer: false } : line
+      line === findSelectionLine(rfq.lines, productId) ? { ...line, quotedUnitPrice: nextPrice, noOffer: false } : line
     ),
   }));
   if (patched.ok) queueQuoteDraft(id);
@@ -6549,7 +6585,7 @@ function setRfqLineQty(id, productId, qty) {
   const patched = patchRfqById(id, (rfq) => ({
     ...rfq,
     lines: (rfq.lines || []).map((line) =>
-      String(line.productId) === String(productId) ? { ...line, salesQty: nextQty } : line
+      line === findSelectionLine(rfq.lines, productId) ? { ...line, salesQty: nextQty } : line
     ),
   }));
   if (patched.ok) queueQuoteDraft(id);
@@ -6562,7 +6598,7 @@ function setRfqLineRemark(id, productId, remark) {
   const patched = patchRfqById(id, (rfq) => ({
     ...rfq,
     lines: (rfq.lines || []).map((line) =>
-      String(line.productId) === String(productId) ? { ...line, salesRemark: String(remark || "") } : line
+      line === findSelectionLine(rfq.lines, productId) ? { ...line, salesRemark: String(remark || "") } : line
     ),
   }));
   if (patched.ok) queueQuoteDraft(id);
@@ -6581,7 +6617,7 @@ function setRfqLineNoOffer(id, productId, noOffer = true) {
   const patched = patchRfqById(id, (rfq) => ({
     ...rfq,
     lines: (rfq.lines || []).map((line) =>
-      String(line.productId) === String(productId)
+      line === findSelectionLine(rfq.lines, productId)
         ? { ...line, noOffer: Boolean(noOffer), quotedUnitPrice: Boolean(noOffer) ? null : line.quotedUnitPrice }
         : line
     ),
@@ -7158,9 +7194,7 @@ function createBuyerPurchaseOrder(id, payload = {}) {
   const versionLines = (effective?.lines || []).filter((line) => !line.noOffer && Number(line.quotedUnitPrice) > 0);
   const poFromEffective = versionLines.length
     ? versionLines.map((line) => ({
-        productId: line.productId,
-        name: line.name,
-        qty: line.qty,
+        ...line,
         supplierName: "Mattex",
         lineTotal: line.lineTotal != null ? Number(line.lineTotal) : Number(line.quotedUnitPrice) * (Number(line.qty) || 0),
       }))
@@ -7201,7 +7235,7 @@ function worksheetLines(current, linePrices) {
   const prices = linePrices || {};
   return (current.lines || []).map((l) => {
     if (l.noOffer) return { ...l, quotedUnitPrice: null, noOffer: true };
-    const overlay = Object.prototype.hasOwnProperty.call(prices, String(l.productId)) ? prices[String(l.productId)] : undefined;
+    const overlay = Object.prototype.hasOwnProperty.call(prices, lineReference(l)) ? prices[lineReference(l)] : undefined;
     const raw = overlay === undefined ? l.quotedUnitPrice : overlay;
     const n = raw === "" || raw == null ? NaN : Number(raw);
     return { ...l, quotedUnitPrice: Number.isFinite(n) && n > 0 ? n : null };
@@ -7212,6 +7246,7 @@ function worksheetLines(current, linePrices) {
 function worksheetPayload(lines) {
   return (lines || []).map(salesLine).map((line) => ({
     productId: line.productId,
+    lineId: lineReference(line),
     name: line.name,
     productNo: line.productNo,
     unit: line.unit,
@@ -7303,9 +7338,9 @@ async function decideRfqRemote(id, { decision, reason } = {}) {
 function copyRfqToDraft(rfq) {
   if (!rfq) return getDraft();
   const draft = getDraft();
-  const existing = new Set((draft.lines || []).map((line) => String(line.productId)));
+  const existing = new Set((draft.lines || []).map(selectionKey));
   (rfq.lines || []).forEach((line) => {
-    const id = String(line.productId || "");
+    const id = selectionKey(line);
     if (!id || existing.has(id)) return;
     existing.add(id);
     draft.lines.push({ ...line });
@@ -7526,56 +7561,19 @@ function uploadRfqToTms(id, { fail, whatsappPdfName, tms } = {}) {
   });
 }
 
-function resubmitRfq(id, lines) {
+async function resubmitRfq(id, lines) {
   const email = currentEmail();
   if (!email) return { ok: false, error: "auth" };
   const current = getAllRfqs().find((r) => r.id === id);
   if (!current) return { ok: false, error: "missing" };
-  const result = patchRfqById(id, (rfq, owner) => {
-    if (normalizeEmail(owner) !== email && normalizeEmail(rfq.buyerEmail) !== email) return rfq;
-    const status = inboxStatus(rfq);
-    if (status !== "returned" && status !== "revising") return rfq;
-    const at = new Date().toISOString();
-    const nextLines = Array.isArray(lines) && lines.length ? lines : rfq.lines;
-    if (status === "revising") {
-      const nextNo = nextRfqRequestVersionNo(rfq);
-      const snap = snapshotRfqRequest({ ...rfq, lines: nextLines }, { version: nextNo, createdAt: at });
-      return pushRfqActivity(
-        {
-          ...rfq,
-          lines: nextLines,
-          reviewStatus: "received",
-          reviewingBy: "",
-          reverseStatus: "",
-          resubmittedAt: at,
-          requestVersions: [...rfqRequestVersionList(rfq), snap],
-          requestEffectiveVersion: nextNo,
-        },
-        "resubmitted",
-        { at, detail: `v${nextNo}` }
-      );
-    }
-    return pushRfqActivity(
-      {
-        ...rfq,
-        reviewStatus: "received",
-        reviewingBy: "",
-        resubmittedAt: at,
-        lines: nextLines,
-      },
-      "resubmitted",
-      { at }
-    );
-  });
-  if (result.ok) pushBuyerContentToServer(result.rfq || current, { resubmit: true });
-  if (result.ok && inboxStatus(current) === "revising" && !isHeldRfq(id)) {
-    notifySalesRfq(result.rfq || current, {
-      title: `RFQ resubmitted ${id}`,
-      body: `${current.buyerName || current.buyerEmail || "Buyer"} resubmitted ${id}.`,
-    });
-    deliverRfqToSalesEmail(result.rfq || current);
-  }
-  return result;
+  if (normalizeEmail(current.buyerEmail) !== email) return { ok: false, error: "auth" };
+  const nextLines = Array.isArray(lines) && lines.length ? lines : current.lines;
+  const checked = await verifyProductSelections(nextLines);
+  if (!checked.ok) return checked;
+  const verified = nextLines.map((line, index) => ({ ...line, ...checked.lines[index] }));
+  const remote = await pushBuyerContentToServer({ ...current, lines: verified }, { resubmit: true });
+  if (!remote?.ok) return remote || { ok: false, error: "network" };
+  return patchRfqById(id, (rfq) => applyDecision({ ...rfq, lines: verified }, remote.patch));
 }
 
 function buyerRfqDetailsLocked(rfq) {
@@ -7603,12 +7601,12 @@ function updateBuyerRfqDetails(id, patch = {}) {
     let nextLines = Array.isArray(rfq.lines) ? rfq.lines.slice() : [];
     const removeIds = new Set((patch.removeProductIds || []).map(String));
     if (removeIds.size) {
-      nextLines = nextLines.filter((line) => !removeIds.has(String(line.productId)));
+      nextLines = nextLines.filter((line) => !removeIds.has(lineReference(line)));
       if (!nextLines.length) return rfq;
     }
     if (Array.isArray(patch.lines)) {
       nextLines = nextLines.map((line) => {
-        const overlay = patch.lines.find((row) => String(row.productId) === String(line.productId));
+        const overlay = patch.lines.find((row) => String(row.lineId || row.productId) === lineReference(line));
         if (!overlay) return line;
         const qty = overlay.qty != null ? Math.max(1, Math.floor(Number(overlay.qty) || 1)) : line.qty;
         return {
@@ -8847,7 +8845,7 @@ function portalSyncStamp(entries) {
     .map((entry) => {
       const o = entry?.owned || {};
       const draft = Array.isArray(o.draft?.prices)
-        ? o.draft.prices.map((row) => `${row.productId}:${row.quotedUnitPrice}:${row.noOffer ? 1 : 0}`).join(",")
+        ? o.draft.prices.map((row) => `${lineReference(row)}:${row.quotedUnitPrice}:${row.noOffer ? 1 : 0}`).join(",")
         : "";
       return [
         o.id,
@@ -9063,11 +9061,12 @@ async function pushBuyerContentToServer(rfq, { resubmit = false } = {}) {
   if (!rfq?.id) return;
   serverWritesInFlight += 1;
   try {
-    await pushBuyerContent(rfq.id, buyerContentOf(rfq), { resubmit });
+    const result = await pushBuyerContent(rfq.id, buyerContentOf(rfq), { resubmit });
+    if (result.ok) void syncServerRfqs();
+    return result;
   } finally {
     serverWritesInFlight -= 1;
   }
-  syncServerRfqs();
 }
 
 function startSharedStoreSync() {
@@ -9138,6 +9137,8 @@ export {
   getProductRating,
   hydrateStore,
   seedCatalogSnapshot,
+  lineReference,
+  replaceDraftSelection,
   startSharedStoreSync,
   pullSharedStore,
   pullQuoteSnapshots,

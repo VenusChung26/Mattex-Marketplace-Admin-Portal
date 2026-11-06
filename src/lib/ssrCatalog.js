@@ -66,6 +66,7 @@ async function loadFile() {
 }
 
 async function seedPublic(snapshot, etag) {
-  await seedCatalogSnapshot(toPublicCatalog(snapshot));
-  seededEtag = etag || "seeded";
+  const catalog = toPublicCatalog(snapshot);
+  await seedCatalogSnapshot(catalog);
+  seededEtag = catalog.etag || etag || "seeded";
 }

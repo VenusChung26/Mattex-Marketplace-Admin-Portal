@@ -1,3 +1,4 @@
+import { lineReference, selectionMessage } from "../lib/productSelection.js";
 /**
  * My RFQs — quote compare, accept, payment, and delivery.
  */
@@ -260,7 +261,7 @@ function RfqDetailsSummary({ rfq, t, editing = false, onPatch }) {
           {(rfq.lines || []).map((l) => {
             const thumb = lineThumb(l);
             return (
-              <li key={String(l.productId)} className="flex flex-wrap items-start justify-between gap-3 py-2.5">
+              <li key={lineReference(l)} className="flex flex-wrap items-start justify-between gap-3 py-2.5">
                 <span className="flex min-w-0 items-start gap-2.5 flex-1">
                   {thumb ? (
                     <PreviewThumb src={thumb} name={l.name} className="h-10 w-10" />
@@ -976,12 +977,12 @@ export default function RfqsPage() {
                       <button
                         type="button"
                         className="inline-flex items-center bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700"
-                        onClick={() => {
-                          const result = resubmitRfq(selected.id);
+                        onClick={async () => {
+                          const result = await resubmitRfq(selected.id);
                           if (result?.ok) {
                             setRequestViewVersion("");
                             setCancelFlash(t("rfqResubmitHint"));
-                          }
+                          } else setCancelFlash(selectionMessage(result.error, lang) || t("submitFailed"));
                         }}
                       >
                         {t("rfqResubmit")}
@@ -1043,7 +1044,7 @@ export default function RfqsPage() {
                   <button
                     type="button"
                     className="btn-primary mt-2 !py-1.5 !px-3 !text-xs"
-                    onClick={() => resubmitRfq(selected.id)}
+                    onClick={async () => { const result = await resubmitRfq(selected.id); setCancelFlash(result.ok ? t("rfqResubmitHint") : selectionMessage(result.error, lang) || t("submitFailed")); }}
                   >
                     {t("rfqResubmit")}
                   </button>
@@ -1122,7 +1123,7 @@ export default function RfqsPage() {
                     rfq={displayRfq || selected}
                     t={t}
                     editing={inbox === "revising" && !historicalRequestView}
-                    onChangeLine={(productId, qty) => updateBuyerRfqDetails(selected.id, { lines: [{ productId, qty }] })}
+                    onChangeLine={(productId, qty) => updateBuyerRfqDetails(selected.id, { lines: [{ lineId: productId, qty }] })}
                     onRemoveLine={(productId) => updateBuyerRfqDetails(selected.id, { removeProductIds: [productId] })}
                     onAddCustom={(payload) => updateBuyerRfqDetails(selected.id, { addLines: [{ ...payload, custom: true }] })}
                   />
@@ -1249,7 +1250,7 @@ function SubmittedStep({ rfq, t, editing = false, onChangeLine, onRemoveLine, on
         {(rfq.lines || []).map((l) => {
           const thumb = lineThumb(l);
           return (
-          <li key={`${l.productId}-${l.qty}`} className="flex justify-between gap-3 py-2.5 text-sm">
+          <li key={lineReference(l)} className="flex justify-between gap-3 py-2.5 text-sm">
             <span className="flex min-w-0 items-start gap-2.5">
               {thumb ? (
                 <PreviewThumb src={thumb} name={l.name} className="h-10 w-10" />
@@ -1288,11 +1289,11 @@ function SubmittedStep({ rfq, t, editing = false, onChangeLine, onRemoveLine, on
                       min="1"
                       className="ml-1 w-16 rounded border border-line px-1.5 py-1 text-sm text-ink"
                       value={l.qty}
-                      onChange={(e) => onChangeLine?.(l.productId, Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                      onChange={(e) => onChangeLine?.(lineReference(l), Math.max(1, Math.floor(Number(e.target.value) || 1)))}
                     />
                   </label>
                   {(rfq.lines || []).length > 1 ? (
-                    <button type="button" className="text-xs font-semibold text-red-700 hover:underline" onClick={() => onRemoveLine?.(l.productId)}>
+                    <button type="button" className="text-xs font-semibold text-red-700 hover:underline" onClick={() => onRemoveLine?.(lineReference(l))}>
                       {t("remove")}
                     </button>
                   ) : null}
@@ -1406,6 +1407,8 @@ function PurchaseOrderStep({ rfq, acceptance, po, t, onCreated, onBack }) {
     if (creating) return;
     const poLines = (acceptance?.lines || []).map((line) => ({
       productId: line.productId,
+      lineId: lineReference(line),
+      selectionSnapshot: line.selectionSnapshot,
       name: line.offer?.name || line.requestName,
       qty: line.offer?.qty,
       supplierName: line.supplierName,
@@ -1464,7 +1467,7 @@ function PurchaseOrderStep({ rfq, acceptance, po, t, onCreated, onBack }) {
           </thead>
           <tbody className="divide-y divide-line">
             {lines.map((line, index) => (
-              <tr key={`${line.productId || line.name || index}`}>
+              <tr key={line.lineId || line.productId || line.name || index}>
                 <td className="px-3 py-2.5">
                   <p className="font-medium text-ink">{line.offer?.name || line.name || line.requestName}</p>
                 </td>

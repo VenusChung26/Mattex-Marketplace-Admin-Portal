@@ -1,3 +1,5 @@
+import { withLocale } from "../../lib/locale";
+import { lineReference, selectionMessage } from "../../lib/productSelection.js";
 /**
  * PROTOTYPE — custom-product composer placements on /rfq?variant=
  * Question: Where should adding a custom product live so the quote list and submit bar stay usable?
@@ -56,7 +58,7 @@ function lineThumb(line) {
 }
 
 function LineThumb({ line, className = "h-16 w-16 sm:h-[4.5rem] sm:w-24" }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const src = lineThumb(line);
   return (
     <span className={`${className} shrink-0 overflow-hidden rounded-md border border-line bg-paper`}>
@@ -123,7 +125,7 @@ function splitDraftLines(lines) {
 }
 
 function selectedFor(lines, selectedIds) {
-  const set = new Set((lines || []).map((l) => String(l.productId)));
+  const set = new Set((lines || []).map((l) => String(lineReference(l))));
   return (selectedIds || []).filter((id) => set.has(String(id)));
 }
 
@@ -231,7 +233,7 @@ function IntentDraftSections(props) {
     setShowAddCustom,
     onAddCustom,
   } = props;
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   usePromo();
   const { buyLines, quoteLines } = splitDraftLines(lines);
   const buySelected = selectedFor(buyLines, selectedIds);
@@ -291,7 +293,7 @@ function IntentDraftSections(props) {
     event.stopPropagation();
     setDropError("");
     const payload = {
-      productId: String(line.productId),
+      productId: String(lineReference(line)),
       name: line.name,
       from,
       canBuy: canBuyFromStock(line),
@@ -391,7 +393,7 @@ function IntentDraftSections(props) {
           lines={buyLines}
           selectedIds={buySelected}
           allSelected={buyAll}
-          toggleAll={() => toggleSection(buyLines.map((l) => String(l.productId)))}
+          toggleAll={() => toggleSection(buyLines.map((l) => String(lineReference(l))))}
           title={t("sectionBuy")}
           subtitle={t("sectionBuyLead")}
           selectAllLabel={t("selectAllBuy")}
@@ -430,7 +432,7 @@ function IntentDraftSections(props) {
           lines={quoteLines}
           selectedIds={quoteSelected}
           allSelected={quoteAll}
-          toggleAll={() => toggleSection(quoteLines.map((l) => String(l.productId)))}
+          toggleAll={() => toggleSection(quoteLines.map((l) => String(lineReference(l))))}
           title={t("sectionQuote")}
           subtitle={t("sectionQuoteLead")}
           selectAllLabel={t("selectAllQuote")}
@@ -552,11 +554,11 @@ export function ConfirmRfqView(props) {
     removeLine,
     toggleId,
   } = props;
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const group = (lines || []).filter((line) =>
     confirmKind === "buy" ? line.intent === "buy" : line.intent !== "buy"
-  ).filter((line) => selectedIds.includes(String(line.productId)));
-  const groupTotals = draftTotals({ lines: group }, group.map((l) => String(l.productId)));
+  ).filter((line) => selectedIds.includes(String(lineReference(line))));
+  const groupTotals = draftTotals({ lines: group }, group.map((l) => String(lineReference(l))));
   const viaWhatsapp = confirmChannel === "whatsapp";
 
   function handleRemove(productId) {
@@ -596,7 +598,7 @@ export function ConfirmRfqView(props) {
             const moq = Math.max(1, Number(l.moq) || 1);
             const belowMoq = !l.custom && Number(l.qty) < moq;
             return (
-              <li key={l.productId} className="flex flex-col gap-2 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-5">
+              <li key={lineReference(l)} className="flex flex-col gap-2 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-5">
                 <span className="flex min-w-0 items-center gap-3">
                   <LineThumb line={l} />
                   <span className="min-w-0">
@@ -626,13 +628,13 @@ export function ConfirmRfqView(props) {
                     value={l.qty}
                     min={moq}
                     unit={l.unit || ""}
-                    onChange={(qty) => setLineQty(l.productId, qty)}
+                    onChange={(qty) => setLineQty(lineReference(l), qty)}
                     size="bar"
                     t={t}
                   />
                   <button
                     type="button"
-                    onClick={() => handleRemove(l.productId)}
+                    onClick={() => handleRemove(lineReference(l))}
                     className="text-[11px] font-semibold text-mute/80 hover:text-[#8a2b2b]"
                   >
                     {t("remove")}
@@ -656,7 +658,7 @@ export function ConfirmRfqView(props) {
         )}
         <SubmitBar
           bare
-          selectedIds={group.map((l) => String(l.productId))}
+          selectedIds={group.map((l) => String(lineReference(l)))}
           selectedTotals={groupTotals}
           formError={formError}
           onSubmit={() => onSubmitKind(confirmKind)}
@@ -674,7 +676,7 @@ export function ConfirmRfqView(props) {
 }
 
 export function VariantA(props) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const hasBuy = (props.lines || []).some((line) => line.intent === "buy");
 
   return (
@@ -698,7 +700,7 @@ export function VariantB(props) {
     formErrorKind,
     onContinueKind,
   } = props;
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const { buyLines, quoteLines } = splitDraftLines(lines);
   const buySelected = selectedFor(buyLines, selectedIds);
   const buyTotals = draftTotals({ lines: buyLines }, buySelected);
@@ -790,7 +792,7 @@ export function VariantC(props) {
     wizardStep,
     setWizardStep,
   } = props;
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
 
   const steps = [
     { id: 1, label: "Select" },
@@ -862,9 +864,9 @@ export function VariantC(props) {
             <p className="text-sm text-mute mb-4">Confirm before sending.</p>
             <ul className="divide-y divide-line border-y border-line text-sm">
               {lines
-                .filter((l) => selectedIds.includes(String(l.productId)))
+                .filter((l) => selectedIds.includes(String(lineReference(l))))
                 .map((l) => (
-                  <li key={l.productId} className="py-3 flex justify-between gap-3">
+                  <li key={lineReference(l)} className="py-3 flex justify-between gap-3">
                     <span>
                       {l.name} × {l.qty}
                       {l.intent === "buy" ? " · buy" : " · quote"}
@@ -948,7 +950,7 @@ export function VariantC(props) {
                 <button
                   type="button"
                   className="btn-primary !px-5"
-                  disabled={!lines.some((l) => l.intent === "buy" && selectedIds.includes(String(l.productId)))}
+                  disabled={!lines.some((l) => l.intent === "buy" && selectedIds.includes(String(lineReference(l))))}
                   onClick={() => onSubmitKind("buy")}
                 >
                   {t("confirmBuyCreateRfq")}
@@ -956,7 +958,7 @@ export function VariantC(props) {
                 <button
                   type="button"
                   className="btn-primary !px-5"
-                  disabled={!lines.some((l) => l.intent !== "buy" && selectedIds.includes(String(l.productId)))}
+                  disabled={!lines.some((l) => l.intent !== "buy" && selectedIds.includes(String(lineReference(l))))}
                   onClick={() => onSubmitKind("quote")}
                 >
                   {t("submitQuoteRfq")}
@@ -991,7 +993,7 @@ function MoveControl({ line, unpriced, canDrag, onDragLineStart, onMoveLine, dro
           aria-label={moveLabel}
           title={moveLabel}
           className="text-center text-[10px] font-semibold leading-tight text-brand-700 hover:underline"
-          onClick={() => onMoveLine(line.productId, moveIntent)}
+          onClick={() => onMoveLine(lineReference(line), moveIntent)}
         >
           <span className="block">{t("moveAs")}</span>
           <span className="block">{inBuy ? t("moveQuoteShort") : t("moveBuyShort")}</span>
@@ -1049,7 +1051,7 @@ function LinesList({
   onMoveLine,
   customPlacement = "inline",
 }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const bodyRef = useRef(null);
 
   useEffect(() => {
@@ -1091,7 +1093,7 @@ function LinesList({
               <button
                 type="button"
                 onClick={() => {
-                  const ids = lines.map((l) => l.productId);
+                  const ids = lines.map((l) => lineReference(l));
                   if (removeLines) removeLines(ids);
                   else ids.forEach((id) => removeLine(id));
                 }}
@@ -1139,7 +1141,7 @@ function LinesList({
         {lines.length ? (
           <div className="divide-y divide-line">
           {lines.map((l) => {
-            const id = String(l.productId);
+            const id = String(lineReference(l));
             const checked = selectedIds.includes(id);
             const isEditing = editingId === id;
             const catalog = l.custom ? null : getProduct(l.productId);
@@ -1164,6 +1166,11 @@ function LinesList({
                       {l.description}
                     </p>
                   ) : null}
+                  {!l.custom && (l.pickedSize || l.pickedSpecs) ? <p className="mt-1 text-xs font-medium text-ink">{[l.pickedSize, ...Object.values(l.pickedSpecs || {})].filter(Boolean).join(" · ")}</p> : null}
+                  {l.selectionIssue ? <div className="mt-2 text-xs text-amber-800" role="alert">
+                    {selectionMessage(l.selectionIssue, lang, l.moq)}
+                    {l.selectionIssue === "selection_invalid" ? <Link className="ml-2 underline" to={withLocale(lang, `/details/${l.productId}?selection=${encodeURIComponent(lineReference(l))}`)}>{lang === "en" ? "Reselect options" : "重新選擇規格"}</Link> : null}
+                  </div> : null}
                   {unpriced ? (
                     <p className="mt-1 inline-flex bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
                       {t("noListedPrice")}
@@ -1175,7 +1182,7 @@ function LinesList({
             }
             return (
               <div
-                key={l.productId}
+                key={lineReference(l)}
                 className={`px-3 py-3 ${
                   checked ? "bg-white" : "bg-paper/50"
                 } ${dragging?.productId === id ? "opacity-45" : ""} ${discontinued ? "opacity-80" : ""}`}
@@ -1203,7 +1210,7 @@ function LinesList({
                           category: l.category || "",
                           attachments: l.attachments || [],
                         }}
-                        onSubmit={(payload) => onUpdateCustom(l.productId, payload)}
+                        onSubmit={(payload) => onUpdateCustom(lineReference(l), payload)}
                         onCancel={() => setEditingId(null)}
                       />
                     </div>
@@ -1266,7 +1273,7 @@ function LinesList({
                           value={l.qty}
                           min={Math.max(1, Number(l.moq) || 1)}
                           unit={l.unit || ""}
-                          onChange={(qty) => setLineQty(l.productId, qty)}
+                          onChange={(qty) => setLineQty(lineReference(l), qty)}
                           size="bar"
                           t={t}
                         />
@@ -1286,7 +1293,7 @@ function LinesList({
                         ) : null}
                         <button
                           type="button"
-                          onClick={() => removeLine(l.productId)}
+                          onClick={() => removeLine(lineReference(l))}
                           className="text-[11px] font-semibold text-mute/80 hover:text-[#8a2b2b]"
                         >
                           {t("remove")}
@@ -1365,7 +1372,7 @@ function MetaForm({
   profileProjects = [],
   omitShared = false,
 }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const today = todayIso();
   const deadlineInvalid = formErrorField === "response_date";
   const deliveryInvalid = formErrorField === "delivery_date";
@@ -1718,7 +1725,7 @@ function SubmitBar({
   marketplaceRfqEnabled = true,
   rfqDisabledTitle = "",
 }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const rfqLocked = !marketplaceRfqEnabled;
   return (
     <div className={bare ? "" : "bg-white border border-line rounded-xl p-4 sm:p-5"}>

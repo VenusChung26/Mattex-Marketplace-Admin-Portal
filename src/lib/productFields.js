@@ -136,8 +136,9 @@ function optionFacts(option) {
   const summary = String(option.summary || "").trim();
   const sku = String(option.sku || "").trim();
   const specs = Array.isArray(option.specs) ? option.specs : null;
-  if (!detail && !summary && !sku && !specs) return null;
+  if (!detail && !summary && !sku && !specs && option.moq == null && option.unit_price == null && !option.unit) return null;
   const facts = { detail, summary, sku };
+  if (Object.hasOwn(option, "unit_price")) facts.unit_price = finiteNumber(option.unit_price);
   if (option.moq != null && option.moq !== "") facts.moq = option.moq;
   if (option.unit) facts.unit = option.unit;
   if (option.leadTime) facts.leadTime = option.leadTime;

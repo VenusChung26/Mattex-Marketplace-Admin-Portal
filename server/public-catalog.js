@@ -103,6 +103,7 @@ function orderFacts(product) {
   const detail = (sizeLine ? sizeLine.replace(/^size\s*:\s*/i, "").trim() : "") || size;
   const description = String(product?.description || "").trim();
   const facts = {};
+  facts.unit_price = Number(product?.unit_price) > 0 ? Number(product.unit_price) : null;
   if (detail) facts.detail = detail;
   if (description && description !== detail && description !== size) facts.summary = description;
   const sku = String(product?.productNo || "").trim();
@@ -1880,10 +1881,27 @@ export function foldTimberPlywood(products) {
   return [...cleaned.slice(0, at), ...folded, ...cleaned.slice(at)];
 }
 
+const BUYER_PROJECTION = "buyer-catalog-v1";
+const BUYER_ETAG_SUFFIX = "-timber-ply-fold3";
+
+export function buyerCatalogVersion(etag) {
+  const value = String(etag || "");
+  return !value || value === "seed" || value.endsWith(BUYER_ETAG_SUFFIX) ? value : `${value}${BUYER_ETAG_SUFFIX}`;
+}
+
 export function toPublicCatalog(catalog) {
-  if (!catalog || typeof catalog !== "object") return catalog;
-  return {
-    ...catalog,
-    products: Array.isArray(catalog.products) ? catalog.products.map(toPublicProduct) : [],
-  };
+  if (!catalog || typeof catalog !== "object" || catalog.buyerProjection === BUYER_PROJECTION) return catalog;
+  let products = (catalog.products || [])
+    .filter((p) => p && p.published !== false && !p.deleted && !p.held)
+    .map(toPublicProduct);
+  for (const fold of [foldXpsFoamBoard, foldDenseMesh, foldPrecastConcrete, foldBalustrades,
+    foldOxygenChamber, foldDowelBar, foldPaint, foldRaisedFloors, foldAluminumCladding,
+    foldCable, foldShoeWashing, foldFinishBoards, foldAggregate, foldPipeFittings,
+    foldWindows, foldTiles, foldDrainageGratings, foldSteelGratings, foldManholeCovers,
+    foldGypsumBlocks, foldTimberPlywood]) products = fold(products);
+  const previous = new Map((catalog.categories || []).map((item) => [item?.name, item]));
+  const categories = [...new Set(products.map((p) => String(p.category || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "zh"))
+    .map((name) => ({ name, image: previous.get(name)?.image || "", imageFallback: previous.get(name)?.imageFallback || "" }));
+  return { ...catalog, buyerProjection: BUYER_PROJECTION, etag: buyerCatalogVersion(catalog.etag), products, categories };
 }

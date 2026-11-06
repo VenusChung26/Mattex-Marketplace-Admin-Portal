@@ -1,8 +1,9 @@
+import { lineReference } from "../../lib/productSelection.js";
 /**
  * PROTOTYPE — Variant A: mix-and-match supplier offers per RFQ line.
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { formatPrice, buildSupplierMetrics, getSupplier, supplierSlug, getProduct } from "../../lib/store";
+import { formatPrice, buildSupplierMetrics, getSupplier, supplierSlug } from "../../lib/store";
 import { scrollLeftSoon, scrollNodeIntoView } from "../../lib/scrollInto";
 import { useLanguage } from "../../i18n";
 
@@ -99,12 +100,12 @@ function AcceptedBanner({ acceptance, onReset, onGoToPo, historicalPreview = fal
 }
 
 function lineQuoteFlags(req, quotes, picks) {
-  const picked = Boolean(picks[req.productId]);
+  const picked = Boolean(picks[lineReference(req)]);
   const quotedBy = [];
   let quoted = false;
   let hasAlt = false;
   quotes.forEach((quote) => {
-    const line = quote.lines.find((l) => l.productId === req.productId);
+    const line = quote.lines.find((l) => lineReference(l) === lineReference(req));
     if (!line) return;
     quoted = true;
     quotedBy.push(quote.supplierName || quote.supplier);
@@ -119,7 +120,7 @@ function lineMatchesBase(req, quotes, picks, filters) {
     const hay = [
       req.requestName,
       `l${req.lineNo}`,
-      req.productId,
+      lineReference(req),
       req.productNo,
       req.category,
       req.supplier,
@@ -167,13 +168,13 @@ function qtyKey(quoteId, productId) {
 function selectedIndexesForSet(line, quoteId, setPartPicks) {
   const parts = line?.setParts || [];
   if (!parts.length) return [];
-  const stored = setPartPicks?.[qtyKey(quoteId, line.productId)];
+  const stored = setPartPicks?.[qtyKey(quoteId, lineReference(line))];
   if (!Array.isArray(stored)) return [];
   return stored.filter((i) => i >= 0 && i < parts.length);
 }
 
 function catalogCopy(line) {
-  const product = line?.custom ? null : getProduct(line?.productId);
+  const product = line?.selectionSnapshot?.product || null;
   return {
     name: line?.name || product?.name || line?.requestName || "",
     description: String(line?.description || product?.description || "").trim(),
@@ -208,7 +209,7 @@ function resolveOffer(line, quoteId, qtyEdits, setPartPicks = {}) {
   const copy = catalogCopy(line);
   const quotedQty = line.qty;
   const moq = Math.max(1, Number(line.moq) || 1);
-  const raw = qtyEdits?.[qtyKey(quoteId, line.productId)];
+  const raw = qtyEdits?.[qtyKey(quoteId, lineReference(line))];
   const parsed = Math.floor(Number(raw));
   const qty = Number.isFinite(parsed) && parsed > 0 ? parsed : quotedQty;
   if (line.isSet && line.setParts?.length) {
@@ -250,11 +251,11 @@ export function buildAcceptanceFromPicks(rfq, quotes, picks, qtyEdits = {}, setP
   let total = 0;
   const supplierNames = [];
   rfq.lines.forEach((req) => {
-    const quoteId = picks[req.productId];
+    const quoteId = picks[lineReference(req)];
     if (!quoteId) return;
     const quote = quotes.find((q) => q.id === quoteId);
     const offer = resolveOffer(
-      quote?.lines.find((l) => l.productId === req.productId),
+      quote?.lines.find((l) => lineReference(l) === lineReference(req)),
       quoteId,
       qtyEdits,
       setPartPicks
@@ -262,6 +263,8 @@ export function buildAcceptanceFromPicks(rfq, quotes, picks, qtyEdits = {}, setP
     if (!quote || !offer) return;
     lines.push({
       productId: req.productId,
+      lineId: lineReference(req),
+      selectionSnapshot: req.selectionSnapshot,
       requestName: req.name,
       quoteId,
       supplierName: quote.supplierName,
@@ -729,9 +732,10 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
   const requestLines = useMemo(
     () =>
       (rfq.lines || []).map((l, i) => {
-        const product = l.custom ? null : getProduct(l.productId);
+        const product = l.selectionSnapshot?.product || null;
         return {
           productId: l.productId,
+          lineId: lineReference(l),
           requestName: l.name,
           qty: l.qty,
           lineNo: i + 1,
@@ -756,10 +760,10 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
     custom: filterCustom,
     listed: filterListed,
   };
-  const [focusProductId, setFocusProductId] = useState(requestLines[0]?.productId || null);
-  const focusLine = requestLines.find((l) => l.productId === focusProductId) || requestLines[0];
+  const [focusProductId, setFocusProductId] = useState((requestLines[0] ? lineReference(requestLines[0]) : null) || null);
+  const focusLine = requestLines.find((l) => lineReference(l) === focusProductId) || requestLines[0];
   const [picks, setPicks] = useState(() => acceptance?.picks || {});
-  const [detailProductId, setDetailProductId] = useState(requestLines[0]?.productId || null);
+  const [detailProductId, setDetailProductId] = useState((requestLines[0] ? lineReference(requestLines[0]) : null) || null);
 
   const categories = useMemo(
     () => [...new Set(requestLines.map((l) => l.category).filter(Boolean))].sort(),
@@ -813,7 +817,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
 
   useEffect(() => {
     if (!visibleLines.length) return;
-    if (!visibleLines.some((l) => l.productId === focusProductId)) {
+    if (!visibleLines.some((l) => lineReference(l) === focusProductId)) {
       setFocusProductId(visibleLines[0].productId);
     }
   }, [visibleLines, focusProductId]);
@@ -871,7 +875,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
     setPicks((prev) => ({ ...prev, [productId]: quoteId }));
     setDetailProductId(productId);
     const quote = quotes.find((q) => q.id === quoteId);
-    const line = quote?.lines.find((l) => String(l.productId) === String(productId));
+    const line = quote?.lines.find((l) => String(lineReference(l)) === String(productId));
     clearSetPartsForProduct(productId, line?.isSet ? quoteId : null);
   }
 
@@ -900,7 +904,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
     setPicks((prev) => {
       const next = { ...prev };
       quote.lines.forEach((l) => {
-        next[l.productId] = quoteId;
+        next[lineReference(l)] = quoteId;
       });
       return next;
     });
@@ -908,12 +912,12 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
       const next = { ...prev };
       quote.lines.forEach((l) => {
         Object.keys(next).forEach((key) => {
-          if (key.endsWith(`::${l.productId}`) && key !== qtyKey(quoteId, l.productId)) {
+          if (key.endsWith(`::${lineReference(l)}`) && key !== qtyKey(quoteId, lineReference(l))) {
             delete next[key];
           }
         });
         if (l.isSet && l.setParts?.length) {
-          next[qtyKey(quoteId, l.productId)] = l.setParts.map((_, i) => i);
+          next[qtyKey(quoteId, lineReference(l))] = l.setParts.map((_, i) => i);
         }
       });
       return next;
@@ -942,7 +946,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
     ? quotes
         .map((q) => {
           const line = resolveOffer(
-            q.lines.find((l) => l.productId === focusLine.productId),
+            q.lines.find((l) => lineReference(l) === lineReference(focusLine)),
             q.id,
             qtyEdits,
             setPartPicks
@@ -964,7 +968,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
       let bestTotal = Infinity;
       quotes.forEach((q) => {
         const line = resolveOffer(
-          q.lines.find((l) => l.productId === req.productId),
+          q.lines.find((l) => lineReference(l) === lineReference(req)),
           q.id,
           qtyEdits,
           setPartPicks
@@ -974,7 +978,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
           bestId = q.id;
         }
       });
-      return [req.productId, bestId];
+      return [lineReference(req), bestId];
     })
   );
 
@@ -1206,13 +1210,13 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
           ) : (
           <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
             {visibleLines.map((req) => {
-              const active = req.productId === focusLine?.productId;
-              const picked = picks[req.productId];
+              const active = lineReference(req) === lineReference(focusLine);
+              const picked = picks[lineReference(req)];
               return (
                 <button
-                  key={req.productId}
+                  key={lineReference(req)}
                   type="button"
-                  onClick={() => setFocusProductId(req.productId)}
+                  onClick={() => setFocusProductId(lineReference(req))}
                   className={`shrink-0 max-w-[14rem] text-left border rounded-xl px-3 py-2.5 ${
                     active ? "border-brand-600 bg-brand-50" : "border-line bg-white hover:border-brand-600/40"
                   }`}
@@ -1259,7 +1263,7 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
             <ul className="divide-y divide-line">
               {offersForFocus.map(({ quote: q, line }) => {
                 const isLowest = line && q.id === lowestOfferQuoteId;
-                const isPicked = focusLine && picks[focusLine.productId] === q.id;
+                const isPicked = focusLine && picks[lineReference(focusLine)] === q.id;
                 return (
                   <li
                     key={q.id}
@@ -1288,13 +1292,13 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                         locked={locked}
                         t={t}
                         onTogglePart={(index) =>
-                          toggleSetPart(q.id, focusLine.productId, index, line.setParts?.length || 0)
+                          toggleSetPart(q.id, lineReference(focusLine), index, line.setParts?.length || 0)
                         }
                         onSelectAllParts={() =>
-                          setAllSetParts(q.id, focusLine.productId, line.setParts?.length || 0, true)
+                          setAllSetParts(q.id, lineReference(focusLine), line.setParts?.length || 0, true)
                         }
                         onSelectNoneParts={() =>
-                          setAllSetParts(q.id, focusLine.productId, line.setParts?.length || 0, false)
+                          setAllSetParts(q.id, lineReference(focusLine), line.setParts?.length || 0, false)
                         }
                       />
                     </div>
@@ -1311,10 +1315,10 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                         onClick={() => {
                           if (!focusLine || !line) return;
                           if (line.isSet && !(line.selectedPartIndexes || []).length) {
-                            setAllSetParts(q.id, focusLine.productId, line.setParts?.length || 0, true);
+                            setAllSetParts(q.id, lineReference(focusLine), line.setParts?.length || 0, true);
                             return;
                           }
-                          pickLine(focusLine.productId, q.id);
+                          pickLine(lineReference(focusLine), q.id);
                         }}
                       >
                         {isPicked ? "Selected for item" : "Select for this item"}
@@ -1427,23 +1431,23 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                   </tr>
                 ) : (
                 visibleLines.map((req) => {
-                  const pickedQuoteId = picks[req.productId] || null;
+                  const pickedQuoteId = picks[lineReference(req)] || null;
                   const pickedSupplier = pickedQuoteId
                     ? quotes.find((q) => q.id === pickedQuoteId)?.supplierName
                     : null;
                   const pickedOffer = pickedQuoteId
                     ? resolveOffer(
-                        quotes.find((q) => q.id === pickedQuoteId)?.lines.find((l) => l.productId === req.productId),
+                        quotes.find((q) => q.id === pickedQuoteId)?.lines.find((l) => lineReference(l) === lineReference(req)),
                         pickedQuoteId,
                         qtyEdits,
                         setPartPicks
                       )
                     : null;
-                  const showDetail = detailProductId === req.productId && pickedOffer && !pickedOffer.isSet;
+                  const showDetail = detailProductId === lineReference(req) && pickedOffer && !pickedOffer.isSet;
 
                   return (
-                    <Fragment key={req.productId}>
-                      <tr onClick={() => setDetailProductId(req.productId)}>
+                    <Fragment key={lineReference(req)}>
+                      <tr onClick={() => setDetailProductId(lineReference(req))}>
                         <th
                           scope="row"
                           className="sticky left-0 z-10 w-44 min-w-44 max-w-44 text-left font-medium px-3 py-3 border-b border-r border-line align-top cursor-pointer bg-white overflow-hidden"
@@ -1477,21 +1481,21 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                         </th>
                         {quotes.map((q) => {
                           const offered = resolveOffer(
-                            q.lines.find((l) => l.productId === req.productId),
+                            q.lines.find((l) => lineReference(l) === lineReference(req)),
                             q.id,
                             qtyEdits,
                             setPartPicks
                           );
-                          const isLineLowest = offered && lowestByProductId[req.productId] === q.id;
-                          const isPicked = picks[req.productId] === q.id;
-                          const key = qtyKey(q.id, req.productId);
+                          const isLineLowest = offered && lowestByProductId[lineReference(req)] === q.id;
+                          const isPicked = picks[lineReference(req)] === q.id;
+                          const key = qtyKey(q.id, lineReference(req));
                           const displayOffer =
                             offered && qtyEdits[key] != null && !offered.isSet
                               ? { ...offered, qty: qtyEdits[key] }
                               : offered;
                           return (
                             <CompactCell
-                              key={`${req.productId}-${q.id}`}
+                              key={`${lineReference(req)}-${q.id}`}
                               offered={displayOffer}
                               isPicked={isPicked}
                               isLineLowest={isLineLowest}
@@ -1503,21 +1507,21 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                                   const partCount = offered.setParts?.length || 0;
                                   const selected = Array.isArray(setPartPicks[key]) ? setPartPicks[key] : [];
                                   if (isPicked || selected.length > 0) {
-                                    setAllSetParts(q.id, req.productId, partCount, false);
+                                    setAllSetParts(q.id, lineReference(req), partCount, false);
                                     return;
                                   }
-                                  setAllSetParts(q.id, req.productId, partCount, true);
+                                  setAllSetParts(q.id, lineReference(req), partCount, true);
                                   return;
                                 }
                                 if (isPicked) {
                                   setPicks((prev) => {
                                     const next = { ...prev };
-                                    delete next[req.productId];
+                                    delete next[lineReference(req)];
                                     return next;
                                   });
                                   return;
                                 }
-                                pickLine(req.productId, q.id);
+                                pickLine(lineReference(req), q.id);
                               }}
                               onQtyChange={(value) => {
                                 setQtyEdits((prev) => ({ ...prev, [key]: value }));
@@ -1531,13 +1535,13 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
                               }}
                               onZoomImage={setZoomImage}
                               onTogglePart={(index) => {
-                                toggleSetPart(q.id, req.productId, index, offered?.setParts?.length || 0);
+                                toggleSetPart(q.id, lineReference(req), index, offered?.setParts?.length || 0);
                               }}
                               onSelectAllParts={() =>
-                                setAllSetParts(q.id, req.productId, offered?.setParts?.length || 0, true)
+                                setAllSetParts(q.id, lineReference(req), offered?.setParts?.length || 0, true)
                               }
                               onSelectNoneParts={() =>
-                                setAllSetParts(q.id, req.productId, offered?.setParts?.length || 0, false)
+                                setAllSetParts(q.id, lineReference(req), offered?.setParts?.length || 0, false)
                               }
                             />
                           );

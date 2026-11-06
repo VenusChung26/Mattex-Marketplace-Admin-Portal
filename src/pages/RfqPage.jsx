@@ -1,3 +1,4 @@
+import { lineReference, selectionMessage } from "../lib/productSelection.js";
 /**
  * RFQ draft — select products, then confirm logistics on the next page.
  */
@@ -139,7 +140,7 @@ export default function RfqPage() {
   }, []);
   const navigate = useNavigate();
   const [selectedIds, setSelectedIds] = useState(() =>
-    specConfirm?.ids?.length ? specConfirm.ids.map(String) : totals.lines.map((l) => String(l.productId))
+    specConfirm?.ids?.length ? specConfirm.ids.map(String) : totals.lines.map((l) => lineReference(l))
   );
   const [editingId, setEditingId] = useState(null);
   const [showAddCustom, setShowAddCustom] = useState(false);
@@ -150,7 +151,7 @@ export default function RfqPage() {
 
   const selectableLineIds = totals.lines
     .filter((line) => line.custom || isOrderable(getProduct(line.productId)))
-    .map((line) => String(line.productId));
+    .map((line) => lineReference(line));
 
   useEffect(() => {
     const allowed = new Set(selectableLineIds);
@@ -193,7 +194,7 @@ export default function RfqPage() {
     setDraftAddress(profileAddress);
   }, [totals.address, profileAddress]);
 
-  const lineIdsKey = totals.lines.map((l) => String(l.productId)).join(",");
+  const lineIdsKey = totals.lines.map((l) => lineReference(l)).join(",");
 
   useEffect(() => {
     const ids = lineIdsKey ? lineIdsKey.split(",") : [];
@@ -217,7 +218,7 @@ export default function RfqPage() {
     if (canonicalCategory) return;
     const selected = new Set(selectedKey ? selectedKey.split(",") : []);
     const quoteLines = totals.lines.filter(
-      (line) => line.intent !== "buy" && selected.has(String(line.productId))
+      (line) => line.intent !== "buy" && selected.has(lineReference(line))
     );
     const inferred = inferCanonicalCategory(quoteLines);
     if (inferred) {
@@ -413,7 +414,7 @@ export default function RfqPage() {
     const viaWhatsapp = channel === "whatsapp";
     const ids = totals.lines
       .filter((line) => (kind === "buy" ? line.intent === "buy" : line.intent !== "buy"))
-      .map((line) => String(line.productId))
+      .map((line) => lineReference(line))
       .filter((id) => selectedIds.includes(id));
     if (!ids.length) {
       setFormErrorKind(kind);
@@ -422,7 +423,7 @@ export default function RfqPage() {
       return;
     }
     const blocked = ids.filter((id) => {
-      const line = totals.lines.find((row) => String(row.productId) === id);
+      const line = totals.lines.find((row) => lineReference(row) === id);
       return line && !line.custom && !isOrderable(getProduct(id));
     });
     if (blocked.length) {
@@ -458,7 +459,7 @@ export default function RfqPage() {
 
   function linesBelowMoq(ids) {
     return totals.lines.filter((line) => {
-      if (!ids.includes(String(line.productId))) return false;
+      if (!ids.includes(lineReference(line))) return false;
       if (line.custom) return false;
       const moq = Math.max(1, Number(line.moq) || 1);
       return Number(line.qty) < moq;
@@ -496,7 +497,7 @@ export default function RfqPage() {
     } else if (!viaWhatsapp && !requireBuyerAuth()) return;
     const ids = totals.lines
       .filter((line) => (kind === "buy" ? line.intent === "buy" : line.intent !== "buy"))
-      .map((line) => String(line.productId))
+      .map((line) => lineReference(line))
       .filter((id) => selectedIds.includes(id));
     const under = linesBelowMoq(ids);
     if (under.length) {
@@ -527,7 +528,7 @@ export default function RfqPage() {
         if (guestText) setFormError(guestText);
         else if (result.error === "none_selected") setFormError(t("noneSelected"));
         else if (result.error === "discontinued") setFormError(t("discontinuedSubmitError"));
-        else setFormError(t("submitFailed"));
+        else setFormError(selectionMessage(result.error, lang) || t("submitFailed"));
         revealIssue();
         return;
       }
@@ -562,7 +563,7 @@ export default function RfqPage() {
       else if (result.error === "address") setFormError(kind === "buy" ? t("buyNeedsAddress") : t("addressRequired"));
       else if (result.error === "none_selected") setFormError(t("noneSelected"));
       else if (result.error === "discontinued") setFormError(t("discontinuedSubmitError"));
-      else setFormError(t("submitFailed"));
+      else setFormError(selectionMessage(result.error, lang) || t("submitFailed"));
       revealIssue();
       return;
     }
@@ -613,7 +614,7 @@ export default function RfqPage() {
     }
     writeSpecQuote({
       lines: specQuoteRef.current.lines.map((line) =>
-        String(line.productId) === String(productId) ? { ...line, qty: Math.max(1, Math.floor(Number(qty)) || 1) } : line
+        lineReference(line) === String(productId) ? { ...line, qty: Math.max(1, Math.floor(Number(qty)) || 1) } : line
       ),
     });
   }
@@ -624,7 +625,7 @@ export default function RfqPage() {
       return;
     }
     writeSpecQuote({
-      lines: specQuoteRef.current.lines.filter((line) => String(line.productId) !== String(productId)),
+      lines: specQuoteRef.current.lines.filter((line) => lineReference(line) !== String(productId)),
     });
   }
 

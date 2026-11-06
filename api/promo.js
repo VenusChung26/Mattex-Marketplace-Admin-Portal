@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { getDb as db } from "../server/db.js";
 import { put } from "@vercel/blob";
 import { readSession } from "./auth.js";
 
@@ -11,16 +11,6 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ID_RE = /^[a-zA-Z0-9_-]{1,40}$/;
 const SRC_RE = /^\/assets\/promo\/[a-zA-Z0-9._/-]+$/;
 const BLOB_RE = /^https:\/\/[a-z0-9.-]+\.public\.blob\.vercel-storage\.com\/promo\/[A-Za-z0-9._~/-]+$/;
-
-let client = null;
-
-function db() {
-  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!url || !key) return null;
-  if (!client) client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-  return client;
-}
 
 async function readKv(sb, key) {
   const { data, error } = await sb.from("app_kv").select("value").eq("key", key).maybeSingle();

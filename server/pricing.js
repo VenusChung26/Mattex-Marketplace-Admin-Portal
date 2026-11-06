@@ -1,3 +1,4 @@
+import { resolveSelection, selectionKey, selectionDescription } from "../src/lib/productSelection.js";
 import { findProductOffer } from "../src/lib/offer.js";
 import { orderMinimum, sellingAmount } from "../src/lib/productFields.js";
 
@@ -37,9 +38,13 @@ export function priceOrderLines(wanted, { products, promo, now = new Date() } = 
     const productId = String(row?.productId || "");
     const qty = Number(row?.qty);
     if (!Number.isFinite(qty) || qty <= 0 || qty > MAX_QTY || !Number.isInteger(qty)) return { ok: false, error: "qty", productId };
-    const product = byId.get(productId);
-    if (!product || seen.has(productId)) return { ok: false, error: "unknown", productId };
-    seen.add(productId);
+    const source = byId.get(productId);
+    const key = selectionKey(row);
+    if (!source || seen.has(key)) return { ok: false, error: "unknown", productId };
+    seen.add(key);
+    const chosen = resolveSelection(source, row);
+    if (!chosen.ok) return { ok: false, error: chosen.error, productId };
+    const product = chosen.product;
     if (!buyerVisible(product) || product.discontinued) return { ok: false, error: "unavailable", productId };
     const unitPrice = unitPriceFor(product, promo, now);
     if (unitPrice == null) return { ok: false, error: "no_price", productId };
@@ -47,6 +52,12 @@ export function priceOrderLines(wanted, { products, promo, now = new Date() } = 
     if (moq != null && qty < moq) return { ok: false, error: "moq", productId };
     lines.push({
       productId,
+      lineId: chosen.line.lineId,
+      pickedSpecs: chosen.line.selectionSnapshot.pickedSpecs,
+      pickedSize: chosen.line.selectionSnapshot.pickedSize,
+      selectionSnapshot: chosen.line.selectionSnapshot,
+      description: selectionDescription(product, row),
+      spec: selectionDescription(product, row),
       sku: String(product.productNo || product.sku || product.id),
       name: String(product.name || product.productNo || product.id),
       unit: String(product.unit || ""),

@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { requireDb } from "../server/db.js";
 import { readSession } from "./auth.js";
 import { mergeRfqMaps } from "../server/shared-store.js";
 import { PUBLIC_KV_KEYS } from "../src/lib/kvKeys.js";
@@ -13,13 +13,8 @@ const SECRET_FIELDS = ["password", "resetToken", "resetExpiresAt", "inviteToken"
 const MAX_SEQ_JUMP = 5;
 const APPEND_CAP = 200;
 
-let client = null;
 function db() {
-  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!url || !key) throw new Error("data_not_configured");
-  if (!client) client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-  return client;
+  return requireDb("data_not_configured");
 }
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();

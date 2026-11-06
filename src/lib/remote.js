@@ -91,7 +91,7 @@ export async function registerRfq(body) {
     const { res, data } = await sendJson("/api/rfq", { method: "POST", body: { action: "register", ...body } });
     if (res.status === 501) return { ok: false, legacy: true };
     if (!res.ok || !data?.ok) return { ok: false, error: data?.error || `http_${res.status}` };
-    return { ok: true, id: data.id, createdAt: data.createdAt, revision: data.revision, mailed: Boolean(data.mailed) };
+    return { ok: true, id: data.id, createdAt: data.createdAt, revision: data.revision, mailed: Boolean(data.mailed), lines: data.lines };
   } catch {
     return { ok: false, error: "network" };
   }
@@ -408,5 +408,15 @@ export async function createPoFromQuote(id) {
     return { ok: true, noop: Boolean(data.noop), patch: data.patch || null };
   } catch {
     return { ok: false, error: "network" };
+  }
+}
+
+/** Validate the buyer's actual selections immediately before creating a document. */
+export async function verifyProductSelections(lines) {
+  try {
+    const { res, data } = await sendJson("/api/rfq", { method: "POST", body: { action: "validate_selections", lines }, timeoutMs: 15000 });
+    return res.ok && data?.ok ? data : { ok: false, error: data?.error || "catalog_unavailable", lineId: data?.lineId || "" };
+  } catch {
+    return { ok: false, error: "catalog_unavailable" };
   }
 }

@@ -1,3 +1,4 @@
+import { findSelectionLine, resolveSelection, selectedProduct, selectionMessage } from "../lib/productSelection.js";
 import { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import CopyLinkButton from "../components/CopyLinkButton";
@@ -21,6 +22,8 @@ import { seoCopy } from "../lib/seoCopy";
 import { usePromo } from "../lib/promo";
 import {
   addFromStorefront,
+  getDraft,
+  replaceDraftSelection,
   blockProductOrders,
   canDirectBuy,
   fetchProductLive,
@@ -81,6 +84,9 @@ export default function DetailsPage() {
   useStore();
   useCatalogGroups();
   const product = getProduct(id) || bootProduct(id);
+  const editRef = params.get("selection") || "";
+  const editingLine = editRef ? findSelectionLine(getDraft().lines, editRef) : null;
+  const navigate = useNavigate();
   const group = groupOf(product?.id);
   const variantOptions = (group?.members || [])
     .map((member) => ({ ...member, product: getProduct(member.productId) }))
@@ -95,9 +101,6 @@ export default function DetailsPage() {
   const [sizeChoice, setSizeChoice] = useState("");
   const pickedFields = pickedSpecFields(product?.specGroups, pickedSpecs || {}, product?.specChoices);
   const orderMoq = Math.max(1, Number(pickedFields.moq != null && pickedFields.moq !== "" ? pickedFields.moq : product?.moq) || 1);
-  useEffect(() => {
-    setQty((current) => (current < orderMoq ? orderMoq : current));
-  }, [orderMoq, product?.id]);
   const [tailorNonce, setTailorNonce] = useState(0);
   const [tailorDimensions, setTailorDimensions] = useState(false);
   function openTailor(mode) {
@@ -112,12 +115,12 @@ export default function DetailsPage() {
   // Only reset picks when navigating to another product. Catalog refresh rebuilds
   // product.images/image references and must not wipe the buyer's selections.
   useEffect(() => {
-    setPickedSpecs(null);
-    setSizeChoice("");
-    setQty(product?.moq || 1);
+    setPickedSpecs(editingLine?.pickedSpecs || null);
+    setSizeChoice(editingLine?.pickedSize || "");
+    setQty(editingLine?.qty || product?.moq || 1);
     const next = productImageList(product);
     setActiveImage(next[0] || product?.image || "");
-  }, [product?.id]);
+  }, [product?.id, editRef]);
 
   useEffect(() => {
     if (params.get("tailor") !== "1") return;
@@ -143,9 +146,10 @@ export default function DetailsPage() {
     );
   }
 
+  const selectionStatus = resolveSelection(product, { productId: product.id, pickedSpecs, pickedSize: sizeChoice, qty });
   const discontinued = Boolean(product.discontinued);
-  const priced = !discontinued && canDirectBuy(product);
-  const priceStatus = getEffectivePrice(product).status;
+  const priced = !discontinued && canDirectBuy(selectedProduct(product, { pickedSpecs, pickedSize: sizeChoice }));
+  const priceStatus = getEffectivePrice(selectedProduct(product, { pickedSpecs, pickedSize: sizeChoice })).status;
   const priceHint =
     priceStatus === "quoted"
       ? `${t("quotedBuyHint")} ${t("requestQuoteHint")}`
@@ -155,7 +159,7 @@ export default function DetailsPage() {
           ? t("requestQuoteHint")
           : t("requestQuoteOnlyHint");
   const viewProduct = {
-    ...product,
+    ...selectedProduct(product, { pickedSpecs, pickedSize: sizeChoice }),
     specs: pickedFields.specs || product.specs,
     moq: pickedFields.moq != null && pickedFields.moq !== "" ? pickedFields.moq : product.moq,
     unit: pickedFields.unit || product.unit,
@@ -222,7 +226,8 @@ export default function DetailsPage() {
         blockProductOrders(product.id);
         return;
       }
-      const sendQty = Math.max(minQty, Math.floor(Number(nextQty)) || minQty);
+      const sendQty = Math.floor(Number(nextQty)) || 0;
+      if (!resolveSelection(product, { productId: product.id, qty: sendQty, pickedSpecs, pickedSize: sizeChoice }).ok) return;
       const result = addFromStorefront(product.id, intent, sendQty, lang, {
         pickedSpecs: pickedSpecs || undefined,
         pickedSize: sizeChoice || undefined,
@@ -334,6 +339,7 @@ export default function DetailsPage() {
             ) : null}
             {product.specGroups?.length ? (
               <SpecGroupPicker
+                    value={pickedSpecs}
                 key={product.id}
                 groups={product.specGroups}
                 className="mt-4"
@@ -417,19 +423,29 @@ export default function DetailsPage() {
               )}
             </p>
             <ProductRating product={product} size="lg" className="mt-2" />
-            <ProductPrice product={product} size="detail" />
+            <ProductPrice product={viewProduct} size="detail" />
             <div className="mt-4 hidden lg:block">
               {discontinued ? (
                 <span className="inline-flex items-center bg-[#f8e8e8] text-[#8a2b2b] text-xs font-bold uppercase tracking-wide px-3 py-2">
                   {t("discontinued")}
                 </span>
               ) : (
+                <>
+                {editingLine ? <div className="mb-3 space-y-2 rounded border border-amber-200 bg-amber-50 p-3 text-sm">
+                  <p>{lang === "en" ? "Review this draft line and apply your selection." : "請重新選擇此行規格，再套用至草稿。"}</p>
+                  {!selectionStatus.ok ? <p role="alert">{selectionMessage(selectionStatus.error, lang, orderMoq)}</p> : null}
+                  {selectionStatus.invalidGroups?.includes("size") && !sizeChoices.length ? <button type="button" className="underline" onClick={() => setSizeChoice("")}>{lang === "en" ? "Confirm current standard size" : "確認目前標準尺寸"}</button> : null}
+                  <button type="button" className="btn-primary disabled:opacity-40" disabled={!selectionStatus.ok} onClick={() => {
+                    const result = replaceDraftSelection(editRef, product.id, { qty, pickedSpecs, pickedSize: sizeChoice });
+                    if (result.ok) navigate(withLocale(lang, "/rfq"));
+                  }}>{lang === "en" ? "Apply to draft" : "套用至草稿"}</button>
+                </div> : null}
                 <ProductActions
                   product={product}
                   qty={qty}
                   onQtyChange={setQty}
                   hideQty
-                  disabled={offline}
+                  disabled={offline || Boolean(editingLine)}
                   onAdd={(_, intent, nextQty) => goToRfq(intent, nextQty)}
                   size="detail"
                   autoOpenTailor={autoOpenTailor}
@@ -438,6 +454,7 @@ export default function DetailsPage() {
                   pickedSpecs={pickedSpecs}
                   pickedSize={sizeChoice}
                 />
+                </>
               )}
             </div>
             <p className="mt-3 text-xs text-mute leading-relaxed max-w-prose">
@@ -543,7 +560,7 @@ export default function DetailsPage() {
               product={product}
               qty={qty}
               onQtyChange={setQty}
-              disabled={offline}
+              disabled={offline || Boolean(editingLine)}
               onAdd={(_, intent, nextQty) => goToRfq(intent, nextQty)}
               size="bar"
               tailorNonce={tailorNonce}

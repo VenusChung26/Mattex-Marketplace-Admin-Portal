@@ -1,3 +1,4 @@
+import { lineReference } from "./productSelection.js";
 /**
  * RFQ status rules shared by the browser (bridge) and the server.
  * Pure: no storage, no clock unless `at` is passed, no network. The server is the one that
@@ -390,6 +391,8 @@ export function freezeQuoteLines(lines) {
         : null;
     return {
       productId: line.productId,
+      lineId: lineReference(line),
+      selectionSnapshot: line.selectionSnapshot,
       name: line.name || "",
       productNo: line.productNo || "",
       qty,
@@ -451,7 +454,7 @@ export function applyDeliveredQuoteVersion(rfq, version, extra = {}) {
 }
 
 function quoteLineKey(line) {
-  return String(line?.productId ?? "");
+  return lineReference(line);
 }
 
 function quoteLinePrice(line) {
@@ -618,6 +621,8 @@ export function publicQuoteView(snapshot) {
     createdAt: snapshot.createdAt || "",
     lines: (snapshot.lines || []).map((line) => ({
       productId: line.productId,
+      lineId: lineReference(line),
+      selectionSnapshot: line.selectionSnapshot,
       name: line.name || "",
       productNo: line.productNo || "",
       qty: Number(line.qty) || 0,
@@ -739,9 +744,9 @@ export function mergeOwned(local, owned) {
     next[key] = owned[key];
   }
   if (Array.isArray(owned.draft?.prices) && Array.isArray(next.lines)) {
-    const byId = new Map(owned.draft.prices.map((row) => [String(row.productId), row]));
+    const byId = new Map(owned.draft.prices.map((row) => [lineReference(row), row]));
     next.lines = next.lines.map((line) => {
-      const row = byId.get(String(line.productId));
+      const row = byId.get(lineReference(line));
       if (!row) return line;
       const merged = { ...line, quotedUnitPrice: row.quotedUnitPrice, noOffer: Boolean(row.noOffer) };
       if (Number(row.salesQty) > 0) merged.salesQty = Number(row.salesQty);
@@ -783,6 +788,7 @@ export function planBuyerContent(rfq, { resubmit, at } = {}) {
 export function draftPricesOf(lines) {
   return (lines || []).map((line) => ({
     productId: String(line.productId ?? ""),
+    lineId: lineReference(line),
     quotedUnitPrice: line.noOffer || !(Number(line.quotedUnitPrice) >= 0) || line.quotedUnitPrice === null || line.quotedUnitPrice === "" ? null : Number(line.quotedUnitPrice),
     noOffer: Boolean(line.noOffer),
     salesQty: Number(line.salesQty) > 0 ? Number(line.salesQty) : null,
@@ -795,10 +801,10 @@ export function deliveredLinePrices(rfq) {
   const versions = Array.isArray(rfq?.quoteVersions) ? rfq.quoteVersions : [];
   const stored = Number(rfq?.quoteEffectiveVersion);
   const effective = versions.find((row) => Number(row.version) === stored) || versions[versions.length - 1] || null;
-  const byId = new Map((effective?.lines || []).map((line) => [String(line.productId ?? ""), line]));
+  const byId = new Map((effective?.lines || []).map((line) => [lineReference(line), line]));
   return (rfq?.lines || []).map((raw) => {
     const { salesQty, salesRemark, ...line } = raw;
-    const frozen = byId.get(String(line.productId ?? ""));
+    const frozen = byId.get(lineReference(line));
     return { ...line, quotedUnitPrice: frozen ? frozen.quotedUnitPrice ?? null : null, noOffer: frozen ? Boolean(frozen.noOffer) : Boolean(line.noOffer && !versions.length && rfq?.reviewStatus === "no_offer") };
   });
 }
@@ -824,6 +830,11 @@ export function planPoFromQuote(rfq) {
     const unitPrice = Number(line.quotedUnitPrice);
     return {
       productId: String(line.productId ?? ""),
+      lineId: lineReference(line),
+      selectionSnapshot: line.selectionSnapshot,
+      pickedSpecs: line.pickedSpecs,
+      pickedSize: line.pickedSize,
+      description: line.description || line.spec || "",
       sku: String(line.productNo || line.productId || ""),
       name: String(line.name || line.productNo || line.productId || ""),
       unit: String(line.unit || ""),

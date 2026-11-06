@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { getDb as db } from "../server/db.js";
 import { readSession } from "./auth.js";
 import { handleCatalogGroupsGet, handleCatalogGroupsSave } from "../server/catalog-groups.js";
-import { foldAggregate, foldAluminumCladding, foldBalustrades, foldCable, foldDenseMesh, foldDowelBar, foldDrainageGratings, foldFinishBoards, foldGypsumBlocks, foldManholeCovers, foldOxygenChamber, foldPaint, foldPipeFittings, foldPrecastConcrete, foldRaisedFloors, foldShoeWashing, foldSteelGratings, foldTiles, foldTimberPlywood, foldWindows, foldXpsFoamBoard, toPublicProduct } from "../server/public-catalog.js";
+import { buyerCatalogVersion, toPublicCatalog } from "../server/public-catalog.js";
 import { readUatCatalog } from "../server/uat-catalog.js";
 import { applyListedProducts } from "../server/listed-products.js";
 
@@ -15,16 +15,7 @@ const SNAPSHOT_KEY = "catalog-snapshot";
 const VERSION_KEY = "catalog-version";
 const SEED = "seed";
 
-let client = null;
 let chain = Promise.resolve();
-
-function db() {
-  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!url || !key) return null;
-  if (!client) client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-  return client;
-}
 
 function isQuotaError(error) {
   const status = Number(error?.status || error?.statusCode || 0);
@@ -90,9 +81,6 @@ async function writeKv(sb, key, value) {
   return { error };
 }
 
-/** Must stay in sync with catalogForCaller buyer transform stamp. */
-const BUYER_CATALOG_ETAG_SUFFIX = "-timber-ply-fold3";
-
 export async function handleCatalogVersion(request) {
   const snapshot = await handleCatalogGet();
   const etag = String(snapshot?.etag || "");
@@ -100,7 +88,7 @@ export async function handleCatalogVersion(request) {
   const surface = request?.headers?.get?.("x-mm-catalog") || "";
   const shop = surface === "shop" || (surface !== "portal" && !readSession(request, "staff"));
   return {
-    etag: shop ? `${etag}${BUYER_CATALOG_ETAG_SUFFIX}` : etag,
+    etag: shop ? buyerCatalogVersion(etag) : etag,
     updatedAt: snapshot.updatedAt || "",
   };
 }
@@ -142,17 +130,20 @@ function withListedProducts(catalog) {
   if (!catalog?.products?.length) return catalog;
   const products = applyListedProducts(catalog.products.map((product) => ({ ...product })));
   const names = [...new Set(products.map((product) => product.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const body = JSON.stringify(products.map((product) => [product.id, product.unit_price, product.name, product.category]));
+  const body = JSON.stringify(products);
   return {
     ...catalog,
     products,
     etag: createHash("sha256").update(body).digest("hex").slice(0, 16),
-    categories: names.map((name) => ({ name, image: "", imageFallback: "" })),
+    categories: names.map((name) => {
+      const saved = (catalog.categories || []).find((category) => category.name === name);
+      return { ...saved, name, image: saved?.image || "", imageFallback: saved?.imageFallback || "" };
+    }),
   };
 }
 
-async function readCatalogUncached() {
-  const uat = process.env.VERCEL_ENV === "production" ? null : await readUatCatalog();
+async function readCatalogUncached({ fresh = false, strict = false } = {}) {
+  const uat = process.env.VERCEL_ENV === "production" ? null : await readUatCatalog({ fresh, strict });
   const saved = await readJson(SNAPSHOT_FILE);
   if (uat?.products?.length) return withListedProducts(withStaffUnitPrices(uat, saved));
   const sb = db();
@@ -162,14 +153,15 @@ async function readCatalogUncached() {
       const shared = snapshotBody(remote.value);
       if (shared) return withListedProducts(shared);
     }
+    if (strict) throw new Error("catalog_unavailable");
   }
   const snapshot = await readJson(SNAPSHOT_FILE);
   return withListedProducts(snapshotBody(snapshot));
 }
 
-export async function handleCatalogGet() {
-  if (catalogMemo && Date.now() - catalogMemoAt < 20000) return catalogMemo;
-  const next = await readCatalogUncached();
+export async function handleCatalogGet({ fresh = false, strict = false } = {}) {
+  if (!fresh && catalogMemo && Date.now() - catalogMemoAt < 20000) return catalogMemo;
+  const next = await readCatalogUncached({ fresh, strict });
   if (next) {
     catalogMemo = next;
     catalogMemoAt = Date.now();
@@ -353,24 +345,9 @@ function buyerVisibleProduct(product) {
 function catalogForCaller(snapshot, request) {
   const surface = request?.headers?.get?.("x-mm-catalog") || "";
   if (!snapshot || (surface !== "shop" && readSession(request, "staff"))) return snapshot;
-  const etag = String(snapshot.etag || "");
-  const buyerEtag = etag && etag !== "seed" ? `${etag}${BUYER_CATALOG_ETAG_SUFFIX}` : etag;
+  const buyerEtag = buyerCatalogVersion(snapshot.etag);
   if (buyerBodyMemo && buyerBodyMemo.etag === buyerEtag) return buyerBodyMemo;
-  const products = foldTimberPlywood(foldGypsumBlocks(foldManholeCovers(foldSteelGratings(foldDrainageGratings(foldTiles(foldWindows(foldPipeFittings(foldAggregate(foldFinishBoards(foldShoeWashing(foldCable(foldAluminumCladding(foldRaisedFloors(foldPaint(foldDowelBar(foldOxygenChamber(foldBalustrades(foldPrecastConcrete(foldDenseMesh(foldXpsFoamBoard((snapshot.products || []).filter(buyerVisibleProduct).map(toPublicProduct))))))))))))))))))))));
-  const previous = new Map((Array.isArray(snapshot.categories) ? snapshot.categories : []).map((item) => [item?.name, item]));
-  const categories = [...new Set(products.map((product) => String(product?.category || "").trim()).filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b, "zh"))
-    .map((name) => ({
-      name,
-      image: previous.get(name)?.image || "",
-      imageFallback: previous.get(name)?.imageFallback || "",
-    }));
-  const body = {
-    ...snapshot,
-    etag: buyerEtag,
-    categories,
-    products,
-  };
+  const body = toPublicCatalog(snapshot);
   if (buyerEtag) buyerBodyMemo = body;
   return body;
 }

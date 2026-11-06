@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createClient } from "@supabase/supabase-js";
+import { requireDb } from "../server/db.js";
 import { passwordResetEmailHtml, staffInviteEmailHtml, wrapEmailSend } from "../src/lib/mailTemplate.js";
 import { sendResendEmail } from "./send-email.js";
 
@@ -14,13 +14,8 @@ const SALES_EMAIL = "sales@mattex.com.hk";
 const PUBLIC_COLUMNS =
   "email,kind,name,phone,phone_whatsapp,job_title,company_name,company_reg,company_phone,company_address,project,projects,enabled,approval_status,needs_review,bootstrap,created_at,approved_at,reviewed_at,extra";
 
-let client = null;
 function db() {
-  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!url || !key) throw new Error("auth_not_configured");
-  if (!client) client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-  return client;
+  return requireDb("auth_not_configured");
 }
 
 function secret() {

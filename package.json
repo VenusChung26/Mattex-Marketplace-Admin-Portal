@@ -4,6 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "api:routes:sync": "node scripts/sync-api-routes.mjs",
+    "api:routes:check": "node scripts/sync-api-routes.mjs --check",
+    "predev": "npm run api:routes:check",
+    "predev:admin": "npm run api:routes:check",
+    "prebuild": "npm run api:routes:check",
+    "prebuild:admin": "npm run api:routes:check",
     "dev": "vite --port 5182 --host",
     "dev:admin": "vite --config vite.admin.config.js --port 5183 --host",
     "supabase:seed": "node scripts/seed-supabase.mjs",

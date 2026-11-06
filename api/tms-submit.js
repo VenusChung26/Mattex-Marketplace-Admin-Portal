@@ -25,7 +25,18 @@ export async function handleTmsSubmit(body, request) {
   return submitInboundRfq(payload);
 }
 
+export async function GET(request) {
+  if (new URL(request.url).searchParams.get("part") !== "status") {
+    return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { allow: "POST" } });
+  }
+  return Response.json(await handleTmsStatus(), { headers: { "cache-control": "no-store" } });
+}
+
 export async function POST(request) {
+  const part = new URL(request.url).searchParams.get("part");
+  if (part === "status") {
+    return Response.json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: { allow: "GET" } });
+  }
   let body = {};
   try {
     body = await request.json();
@@ -33,7 +44,7 @@ export async function POST(request) {
     return Response.json({ ok: false, error: "invalid json" }, { status: 400 });
   }
   try {
-    const result = await handleTmsSubmit(body, request);
+    const result = part === "login" ? await handleTmsLogin(body, request) : await handleTmsSubmit(body, request);
     return Response.json(result, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const status = Number(error?.status) || 400;

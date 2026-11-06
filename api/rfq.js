@@ -1,12 +1,13 @@
+import { lineReference } from "../src/lib/productSelection.js";
+import { verifySelections, selectionFailure } from "../server/verify-selections.js";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { lookupBuyerAccount, readSession } from "./auth.js";
-import { handleCatalogGet } from "./catalog-snapshot.js";
 import { handlePromoGet } from "./promo.js";
 import { sendResendEmail } from "./send-email.js";
 import { list } from "@vercel/blob";
-import { createClient } from "@supabase/supabase-js";
+import { getDb } from "../server/db.js";
 import { createStore } from "../server/rfq-core.js";
 import { fileAdapter } from "../server/rfq-file-adapter.js";
 import { createSupabaseStore } from "../server/rfq-supabase.js";
@@ -82,8 +83,7 @@ let store = null;
 function rfqStore() {
   if (store) return store;
   if (useSupabase()) {
-    const { url, key } = supabaseConfig();
-    store = createSupabaseStore(createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }));
+    store = createSupabaseStore(getDb(supabaseConfig()));
   } else {
     store = createStore(fileAdapter());
   }
@@ -117,6 +117,10 @@ function cleanLines(lines) {
     if (!name || !Number.isFinite(qty) || qty <= 0 || qty > 1_000_000) return null;
     out.push({
       productId: text(line.productId, 80),
+      lineId: text(line.lineId, 4000),
+      pickedSpecs: line.pickedSpecs,
+      pickedSize: text(line.pickedSize, 120),
+      custom: Boolean(line.custom && String(line.productId || "").startsWith("custom_")),
       sku: text(line.sku, 80),
       name,
       spec: text(line.spec, 400),
@@ -140,6 +144,8 @@ async function submit(body, actor) {
     buyerEmail = text(body?.buyer?.email, 160).toLowerCase();
     if (!EMAIL.test(buyerEmail)) return { status: 400, body: { ok: false, error: "email" } };
   }
+  const checked = await verifySelections(lines);
+  if (!checked.ok) return selectionFailure(checked);
   const result = await rfqStore().create(
     kind,
     {
@@ -151,7 +157,7 @@ async function submit(body, actor) {
       project: text(body?.project, 200),
       channel: text(body?.channel, 20) || "rfq",
       askKind: body?.askKind === "buy" ? "buy" : "quote",
-      lines,
+      lines: checked.lines,
       reviewStatus: "received",
     },
     actor,
@@ -189,6 +195,9 @@ async function register(body, actor, request) {
   }
   const missing = guestOrderMissing(body, snapshot);
   if (missing) return { status: 400, body: { ok: false, error: missing } };
+  const checked = await verifySelections(lines);
+  if (!checked.ok) return selectionFailure(checked);
+  snapshot.lines = checked.lines.map((line, index) => ({ ...(snapshot.lines?.[index] || {}), ...line }));
   const result = await rfqStore().create(
     kind,
     {
@@ -201,7 +210,7 @@ async function register(body, actor, request) {
       note: text(body?.note || snapshot.note, 600),
       channel: text(body?.channel, 20) || "rfq",
       askKind: body?.askKind === "buy" ? "buy" : "quote",
-      lines,
+      lines: snapshot.lines,
       reviewStatus: "received",
       payload: snapshot,
     },
@@ -210,22 +219,14 @@ async function register(body, actor, request) {
   if (result.error) return { status: 400, body: { ok: false, error: result.error } };
   const withMail = await mailAndRecord(kind, result.record, request);
   const { id, createdAt, revision } = withMail;
-  return { status: 200, body: { ok: true, id, createdAt, revision, mailed: true } };
+  return { status: 200, body: { ok: true, id, createdAt, revision, lines: withMail.lines, mailed: true } };
 }
 
 const GUEST_PO_PER_DAY = 10;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-async function pricingData() {
-  const [promo, catalog] = await Promise.all([handlePromoGet().then((r) => r.body).catch(() => null), handleCatalogGet().catch(() => null)]);
-  let products = catalog?.products;
-  if (!Array.isArray(products) || !products.length) {
-    try {
-      products = JSON.parse(await readFile(path.join(process.cwd(), "public", "catalog.json"), "utf8")).products || [];
-    } catch {
-      products = [];
-    }
-  }
+async function pricingData(products) {
+  const promo = await handlePromoGet().then((r) => r.body).catch(() => null);
   return { products, promo };
 }
 
@@ -246,14 +247,16 @@ async function createPo(body, actor, request) {
   }
   const missing = guestOrderMissing(body);
   if (missing) return { status: 400, body: { ok: false, error: missing } };
+  const checked = await verifySelections(body.lines);
+  if (!checked.ok) return selectionFailure(checked);
   if (actor.kind === "guest") {
     const since = Date.now() - DAY_MS;
     const today = await rfqStore().countPosByVisitor(visitor, since);
     if (today >= GUEST_PO_PER_DAY) return { status: 429, body: { ok: false, error: "limit" } };
   }
   const priced = priceOrderLines(
-    (Array.isArray(body?.lines) ? body.lines : []).map((line) => ({ productId: line?.productId, qty: line?.qty })),
-    await pricingData(),
+    checked.lines,
+    await pricingData(checked.products),
   );
   if (!priced.ok) return { status: 400, body: { ok: false, error: priced.error, productId: priced.productId || "" } };
 
@@ -518,11 +521,13 @@ function cleanWorksheet(raw, known) {
   for (let i = 0; i < raw.length; i += 1) {
     const line = raw[i] || {};
     const productId = text(line.productId, 80);
-    if (productId !== String(known[i]?.productId || "")) return null;
+    if (productId !== String(known[i]?.productId || "") || (line.lineId && line.lineId !== lineReference(known[i]))) return null;
     const qty = Number(line.qty);
     if (!Number.isFinite(qty) || qty <= 0 || qty > 1_000_000) return null;
     out.push({
       productId,
+      lineId: lineReference(known[i]),
+      selectionSnapshot: known[i]?.selectionSnapshot,
       name: text(line.name, 240),
       productNo: text(line.productNo, 80),
       unit: text(line.unit, 40),
@@ -761,16 +766,18 @@ async function draftAction(body, actor, tries = 3) {
   const current = await rfqStore().get("rfq", id, actor);
   if (!current) return { status: 404, body: { ok: false, error: "not_found" } };
   if (inboxStatus({ ...(current.payload || {}), ...current }) === "cancelled") return { status: 409, body: { ok: false, error: "locked" } };
-  const known = new Set((current.lines || []).map((line) => String(line.productId || "")));
+  const known = current.lines || [];
   const raw = Array.isArray(body?.prices) ? body.prices : null;
   if (!raw || raw.length > MAX_LINES) return { status: 400, body: { ok: false, error: "prices" } };
   const prices = [];
   for (const row of raw) {
     const productId = text(row?.productId, 80);
-    if (!known.has(productId)) return { status: 409, body: { ok: false, error: "stale" } };
+    const matches = known.filter((line) => line.productId === productId && (!row.lineId || lineReference(line) === row.lineId));
+    if (matches.length !== 1) return { status: 409, body: { ok: false, error: "stale" } };
     const salesQty = Number(row?.salesQty);
     prices.push({
       productId,
+      lineId: lineReference(matches[0]),
       quotedUnitPrice: row?.noOffer ? null : money(row?.quotedUnitPrice),
       noOffer: Boolean(row?.noOffer),
       salesQty: Number.isFinite(salesQty) && salesQty > 0 && salesQty <= 1_000_000 ? salesQty : null,
@@ -881,7 +888,7 @@ async function poFromQuoteAction(body, request, tries = 3) {
     id: withMail.id,
     createdAt: at,
     confirmedAt: at,
-    lines: plan.lines.map((line) => ({ productId: line.productId, name: line.name, qty: line.qty, supplierName: "Mattex", lineTotal: line.lineTotal })),
+    lines: plan.lines.map((line) => ({ ...line, supplierName: "Mattex" })),
     total: plan.total,
     label: `v${plan.quoteVersion}`,
     status: "created",
@@ -947,11 +954,16 @@ async function buyerContentAction(body, request, tries = 3) {
   if (!plan.ok) return { status: 409, body: { ok: false, error: plan.error } };
 
   const content = body?.content && typeof body.content === "object" ? body.content : {};
-  const lines = content.lines === undefined ? current.lines : cleanLines(content.lines);
+  let lines = content.lines === undefined ? current.lines : cleanLines(content.lines);
   if (!lines) return { status: 400, body: { ok: false, error: "lines" } };
   const payloadChange = {};
   for (const key of CONTENT_TEXT) if (content[key] !== undefined) payloadChange[key] = text(content[key], 2000);
-  if (Array.isArray(content.lines)) payloadChange.lines = content.lines;
+  if (body?.resubmit) {
+    const checked = await verifySelections(lines);
+    if (!checked.ok) return selectionFailure(checked);
+    lines = checked.lines.map((line, index) => ({ ...(content.lines || current.lines)[index], ...line }));
+  }
+  if (Array.isArray(content.lines) || body?.resubmit) payloadChange.lines = lines;
   for (const key of ["projects", "requestVersions", "deliveryLots"]) if (Array.isArray(content[key])) payloadChange[key] = content[key];
   if (Number.isFinite(Number(content.requestEffectiveVersion))) payloadChange.requestEffectiveVersion = Number(content.requestEffectiveVersion);
   if (JSON.stringify(payloadChange).length > MAX_SNAPSHOT_BYTES) return { status: 413, body: { ok: false, error: "too_large" } };
@@ -1042,6 +1054,10 @@ async function guestFileAction(body, request, tries = 3) {
 async function routePost(body, request) {
   if (!storeReady()) return { status: 501, body: { ok: false, error: "use-supabase" } };
   const actor = actorOf(request);
+  if (body?.action === "validate_selections") {
+    const result = await verifySelections(body.lines);
+    return result.ok ? { body: { ok: true, lines: result.lines } } : selectionFailure(result);
+  }
   if (body?.action === "po_create") return createPo(body, placerOf(request), request);
   if (body?.action === "po_confirm") return confirmPo(body, actor);
   if (body?.action === "po_assign") return assignPoAction(body, actor);

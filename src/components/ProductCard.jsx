@@ -1,3 +1,4 @@
+import { preparedSpecGroups, initialSpecPicks, resolveSelection, selectedProduct, selectionMessage } from "../lib/productSelection.js";
 import { memo, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { displayLeadTime, getProduct, isBuyerVisible, isHitProduct, productSkuId, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, buildTailorPrefillDescription, requireBuyerAuth, catalogPathForCategory, canDirectBuy } from "../lib/store";
@@ -408,14 +409,17 @@ function tailorInitialFromProduct(product, qty, { pickedSize = "", pickedSpecs =
 }
 
 export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, onQtyChange, hideQty = false, autoOpenTailor = false, tailorNonce = 0, tailorDimensions = false, disabled = false, pickedSpecs = null, pickedSize = "" }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   usePromo();
   const line = useCartLine(product.id);
-  const minQty = Math.max(1, Number(product.moq) || 1);
+  const chosen = selectedProduct(product, { pickedSpecs, pickedSize });
+  const minQty = Math.max(1, Number(chosen.moq) || 1);
   const [innerQty, setInnerQty] = useState(minQty);
   const controlled = qtyProp != null && typeof onQtyChange === "function";
   const qty = controlled ? qtyProp : innerQty;
-  const priced = canDirectBuy(product);
+  const selectionIssue = resolveSelection(product, { productId: product.id, pickedSpecs, pickedSize, qty });
+  disabled = disabled || !selectionIssue.ok;
+  const priced = canDirectBuy(chosen);
   const count = line.qty || 0;
   const [tailorOpen, setTailorOpen] = useState(false);
   const [tailorNote, setTailorNote] = useState("");
@@ -423,7 +427,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
 
   useEffect(() => {
     if (!controlled) setInnerQty(minQty);
-  }, [product.id, minQty, controlled]);
+  }, [product.id, controlled]);
 
   useEffect(() => {
     if (!autoOpenTailor || !product?.tailorMade) return;
@@ -605,6 +609,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
   const buttons = (
     <div data-tour={size === "detail" ? undefined : "buy"} className={size === "detail" ? "space-y-2" : "space-y-1.5"}>
       {actionColumns}
+      {!selectionIssue.ok ? <p role="alert" className="text-xs text-amber-800">{selectionMessage(selectionIssue.error, lang, minQty)} <Link className="underline" to={withLocale(lang, `/details/${product.id}`)}>{lang === "en" ? "Review options" : "檢視規格"}</Link></p> : null}
       {size !== "detail" && size !== "bar" ? tailorBtn : null}
       {size === "bar" && tailorBtn ? <div className="grid grid-cols-1">{tailorBtn}</div> : null}
       {tailorNote ? <p className="text-[11px] font-medium text-brand-700">{tailorNote}</p> : null}
@@ -626,6 +631,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
       <div className="space-y-2">
         {stepper}
         {actionColumns}
+        {!selectionIssue.ok ? <p role="alert" className="text-xs text-amber-800">{selectionMessage(selectionIssue.error, lang, minQty)}</p> : null}
         {tailorBtn}
         {tailorNote ? <p className="text-[11px] font-medium text-brand-700">{tailorNote}</p> : null}
         {modal}
@@ -760,12 +766,6 @@ export function sectionNameFromLabels(labels, { index = 0, total = 1, lang, opti
     return lang === "zh" ? "類型" : "Type";
   }
   return specSectionTitle(index, total, lang, optionLabel);
-}
-
-function preparedSpecGroups(groups) {
-  return dropDrawingGroup(dropXpsGrade(mergeSlabCustomize(mergeVinylType(groups)))).filter(
-    (group) => group?.field === "length" || (group?.options || []).length > 0
-  );
 }
 
 function countVisibleSpecGroups(groups) {
@@ -986,59 +986,6 @@ function CustomizeChipLabel({ lang }) {
   return lang === "zh" ? "自訂規格 · 圖則" : "Custom spec · Drawing";
 }
 
-function mergeVinylType(groups) {
-  const list = Array.isArray(groups) ? groups : [];
-  const homo = list.find((group) => group?.id === "vinyl-homo");
-  const hetero = list.find((group) => group?.id === "vinyl-hetero");
-  if (!homo || !hetero) return list;
-  const merged = {
-    id: "vinyl-type",
-    label: "分類 1",
-    labelEn: "Category 1",
-    options: [...(homo.options || []), ...(hetero.options || [])],
-  };
-  const next = [];
-  let placed = false;
-  for (const group of list) {
-    if (group?.id === "vinyl-homo" || group?.id === "vinyl-hetero") {
-      if (!placed) {
-        next.push(merged);
-        placed = true;
-      }
-      continue;
-    }
-    next.push(group);
-  }
-  return next;
-}
-
-function dropDrawingGroup(groups) {
-  const list = Array.isArray(groups) ? groups : [];
-  return list.filter((group) => {
-    const options = group?.options || [];
-    if (!options.length) return true;
-    return !options.every((option) => /drawing upload/i.test(specOptionLabel(option)));
-  });
-}
-
-function dropXpsGrade(groups) {
-  const list = Array.isArray(groups) ? groups : [];
-  if (!list.some((group) => group?.id === "xps-grade")) return list;
-  return list.filter((group) => group?.id !== "xps-grade");
-}
-
-function mergeSlabCustomize(groups) {
-  const list = Array.isArray(groups) ? groups : [];
-  const size = list.find((group) => group?.id === "slab-size");
-  const custom = list.find((group) => group?.id === "slabs-custom");
-  if (!size || !custom) return list;
-  const options = [...(size.options || [])];
-  if (!options.some((option) => isCustomizeChoice(specOptionLabel(option)))) options.push("Customize");
-  return list
-    .filter((group) => group?.id !== "slabs-custom")
-    .map((group) => (group?.id === "slab-size" ? { ...group, options } : group));
-}
-
 function sortLengthOptions(options) {
   const rank = (option) => {
     const match = specOptionLabel(option).trim().match(/^(\d+(?:\.\d+)?)\s*m$/i);
@@ -1103,7 +1050,7 @@ function resolveGroupOption(group, labelOrKey, picked) {
     return label === want || key === want;
   });
   if (!matches.length) return null;
-  return matches.find((option) => optionMatchesParent(option, parent)) || matches[0];
+  return matches.find((option) => optionMatchesParent(option, parent)) || null;
 }
 
 function isGroupOptionEnabled(group, option, picked) {
@@ -1115,21 +1062,6 @@ function isGroupOptionEnabled(group, option, picked) {
     const rowLabel = specOptionLabel(row) || specOptionKey(row);
     return rowLabel === label && optionMatchesParent(row, parent);
   });
-}
-
-/** Enabled concrete keys for the current upstream picks (used when auto-fixing a pick). */
-function enabledGroupKeys(group, picked) {
-  const parent = group?.dependsOn ? picked?.[group.dependsOn] : "";
-  const keys = [];
-  const seen = new Set();
-  for (const option of group?.options || []) {
-    if (!optionMatchesParent(option, parent)) continue;
-    const key = specOptionKey(option);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    keys.push(key);
-  }
-  return keys;
 }
 
 function specGroupsSignature(groups) {
@@ -1148,33 +1080,23 @@ function specGroupsSignature(groups) {
 }
 
 function syncDependentPicks(groups, current) {
-  const next = { ...current };
-  let changed = false;
-  for (const group of groups || []) {
-    if (group.field === "length") continue;
-    const keys = enabledGroupKeys(group, next);
-    if (!keys.length) continue;
-    const selected = keys.includes(next[group.id]) ? next[group.id] : keys[0];
-    if (selected !== next[group.id]) {
-      next[group.id] = selected;
-      changed = true;
-    }
-  }
-  return changed ? next : current;
+  const ids = new Set((groups || []).map((group) => group.id));
+  return Object.fromEntries(Object.entries(current).filter(([id]) => ids.has(id)));
 }
 
 const COMPACT_SPEC_PREVIEW = 3;
 
-export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, onPick, compact = false, moreHref = "", extraSections = 0, onVisibleCount }) {
+export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, onPick, compact = false, moreHref = "", extraSections = 0, onVisibleCount, value }) {
   const { lang, t } = useLanguage();
-  const shown = dropDrawingGroup(dropXpsGrade(mergeSlabCustomize(mergeVinylType(groups))));
+  const shown = preparedSpecGroups(groups);
   const shownKey = specGroupsSignature(shown);
-  const [picked, setPicked] = useState(() =>
-    Object.fromEntries((shown || []).map((group) => [group.id, group.field ? "" : specOptionKey(group.options?.[0])]))
-  );
-  useEffect(() => {
-    setPicked((current) => syncDependentPicks(shown, current));
-  }, [shownKey]);
+  const [localPicks, setLocalPicks] = useState(() => initialSpecPicks(shown));
+  const picked = value == null ? localPicks : value;
+  function setPicked(update) {
+    const next = typeof update === "function" ? update(picked) : update;
+    setLocalPicks(next);
+    onPick?.(next);
+  }
   useEffect(() => {
     onPick?.(picked);
   }, [onPick, picked]);
@@ -1192,7 +1114,8 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
     if (group.field === "length") return true;
     return displayGroupOptions(group).length > 0;
   });
-  if (!visible.length) return null;
+  const obsolete = Object.keys(picked).filter((id) => !shown.some((group) => group.id === id));
+  if (!visible.length && !obsolete.length) return null;
   const total = visible.length + extraSections;
   const chipClass = (on, disabled) =>
     `w-fit max-w-full rounded-none border text-left ${
@@ -1299,10 +1222,6 @@ export function SizeChoicePicker({ choices, className = "", onCustomize, onPick,
   const { lang } = useLanguage();
   const key = (choices || []).join("\n");
   const [picked, setPicked] = useState(() => (choices || [])[0] || "");
-  useEffect(() => {
-    const list = key ? key.split("\n") : [];
-    setPicked((current) => (list.includes(current) ? current : list[0] || ""));
-  }, [key]);
   useEffect(() => {
     onPick?.(picked);
   }, [onPick, picked]);

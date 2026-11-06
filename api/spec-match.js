@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { inflateSync } from "node:zlib";
 import * as XLSX from "xlsx";
 import { readSession } from "./auth.js";
-import { parseBuyerDocument } from "./buyer-spec.js";
+import { parseBuyerDocument } from "../server/buyer-spec.js";
 import { circledCropsFromImage, circledFromPdf } from "../server/circled.js";
 import { isChatNoise, isProductDescription } from "../src/lib/buyerLine.js";
 
