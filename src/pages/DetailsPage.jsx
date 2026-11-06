@@ -108,12 +108,14 @@ export default function DetailsPage() {
   const gallery = productImageList(product);
   const [activeImage, setActiveImage] = useState(gallery[0] || product?.image || "");
 
+  // Only reset picks when navigating to another product. Catalog refresh rebuilds
+  // product.images/image references and must not wipe the buyer's selections.
   useEffect(() => {
     setPickedSpecs(null);
     setQty(product?.moq || 1);
     const next = productImageList(product);
     setActiveImage(next[0] || product?.image || "");
-  }, [product?.id, product?.moq, product?.image, product?.images]);
+  }, [product?.id]);
 
   useEffect(() => {
     if (params.get("tailor") !== "1") return;
@@ -326,7 +328,14 @@ export default function DetailsPage() {
               </p>
             ) : null}
             {product.specGroups?.length ? (
-              <SpecGroupPicker groups={product.specGroups} className="mt-4" onImage={setActiveImage} onPick={setPickedSpecs} onCustomize={openTailor} />
+              <SpecGroupPicker
+                key={product.id}
+                groups={product.specGroups}
+                className="mt-4"
+                onImage={setActiveImage}
+                onPick={setPickedSpecs}
+                onCustomize={openTailor}
+              />
             ) : variantOptions.length > 1 ? (
               <div className="mt-4 space-y-4">
                 <div>

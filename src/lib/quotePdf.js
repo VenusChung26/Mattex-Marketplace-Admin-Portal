@@ -358,10 +358,12 @@ function jpegsToPdf(images) {
   return concatBytes(parts);
 }
 
+/** Download / upload name. RFQ → Marketplace-RFQ-….pdf, PO → Marketplace-PO-….pdf. */
 export function quotePdfFilename(kind, refNo) {
   const stamp = new Date().toISOString().slice(0, 10);
   const slug = String(refNo || "").replace(/[^\w.-]+/g, "") || stamp;
-  return kind === "buy" ? `mattex-order-${slug}.pdf` : `mattex-quote-${slug}.pdf`;
+  const prefix = kind === "buy" ? "PO" : "RFQ";
+  return `Marketplace-${prefix}-${slug}.pdf`;
 }
 
 export async function buildQuotePdf({ kind, items, refNo, buyer }) {

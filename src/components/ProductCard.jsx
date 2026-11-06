@@ -1036,28 +1036,46 @@ function groupOptions(group, picked) {
   return options.filter((option) => !option?.parent || option.parent === parent);
 }
 
+function specGroupsSignature(groups) {
+  return (groups || [])
+    .map((group) => {
+      const options = (group.options || [])
+        .map((option) =>
+          typeof option === "string"
+            ? option
+            : `${option?.key || ""}:${option?.label || ""}:${option?.parent || ""}`
+        )
+        .join(",");
+      return `${group.id}|${group.dependsOn || ""}|${group.field || ""}|${options}`;
+    })
+    .join("||");
+}
+
+function syncDependentPicks(groups, current) {
+  const next = { ...current };
+  let changed = false;
+  for (const group of groups || []) {
+    if (group.field === "length") continue;
+    const keys = groupOptions(group, next).map(specOptionKey).filter(Boolean);
+    const selected = keys.includes(next[group.id]) ? next[group.id] : keys[0] || "";
+    if (selected !== next[group.id]) {
+      next[group.id] = selected;
+      changed = true;
+    }
+  }
+  return changed ? next : current;
+}
+
 export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, onPick, compact = false, moreHref = "", extraSections = 0, onVisibleCount }) {
   const { lang, t } = useLanguage();
   const shown = dropDrawingGroup(dropXpsGrade(mergeSlabCustomize(mergeVinylType(groups))));
+  const shownKey = specGroupsSignature(shown);
   const [picked, setPicked] = useState(() =>
     Object.fromEntries((shown || []).map((group) => [group.id, group.field ? "" : specOptionKey(group.options?.[0])]))
   );
   useEffect(() => {
-    setPicked((current) => {
-      const next = { ...current };
-      let changed = false;
-      for (const group of shown || []) {
-        if (group.field === "length") continue;
-        const keys = groupOptions(group, next).map(specOptionKey).filter(Boolean);
-        const selected = keys.includes(next[group.id]) ? next[group.id] : keys[0] || "";
-        if (selected !== next[group.id]) {
-          next[group.id] = selected;
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [shown, picked]);
+    setPicked((current) => syncDependentPicks(shown, current));
+  }, [shownKey]);
   useEffect(() => {
     onPick?.(picked);
   }, [onPick, picked]);
@@ -1070,7 +1088,7 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
         return;
       }
     }
-  }, [shown, onImage, picked]);
+  }, [shownKey, onImage, picked]);
   const visible = (shown || []).filter((group) => {
     if (group.field === "length") return true;
     const options = group.id === "kerb-length" ? sortLengthOptions(groupOptions(group, picked)) : groupOptions(group, picked);
@@ -1101,7 +1119,11 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
                 min="0"
                 inputMode="decimal"
                 value={picked[group.id] || ""}
-                onChange={(event) => setPicked((current) => ({ ...current, [group.id]: event.target.value }))}
+                onChange={(event) =>
+                  setPicked((current) =>
+                    syncDependentPicks(shown, { ...current, [group.id]: event.target.value })
+                  )
+                }
                 className={`field-input ${compact ? "w-20 px-2 py-1 text-xs" : "w-24"}`}
                 aria-label={named}
               />
@@ -1129,7 +1151,9 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
                         aria-pressed={pickedKey === key}
                         title={customize ? customizeHint(lang) : undefined}
                         onClick={() => {
-                          setPicked((current) => ({ ...current, [group.id]: key }));
+                          setPicked((current) =>
+                            syncDependentPicks(shown, { ...current, [group.id]: key })
+                          );
                           if (!customize) return;
                           onCustomize?.(group.id === "slab-size" ? { dimensions: true } : undefined);
                         }}
