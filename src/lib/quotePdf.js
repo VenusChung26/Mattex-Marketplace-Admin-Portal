@@ -127,11 +127,38 @@ function drawHeader(ctx, { kind, count, page, totalPages, refNo }) {
   ctx.stroke();
 }
 
+const MATTEX_PDF_CONTACTS = [
+  ["電郵", "sales@mattex.com.hk"],
+  ["WhatsApp／電話", "852-56013989"],
+  ["網站", "https://www.mattex.com.hk"],
+];
+const FOOTER_RESERVE = 132;
+
 function drawFooter(ctx, kind) {
   const outro = kind === "buy" ? "請確認庫存及單價，謝謝。" : "請提供交貨期及單價，謝謝。";
+  let cursor = PAGE_H - FOOTER_RESERVE + 8;
+  ctx.strokeStyle = "#d6ddd8";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(MARGIN, cursor);
+  ctx.lineTo(PAGE_W - MARGIN, cursor);
+  ctx.stroke();
+  cursor += 28;
+  ctx.fillStyle = "#143528";
+  ctx.font = "700 16px 'PingFang TC', 'Noto Sans TC', sans-serif";
+  ctx.fillText("Mattex Marketplace 聯絡", MARGIN, cursor);
+  cursor += 26;
+  ctx.font = "400 15px 'PingFang TC', 'Noto Sans TC', sans-serif";
+  for (const [label, value] of MATTEX_PDF_CONTACTS) {
+    ctx.fillStyle = "#5b6660";
+    ctx.fillText(label, MARGIN, cursor);
+    ctx.fillStyle = "#121816";
+    ctx.fillText(value, MARGIN + 140, cursor);
+    cursor += 22;
+  }
   ctx.fillStyle = "#5b6660";
-  ctx.font = "400 16px 'PingFang TC', 'Noto Sans TC', sans-serif";
-  ctx.fillText(outro, MARGIN, PAGE_H - 48);
+  ctx.font = "400 14px 'PingFang TC', 'Noto Sans TC', sans-serif";
+  ctx.fillText(outro, MARGIN, PAGE_H - 28);
 }
 
 const THUMB = 120;
@@ -140,20 +167,46 @@ const THUMB_GAP = 20;
 function itemLayout(item) {
   const hasImg = Boolean(item.imageEl);
   const labelX = hasImg ? MARGIN + 44 + THUMB + THUMB_GAP : MARGIN + 48;
-  const valueX = labelX + 120;
+  const valueX = labelX + 150;
   const nameWidth = PAGE_W - MARGIN - valueX;
   return { hasImg, labelX, valueX, nameWidth };
+}
+
+function infoRowLines(ctx, item, nameWidth) {
+  const rows = Array.isArray(item.infoRows) ? item.infoRows : [];
+  return rows.map((row) => {
+    const label = String(row?.label || "").trim() || "規格";
+    const valueLines = wrapText(ctx, row?.value, nameWidth);
+    return { label, valueLines };
+  });
+}
+
+/** Q3-A: 型號／尺寸／原產品 sit before qty/price; category/delivery/standard after. */
+const PDF_LEAD_INFO_LABELS = new Set(["型號", "尺寸", "原產品"]);
+
+function splitInfoRows(info) {
+  const lead = [];
+  const rest = [];
+  for (const row of info) {
+    if (PDF_LEAD_INFO_LABELS.has(row.label)) lead.push(row);
+    else rest.push(row);
+  }
+  return { lead, rest };
 }
 
 function itemHeight(ctx, item) {
   const { nameWidth } = itemLayout(item);
   const nameLines = wrapText(ctx, item.name, nameWidth);
-  const specLines = item.spec ? wrapText(ctx, `規格／備註: ${item.spec}`, nameWidth + 120) : [];
-  const attachLines = item.attachments ? wrapText(ctx, `附件: ${item.attachments}`, nameWidth + 120) : [];
+  const info = infoRowLines(ctx, item, nameWidth);
+  const { lead, rest } = splitInfoRows(info);
+  const specLines = item.spec ? wrapText(ctx, item.spec, nameWidth) : [];
+  const attachLines = item.attachments ? wrapText(ctx, item.attachments, nameWidth) : [];
+  const infoH = [...lead, ...rest].reduce((sum, row) => sum + row.valueLines.length * 28, 0);
   const textH =
     (nameLines.length + 3) * 28 +
-    (specLines.length ? specLines.length * 24 + 8 : 0) +
-    (attachLines.length ? attachLines.length * 24 + 8 : 0) +
+    infoH +
+    (specLines.length ? specLines.length * 28 : 0) +
+    (attachLines.length ? attachLines.length * 28 : 0) +
     28;
   return Math.max(textH, item.imageEl ? THUMB + 24 : 0);
 }
@@ -173,18 +226,25 @@ function drawThumb(ctx, imageEl, x, y) {
 function drawItem(ctx, item, y) {
   const { hasImg, labelX, valueX, nameWidth } = itemLayout(item);
   const nameLines = wrapText(ctx, item.name, nameWidth);
-  const specLines = item.spec ? wrapText(ctx, `規格／備註: ${item.spec}`, nameWidth + 120) : [];
-  const attachLines = item.attachments ? wrapText(ctx, `附件: ${item.attachments}`, nameWidth + 120) : [];
+  const info = infoRowLines(ctx, item, nameWidth);
+  const { lead, rest } = splitInfoRows(info);
+  const specLines = item.spec ? wrapText(ctx, item.spec, nameWidth) : [];
+  const attachLines = item.attachments ? wrapText(ctx, item.attachments, nameWidth) : [];
   ctx.fillStyle = "#143528";
   ctx.font = "700 22px 'PingFang TC', 'Noto Sans TC', sans-serif";
   ctx.fillText(`${item.index}.`, MARGIN, y);
   if (hasImg) drawThumb(ctx, item.imageEl, MARGIN + 40, y - 18);
+  // Q3-A: 貨名 → 貨號 → 型號 → 尺寸 → 數量 → 單價 → 分類／交貨期／標準 → 規格／備註 → 附件
   const rows = [
     ["貨名", nameLines],
     ["貨號", [item.sku]],
+    ...lead.map((row) => [row.label, row.valueLines]),
     ["數量", [item.qty]],
     ["單價", [item.price]],
+    ...rest.map((row) => [row.label, row.valueLines]),
   ];
+  if (specLines.length) rows.push(["規格／備註", specLines]);
+  if (attachLines.length) rows.push(["附件", attachLines]);
   let cursor = y;
   ctx.font = "500 18px 'PingFang TC', 'Noto Sans TC', sans-serif";
   for (const [label, lines] of rows) {
@@ -194,24 +254,6 @@ function drawItem(ctx, item, y) {
     for (const line of lines) {
       ctx.fillText(line, valueX, cursor);
       cursor += 28;
-    }
-  }
-  if (specLines.length) {
-    cursor += 4;
-    ctx.fillStyle = "#5b6660";
-    ctx.font = "400 16px 'PingFang TC', 'Noto Sans TC', sans-serif";
-    for (const line of specLines) {
-      ctx.fillText(line, labelX, cursor);
-      cursor += 24;
-    }
-  }
-  if (attachLines.length) {
-    cursor += specLines.length ? 0 : 4;
-    ctx.fillStyle = "#5b6660";
-    ctx.font = "400 16px 'PingFang TC', 'Noto Sans TC', sans-serif";
-    for (const line of attachLines) {
-      ctx.fillText(line, labelX, cursor);
-      cursor += 24;
     }
   }
   const bottom = Math.max(cursor, hasImg ? y - 18 + THUMB : cursor);
@@ -231,7 +273,7 @@ function paginateItems(ctx, items, firstY) {
   for (const item of items) {
     ctx.font = "500 18px 'PingFang TC', 'Noto Sans TC', sans-serif";
     const height = itemHeight(ctx, item);
-    if (current.length && used + height > PAGE_H - 88) {
+    if (current.length && used + height > PAGE_H - FOOTER_RESERVE) {
       pages.push(current);
       current = [];
       used = 208;

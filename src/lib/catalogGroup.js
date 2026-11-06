@@ -95,7 +95,17 @@ const CUSTOMIZE_SIZE = /^(customize|customization|customize size|customize drawi
 
 /** "2.1m x 4.8m / Customize" is a size choice plus tailor-made, not part of the model code. */
 export function splitSizeChoices(text) {
-  const parts = String(text || "")
+  const raw = String(text || "").trim();
+  if (!raw) return [];
+  // Size + Customize only — ignore purpose text glued after Customize (e.g. "Customize. Anti-cracking…").
+  const match = raw.match(
+    /^(.*?)\s*\/\s*(customize(?:\s+size|\s+drawing\s+upload)?|customization)\b.*$/i
+  );
+  if (match) {
+    const size = match[1].trim();
+    return size ? [size, "Customize"] : [];
+  }
+  const parts = raw
     .split(/\s*\/\s*/)
     .map((part) => part.trim())
     .filter(Boolean);
@@ -213,11 +223,8 @@ export function shopTitle(product) {
 
 export function displayOption(product, fallback = "") {
   const code = leadingCode(product?.variant) || leadingCode(product?.parentProduct) || leadingCode(fallback) || leadingCode(product?.name);
-  if (code) {
-    const size = optionSize(product).replace(new RegExp(`^${code}\\s*[—–-]?\\s*`, "i"), "").trim();
-    if (splitSizeChoices(size).length) return code;
-    return size && size !== code ? `${code} — ${size}` : code;
-  }
+  // Model chips stay code-only (A142 / C636). Size belongs in the separate Size picker.
+  if (code) return code;
   const parts = seriesParts(product);
   if (parts?.option) {
     const tail = parts.option.split(/\s*[—–]\s*/).pop().trim();
@@ -236,10 +243,10 @@ export function optionLabels(members) {
   const counts = new Map();
   for (const label of labels) counts.set(label, (counts.get(label) || 0) + 1);
   return labels.map((label, index) => {
-    if ((counts.get(label) || 0) <= 1) return label;
+    if ((counts.get(label) || 0) <= 1) return formatSpecDisplay(label);
     const member = members[index];
     const sku = member.productNo || member.product?.productNo || "";
-    return sku ? `${label} · ${sku}` : label;
+    return formatSpecDisplay(sku ? `${label} · ${sku}` : label);
   });
 }
 
@@ -277,6 +284,7 @@ const SPEC_WORD_ZH = {
   length: "長度",
   width: "闊度",
   thickness: "厚度",
+  "thickness (mm)": "厚度 (mm)",
   diameter: "直徑",
   grey: "灰色",
   gray: "灰色",
@@ -295,10 +303,16 @@ const SPEC_WORD_ZH = {
   "natural concrete": "天然混凝土",
 };
 
+/** Buyer-facing sizes: show 500x500x80mm instead of 500*500*80mm. */
+export function formatSpecDisplay(text) {
+  return String(text || "").replace(/\*/g, "x");
+}
+
 export function localizeSpecText(text, lang) {
   const value = String(text || "").trim();
-  if (!value || lang !== "zh") return value;
-  return SPEC_WORD_ZH[value.toLowerCase()] || value;
+  if (!value) return value;
+  const localized = lang === "zh" ? SPEC_WORD_ZH[value.toLowerCase()] || value : value;
+  return formatSpecDisplay(localized);
 }
 
 export function buildExactNameGroups(products) {

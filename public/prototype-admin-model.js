@@ -20,7 +20,7 @@ const SubbieAdminModel = (() => {
   ];
 
   const EXCEL_HEADERS = [
-    "Provisional SKU ID",
+    "SKU ID",
     "Official SKU",
     "Category",
     "IMG (Gen)",

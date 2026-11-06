@@ -155,7 +155,7 @@
     <div class="badge">Throwaway prototype · 唔改 production storefront</div>
     <h1>Admin Portal：貨、帳、Report、RFQ → TMS</h1>
     <p class="lede">
-      問嘅係狀態模型啱唔啱：草稿／Provisional SKU／Publish／Hold／軟刪、Excel 列級匯入、已上架貨被 report、買家 login 送 RFQ、Sales 接單／退回／拒絕、accepted 後先模擬上傳 TMS。
+      問嘅係狀態模型啱唔啱：草稿／SKU／Publish／Hold／軟刪、Excel 列級匯入、已上架貨被 report、買家 login 送 RFQ、Sales 接單／退回／拒絕、accepted 後先模擬上傳 TMS。
       上面導覽係極端情況；下面可以切去迷你買家面或 Sales 後台自由撳。
     </p>
 
@@ -200,7 +200,7 @@ const SubbieAdminModel = (() => {
   ];
 
   const EXCEL_HEADERS = [
-    "Provisional SKU ID",
+    "SKU ID",
     "Official SKU",
     "Category",
     "IMG (Gen)",
@@ -1047,7 +1047,7 @@ const SCENARIOS = [
     blurb: "同一正式 SKU 更新已上架列：MOQ 變 120、Hit tag、圖欄空白。上架狀態不變，A142 原圖保留。",
     steps: [
       { label: "Sales 登入", action: { type: "LOGIN_SALES", email: "sales@mattex.com", password: "mattex" }, surface: "admin" },
-      { label: "匯入 A142 列（MOQ 120、IMG 空）", action: { type: "EXCEL_IMPORT", csv: "Provisional SKU ID,Official SKU,Category,IMG (Gen),Product name,Size / Description,Certifications / Relevant Reports,Primary Spec Description,Sales Unit,MOQ,Lead Time,Purposes (Indicator for Searching),Remark,Tag (Green / Hit)\n,MKT-MESH-A142,Reinforcement Mesh,,A142 — 2.1m×4.8m / Customize,2.1m×4.8m,BS4483:2005,Square mesh,sheet,120,3-7 days,\"Anti-cracking,路面防裂\",excel upsert,Hit\n" } },
+      { label: "匯入 A142 列（MOQ 120、IMG 空）", action: { type: "EXCEL_IMPORT", csv: "SKU ID,Official SKU,Category,IMG (Gen),Product name,Size / Description,Certifications / Relevant Reports,Primary Spec Description,Sales Unit,MOQ,Lead Time,Purposes (Indicator for Searching),Remark,Tag (Green / Hit)\n,MKT-MESH-A142,Reinforcement Mesh,,A142 — 2.1m×4.8m / Customize,2.1m×4.8m,BS4483:2005,Square mesh,sheet,120,3-7 days,\"Anti-cracking,路面防裂\",excel upsert,Hit\n" } },
     ],
   },
   {
@@ -1103,7 +1103,7 @@ const SCENARIOS = [
     blurb: "Cat ladder 種子已軟刪。Excel 用同一正式 SKU 匯入 → 復活但打回未上架，要再 Publish。",
     steps: [
       { label: "Sales 登入", action: { type: "LOGIN_SALES", email: "sales@mattex.com", password: "mattex" }, surface: "admin" },
-      { label: "Excel 復活 MKT-LADDER-01", action: { type: "EXCEL_IMPORT", csv: "Provisional SKU ID,Official SKU,Category,IMG (Gen),Product name,Size / Description,Certifications / Relevant Reports,Primary Spec Description,Sales Unit,MOQ,Lead Time,Purposes (Indicator for Searching),Remark,Tag (Green / Hit)\n,MKT-LADDER-01,Cat Ladder,,Galvanized cat ladder,By drawing,,Galvanized,lot,1,21 days,Access,resurrected,\n" } },
+      { label: "Excel 復活 MKT-LADDER-01", action: { type: "EXCEL_IMPORT", csv: "SKU ID,Official SKU,Category,IMG (Gen),Product name,Size / Description,Certifications / Relevant Reports,Primary Spec Description,Sales Unit,MOQ,Lead Time,Purposes (Indicator for Searching),Remark,Tag (Green / Hit)\n,MKT-LADDER-01,Cat Ladder,,Galvanized cat ladder,By drawing,,Galvanized,lot,1,21 days,Access,resurrected,\n" } },
     ],
   },
   {
@@ -1116,7 +1116,7 @@ const SCENARIOS = [
       { label: "對空 inbox 上傳 TMS（應失敗）", action: { type: "RFQ_UPLOAD_TMS", id: "RFQ-NONE" } },
       { label: "停用 ops@mattex.com", action: { type: "STAFF_DISABLE", email: "ops@mattex.com" } },
       { label: "再停用最後一個 Sales（應失敗）", action: { type: "STAFF_DISABLE", email: "sales@mattex.com" } },
-      { label: "Excel 未知類別（該列失敗）", action: { type: "EXCEL_IMPORT", csv: "Provisional SKU ID,Official SKU,Category,IMG (Gen),Product name,Size / Description,Certifications / Relevant Reports,Primary Spec Description,Sales Unit,MOQ,Lead Time,Purposes (Indicator for Searching),Remark,Tag (Green / Hit)\n,,Widgets,,Bad row,,,,,,,\n,MKT-MESH-A142,Reinforcement Mesh,,A142 — 2.1m×4.8m / Customize,2.1m×4.8m,BS4483,mesh,sheet,90,3-7 days,Anti-cracking,,Hit\n" } },
+      { label: "Excel 未知類別（該列失敗）", action: { type: "EXCEL_IMPORT", csv: "SKU ID,Official SKU,Category,IMG (Gen),Product name,Size / Description,Certifications / Relevant Reports,Primary Spec Description,Sales Unit,MOQ,Lead Time,Purposes (Indicator for Searching),Remark,Tag (Green / Hit)\n,,Widgets,,Bad row,,,,,,,\n,MKT-MESH-A142,Reinforcement Mesh,,A142 — 2.1m×4.8m / Customize,2.1m×4.8m,BS4483,mesh,sheet,90,3-7 days,Anti-cracking,,Hit\n" } },
     ],
   },
 ];

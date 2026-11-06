@@ -5045,14 +5045,15 @@ function pdfProductInfoRows(line, product) {
     const model = product ? pdfModelLabel(product) : "";
     if (model) rows.push({ label: "型號", value: model });
     rows.push({ label: "尺寸", value: "自訂規格 · 圖則" });
-    const baseName = String(product?.name || "").trim();
+    // Prefill uses shopTitle; compare against that so unchanged names do not show 原產品
+    const initialName = String((product ? shopTitle(product) : "") || product?.name || "").trim();
     const lineName = String(line?.name || "").trim();
     // Q5a-A / Q5b-A: 原產品 only when name changed
-    if (baseName && lineName && baseName !== lineName) {
+    if (initialName && lineName && initialName !== lineName) {
       const sku =
         (product ? productSkuId(product) : "") ||
         String(product?.productNo || line?.baseProductNo || "").trim();
-      rows.push({ label: "原產品", value: sku ? `${baseName}（${sku}）` : baseName });
+      rows.push({ label: "原產品", value: sku ? `${initialName}（${sku}）` : initialName });
     }
   } else {
     const pickRows = pdfPickedSpecRows(product, line?.pickedSpecs);
@@ -8254,6 +8255,7 @@ async function importAdminCsv(csv) {
 
 function parseAdminCsv(text) {
   const map = {
+    "sku id": "provisionalSku",
     "provisional sku id": "provisionalSku",
     "official sku": "productNo",
     "category": "category",
@@ -8306,7 +8308,7 @@ function splitCsvLine(line) {
 
 function adminCsvTemplate() {
   return [
-    "Provisional SKU ID",
+    "SKU ID",
     "Official SKU",
     "Category",
     "IMG (Gen)",

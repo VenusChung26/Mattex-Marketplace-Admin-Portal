@@ -225,7 +225,7 @@ const STATUS_CHIP = {
 };
 
 const PUBLISH_BLOCKER_LABELS = {
-  officialSku: "Provisional SKU ID",
+  officialSku: "SKU ID",
   category: "Category",
   name: "Name",
   unit: "Unit",
@@ -239,7 +239,7 @@ function blockerText(keys) {
 }
 
 const PRODUCT_TABLE_HEADS = [
-  { key: "officialSku", label: "Provisional SKU ID" },
+  { key: "officialSku", label: "SKU ID" },
   { key: "category", label: "Category" },
   { key: "name", label: "IMG + Product name" },
   { key: "size", label: "Size / Description" },
@@ -3019,7 +3019,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
               <div className="border-y border-line py-3">
                 <p className="text-sm font-semibold text-ink">{pt("Order")}</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <label className="text-sm font-medium text-ink">{pt("Provisional SKU ID")}<RequiredMark />
+                  <label className="text-sm font-medium text-ink">{pt("SKU ID")}<RequiredMark />
                     <input className="mt-1 w-full rounded-lg border border-line px-3 py-2 font-normal placeholder:text-mute" value={draft.productNo} onChange={(e) => field("productNo", e.target.value)} placeholder={pt("e.g. MKT-GB-0001")} />
                   </label>
                   <label className="text-sm font-medium text-ink">{pt("Availability")}
@@ -3125,7 +3125,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
             <table className="w-full text-left text-[12px]">
               <thead className="bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
                 <tr>
-                  <th className="px-3 py-2">{pt("Provisional SKU ID")}</th>
+                  <th className="px-3 py-2">{pt("SKU ID")}</th>
                   <th className="px-3 py-2">{pt("Name")}</th>
                   <th className="px-3 py-2">{pt("Status")}</th>
                   {bulkConfirm.type === "publish" ? <th className="px-3 py-2">Publish check</th> : null}
@@ -3347,7 +3347,7 @@ function ExcelPanel({ note }) {
       <section>
         <p className="text-sm text-mute">
           Select an Excel file (.xlsx). Extra columns ignored. Missing name/category fails that row only. Empty
-          Provisional SKU ID gets a temporary ID. Live rows stay published.
+          SKU ID gets a temporary ID. Live rows stay published.
         </p>
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button type="button" className="rounded-lg border border-line px-3 py-2 text-sm" onClick={downloadProductExcelTemplate}>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { confirmPurchaseOrder } from "../../lib/remote";
 import { buildQuotePdf, quotePdfFilename } from "../../lib/quotePdf";
-import { formatBuyerPhoneDisplay, getProduct } from "../../lib/store";
+import { formatBuyerPhoneDisplay, getProduct, quotePdfItems } from "../../lib/store";
 import MailStatus from "./MailStatus";
 import { AdminSearchBar, FilterTabs, STICKY_ACTION_TD, STICKY_ACTION_TH, ViewToggle } from "./AdminControls";
 import { FilePreviewOverlay, GuestFilePreview } from "../../components/AttachmentLinks";
@@ -276,16 +276,14 @@ export default function PoPanel({ note, po: source, guestAssign, focusId = "" })
           remark: String(po.note || po.delivery?.note || "").trim(),
           attachments: po.guestAttachments,
         },
-        items: (po.lines || []).map((line, index) => ({
-          index: index + 1,
-          name: line.name || line.sku || "-",
-          sku: line.sku || line.productId || "-",
-          qty: `${line.qty}${line.unit ? ` ${line.unit}` : ""}`,
-          price: money(line.unitPrice),
-          spec: "",
-          attachments: "",
-          image: getProduct(line.productId)?.image || "",
-        })),
+        items: quotePdfItems(
+          (po.lines || []).map((line) => ({
+            ...line,
+            productNo: line.productNo || line.sku || "",
+            unitPrice: line.unitPrice,
+            quotedUnitPrice: line.unitPrice,
+          }))
+        ),
       });
       const file = pdf.file || new File([pdf.blob], pdf.filename, { type: "application/pdf" });
       setPdfPreview((current) => {

@@ -55,7 +55,10 @@ export async function commitCatalog(body) {
 }
 
 export async function getCatalogVersion() {
-  return sendJson("/api/catalog-version", { cache: "no-store" });
+  const headers = {
+    "x-mm-catalog": import.meta.env?.VITE_SURFACE === "admin" ? "portal" : "shop",
+  };
+  return sendJson("/api/catalog-version", { headers, cache: "no-store" });
 }
 
 export async function getCatalogLive(id) {

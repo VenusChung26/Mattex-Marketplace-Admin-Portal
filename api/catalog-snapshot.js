@@ -4,7 +4,7 @@ import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { readSession } from "./auth.js";
 import { handleCatalogGroupsGet, handleCatalogGroupsSave } from "../server/catalog-groups.js";
-import { foldAggregate, foldAluminumCladding, foldBalustrades, foldCable, foldDenseMesh, foldDowelBar, foldDrainageGratings, foldFinishBoards, foldGypsumBlocks, foldManholeCovers, foldOxygenChamber, foldPaint, foldPipeFittings, foldPrecastConcrete, foldRaisedFloors, foldShoeWashing, foldSteelGratings, foldTiles, foldWindows, foldXpsFoamBoard, toPublicProduct } from "../server/public-catalog.js";
+import { foldAggregate, foldAluminumCladding, foldBalustrades, foldCable, foldDenseMesh, foldDowelBar, foldDrainageGratings, foldFinishBoards, foldGypsumBlocks, foldManholeCovers, foldOxygenChamber, foldPaint, foldPipeFittings, foldPrecastConcrete, foldRaisedFloors, foldShoeWashing, foldSteelGratings, foldTiles, foldTimberPlywood, foldWindows, foldXpsFoamBoard, toPublicProduct } from "../server/public-catalog.js";
 import { readUatCatalog } from "../server/uat-catalog.js";
 import { applyListedProducts } from "../server/listed-products.js";
 
@@ -90,11 +90,19 @@ async function writeKv(sb, key, value) {
   return { error };
 }
 
-export async function handleCatalogVersion() {
+/** Must stay in sync with catalogForCaller buyer transform stamp. */
+const BUYER_CATALOG_ETAG_SUFFIX = "-timber-ply-fold3";
+
+export async function handleCatalogVersion(request) {
   const snapshot = await handleCatalogGet();
   const etag = String(snapshot?.etag || "");
   if (!etag || etag === SEED) return { etag: SEED, updatedAt: "" };
-  return { etag, updatedAt: snapshot.updatedAt || "" };
+  const surface = request?.headers?.get?.("x-mm-catalog") || "";
+  const shop = surface === "shop" || (surface !== "portal" && !readSession(request, "staff"));
+  return {
+    etag: shop ? `${etag}${BUYER_CATALOG_ETAG_SUFFIX}` : etag,
+    updatedAt: snapshot.updatedAt || "",
+  };
 }
 
 function staffUnitPrices(snapshot) {
@@ -346,9 +354,9 @@ function catalogForCaller(snapshot, request) {
   const surface = request?.headers?.get?.("x-mm-catalog") || "";
   if (!snapshot || (surface !== "shop" && readSession(request, "staff"))) return snapshot;
   const etag = String(snapshot.etag || "");
-  const buyerEtag = etag && etag !== "seed" ? `${etag}-ask-tile12` : etag;
+  const buyerEtag = etag && etag !== "seed" ? `${etag}${BUYER_CATALOG_ETAG_SUFFIX}` : etag;
   if (buyerBodyMemo && buyerBodyMemo.etag === buyerEtag) return buyerBodyMemo;
-  const products = foldGypsumBlocks(foldManholeCovers(foldSteelGratings(foldDrainageGratings(foldTiles(foldWindows(foldPipeFittings(foldAggregate(foldFinishBoards(foldShoeWashing(foldCable(foldAluminumCladding(foldRaisedFloors(foldPaint(foldDowelBar(foldOxygenChamber(foldBalustrades(foldPrecastConcrete(foldDenseMesh(foldXpsFoamBoard((snapshot.products || []).filter(buyerVisibleProduct).map(toPublicProduct)))))))))))))))))))));
+  const products = foldTimberPlywood(foldGypsumBlocks(foldManholeCovers(foldSteelGratings(foldDrainageGratings(foldTiles(foldWindows(foldPipeFittings(foldAggregate(foldFinishBoards(foldShoeWashing(foldCable(foldAluminumCladding(foldRaisedFloors(foldPaint(foldDowelBar(foldOxygenChamber(foldBalustrades(foldPrecastConcrete(foldDenseMesh(foldXpsFoamBoard((snapshot.products || []).filter(buyerVisibleProduct).map(toPublicProduct))))))))))))))))))))));
   const previous = new Map((Array.isArray(snapshot.categories) ? snapshot.categories : []).map((item) => [item?.name, item]));
   const categories = [...new Set(products.map((product) => String(product?.category || "").trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, "zh"))
@@ -374,7 +382,7 @@ export async function GET(request) {
     return Response.json(result.body, { status: result.status || 200, headers });
   }
   if (partOf(request) === "version") {
-    return Response.json(await handleCatalogVersion(), { headers });
+    return Response.json(await handleCatalogVersion(request), { headers });
   }
   if (partOf(request) === "status") {
     const id = new URL(request.url).searchParams.get("id") || "";

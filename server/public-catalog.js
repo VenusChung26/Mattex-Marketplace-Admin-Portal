@@ -1684,6 +1684,202 @@ export function foldTiles(products) {
   return [...rest.slice(0, insertAt), ...folded, ...rest.slice(insertAt)];
 }
 
+const TIMBER_CATEGORY = "木材、夾板, Timber / Plywood";
+const TIMBER_TOLERANCE = "(with +/- 1mm to tolerance)";
+
+const TIMBER_FOLDS = [
+  {
+    kind: "white-faced",
+    match: /White faced Plywood/i,
+    name: "白板夾板, White faced Plywood",
+    withThickness: true,
+  },
+  {
+    kind: "red-faced",
+    match: /Red faced Plywood/i,
+    name: "紅板夾板, Red faced Plywood",
+    withThickness: true,
+  },
+  {
+    kind: "filmface",
+    match: /Film\s*face Plywood/i,
+    name: "菲林板, Filmface Plywood",
+    withThickness: true,
+  },
+  {
+    kind: "softwood",
+    match: /\bSoftwood\b/i,
+    name: "木方（加拿大）, Softwood",
+    // packing is CF/PC volume, still shown as 分類 2 so Softwood also has 3 pickers
+    withThickness: true,
+    tolerance: false,
+  },
+];
+
+function timberParts(product) {
+  const bits = String(product?.sizeDesc || "")
+    .split(/\s*·\s*/)
+    .map((bit) => String(bit || "").trim())
+    .filter(Boolean);
+  if (bits.length >= 3) return { size: bits[0], thickness: bits[1], grade: bits[2] };
+  if (bits.length === 2) return { size: bits[0], thickness: "", grade: bits[1] };
+  if (bits.length === 1) return { size: bits[0], thickness: "", grade: "" };
+  return { size: "", thickness: "", grade: "" };
+}
+
+function timberKind(product) {
+  if (String(product?.category || "") !== TIMBER_CATEGORY) return "";
+  const name = String(product?.name || "");
+  // Need a concrete size/grade row (listed or sheet SKU), not the category stub alone.
+  const parts = timberParts(product);
+  const sized = Boolean(parts.size && (parts.thickness || parts.grade || /—/.test(name)));
+  if (!sized && !/^MKT-(LIST|SHEET)-/i.test(String(product?.productNo || ""))) return "";
+  if (!sized) return "";
+  for (const spec of TIMBER_FOLDS) {
+    if (spec.match.test(name)) return spec.kind;
+  }
+  return "";
+}
+
+function timberThicknessKey(size, thickness) {
+  return `${size}::${thickness}`;
+}
+
+function timberGroups(rows, { withThickness }) {
+  const sizes = [];
+  const thicknessOpts = [];
+  const gradeOpts = [];
+  const seenSize = new Set();
+  const seenThick = new Set();
+  const seenGrade = new Set();
+  for (const row of rows) {
+    const { size, thickness, grade } = timberParts(row);
+    if (!size) continue;
+    if (!seenSize.has(size)) {
+      seenSize.add(size);
+      sizes.push(size);
+    }
+    if (withThickness && thickness) {
+      const thickKey = timberThicknessKey(size, thickness);
+      if (!seenThick.has(thickKey)) {
+        seenThick.add(thickKey);
+        thicknessOpts.push({ label: thickness, parent: size, key: thickKey });
+      }
+      if (grade) {
+        const gradeKey = `${thickKey}::${grade}`;
+        if (!seenGrade.has(gradeKey)) {
+          seenGrade.add(gradeKey);
+          gradeOpts.push({ label: grade, parent: thickKey, key: gradeKey });
+        }
+      }
+    } else if (grade) {
+      const gradeKey = `${size}::${grade}`;
+      if (!seenGrade.has(gradeKey)) {
+        seenGrade.add(gradeKey);
+        gradeOpts.push({ label: grade, parent: size, key: gradeKey });
+      }
+    }
+  }
+  // Size → Thickness (mm) → Grade
+  return [
+    { id: "ply-size", label: "尺寸", labelEn: "Size", options: sizes },
+    {
+      id: "ply-thickness",
+      label: "厚度 (mm)",
+      labelEn: "Thickness (mm)",
+      dependsOn: "ply-size",
+      options: thicknessOpts,
+    },
+    {
+      id: "ply-grade",
+      label: "等級",
+      labelEn: "Grade",
+      dependsOn: "ply-thickness",
+      options: gradeOpts,
+    },
+  ].filter((group) => (group.options || []).length > 0);
+}
+
+function timberChoices(rows, groups, spec) {
+  const withThickness = spec?.withThickness !== false;
+  const choices = [];
+  for (const row of rows) {
+    const { size, thickness, grade } = timberParts(row);
+    if (!size) continue;
+    const picks = { "ply-size": size };
+    if (withThickness && thickness) {
+      picks["ply-thickness"] = timberThicknessKey(size, thickness);
+      if (grade) picks["ply-grade"] = `${picks["ply-thickness"]}::${grade}`;
+    } else if (grade) {
+      picks["ply-grade"] = `${size}::${grade}`;
+    }
+    const groupIds = new Set((groups || []).map((group) => group.id));
+    for (const key of Object.keys(picks)) {
+      if (!groupIds.has(key)) delete picks[key];
+    }
+    if (!Object.keys(picks).length) continue;
+    const facts = orderFacts(row);
+    // Keep buyer description as the tolerance note — do not leak host plywood essays into picks.
+    if (spec?.tolerance !== false) facts.summary = TIMBER_TOLERANCE;
+    else delete facts.summary;
+    choices.push({ picks, ...facts });
+  }
+  return choices;
+}
+
+function foldedTimber(list, spec) {
+  if (!list.length) return null;
+  list.sort((a, b) => String(a.productNo || "").localeCompare(String(b.productNo || "")));
+  const base = { ...list[0] };
+  base.name = spec.name;
+  base.category = TIMBER_CATEGORY;
+  base.sizeDesc = "";
+  base.primarySpec = "";
+  base.parentProduct = "";
+  base.variant = "";
+  base.description = spec.tolerance === false ? "" : TIMBER_TOLERANCE;
+  base.specGroups = timberGroups(list, spec);
+  const choices = timberChoices(list, base.specGroups, spec);
+  if (choices.length) base.specChoices = choices;
+  return base;
+}
+
+/** Host category stubs replaced by the listed Size→Thickness→Grade folds. */
+function isTimberStub(product, foldedKinds) {
+  if (String(product?.category || "") !== TIMBER_CATEGORY) return false;
+  const name = String(product?.name || "").trim();
+  const english = name.includes(", ") ? name.slice(name.lastIndexOf(", ") + 2).trim() : name;
+  if (foldedKinds.has("filmface") && /^Film\s*Face Plywood$/i.test(english) && !/—/.test(english)) return true;
+  if ((foldedKinds.has("white-faced") || foldedKinds.has("red-faced") || foldedKinds.has("filmface")) && /^Plywood$/i.test(english) && !/—/.test(english)) {
+    return true;
+  }
+  if (foldedKinds.has("softwood") && /^Timber$/i.test(english) && !/—/.test(english)) return true;
+  return false;
+}
+
+/** Collapse listed White/Red/Filmface plywood (+ Softwood) into Size → Thickness → Grade pickers. */
+export function foldTimberPlywood(products) {
+  const buckets = Object.fromEntries(TIMBER_FOLDS.map((spec) => [spec.kind, []]));
+  const rest = [];
+  let insertAt = -1;
+  for (const product of products || []) {
+    const kind = timberKind(product);
+    if (!kind) {
+      rest.push(product);
+      continue;
+    }
+    if (insertAt < 0) insertAt = rest.length;
+    buckets[kind].push(product);
+  }
+  const folded = TIMBER_FOLDS.map((spec) => foldedTimber(buckets[spec.kind], spec)).filter(Boolean);
+  if (!folded.length) return products || [];
+  const foldedKinds = new Set(TIMBER_FOLDS.filter((spec) => buckets[spec.kind].length).map((spec) => spec.kind));
+  const cleaned = rest.filter((product) => !isTimberStub(product, foldedKinds));
+  const removed = rest.length - cleaned.length;
+  const at = Math.max(0, (insertAt < 0 ? cleaned.length : insertAt) - removed);
+  return [...cleaned.slice(0, at), ...folded, ...cleaned.slice(at)];
+}
+
 export function toPublicCatalog(catalog) {
   if (!catalog || typeof catalog !== "object") return catalog;
   return {

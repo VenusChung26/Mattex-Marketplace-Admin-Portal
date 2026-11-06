@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { displayLeadTime, getProduct, isBuyerVisible, isHitProduct, productSkuId, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, buildTailorPrefillDescription, requireBuyerAuth, catalogPathForCategory, canDirectBuy } from "../lib/store";
 import { displayUnit, lowerDeliveryQty, orderMinimum, productImageUrl } from "../lib/productFields";
 import { groupOf, useCatalogGroups } from "../lib/catalogGroups";
-import { groupSizeChoices, localizeSpecText, optionLabels, sharedOptionPrefix, shopTitle, stripOptionPrefix } from "../lib/catalogGroup";
+import { formatSpecDisplay, groupSizeChoices, localizeSpecText, optionLabels, sharedOptionPrefix, shopTitle, stripOptionPrefix } from "../lib/catalogGroup";
 import { usePromo } from "../lib/promo";
 import { useCartLine } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
@@ -393,7 +393,7 @@ export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card",
 function tailorInitialFromProduct(product, qty, { pickedSize = "", pickedSpecs = null, dimensions = false } = {}) {
   const sizeForPrefill = pickedSize || "Customize";
   return {
-    name: product.name || "",
+    name: shopTitle(product) || product.name || "",
     description: buildTailorPrefillDescription(product, {
       pickedSize: sizeForPrefill,
       pickedSpecs,
@@ -684,6 +684,9 @@ const SPEC_ID_NAMES = {
   "clad-size": ["尺寸", "Size"],
   "cover-size": ["尺寸", "Size"],
   "slab-size": ["尺寸", "Size"],
+  "ply-size": ["尺寸", "Size"],
+  "ply-thickness": ["厚度 (mm)", "Thickness (mm)"],
+  "ply-grade": ["等級", "Grade"],
   "kerb-length": ["長度", "Length"],
   "cable-length": ["長度", "Length"],
   diameter: ["直徑", "Diameter"],
@@ -767,11 +770,9 @@ function preparedSpecGroups(groups) {
 
 function countVisibleSpecGroups(groups) {
   const shown = preparedSpecGroups(groups);
-  const picked = Object.fromEntries(shown.map((group) => [group.id, group.field ? "" : specOptionKey(group.options?.[0])]));
   return shown.filter((group) => {
     if (group.field === "length") return true;
-    const options = group.id === "kerb-length" ? sortLengthOptions(groupOptions(group, picked)) : groupOptions(group, picked);
-    return options.length > 0;
+    return displayGroupOptions(group).length > 0;
   }).length;
 }
 
@@ -973,8 +974,8 @@ function specOptionImage(option) {
 function specOptionText(option, lang) {
   const label = specOptionLabel(option);
   if (isCustomizeChoice(label)) return lang === "zh" ? "自訂規格" : "Custom spec";
-  if (lang === "zh" && SPEC_OPTION_ZH[label]) return SPEC_OPTION_ZH[label];
-  return label;
+  if (lang === "zh" && SPEC_OPTION_ZH[label]) return formatSpecDisplay(SPEC_OPTION_ZH[label]);
+  return formatSpecDisplay(label);
 }
 
 function customizeHint(lang) {
@@ -1055,11 +1056,80 @@ function sortLengthOptions(options) {
   return [...sized, ...rest, ...custom];
 }
 
-function groupOptions(group, picked) {
+/** Ascending: numbers from 1, letters from A; Customize stays last. */
+function sortSpecOptionsAscending(options) {
+  const list = [...(options || [])];
+  list.sort((a, b) => {
+    const la = String(specOptionLabel(a) || specOptionKey(a) || "").trim();
+    const lb = String(specOptionLabel(b) || specOptionKey(b) || "").trim();
+    const ca = isCustomizeChoice(la) ? 1 : 0;
+    const cb = isCustomizeChoice(lb) ? 1 : 0;
+    if (ca !== cb) return ca - cb;
+    return la.localeCompare(lb, undefined, { numeric: true, sensitivity: "base" });
+  });
+  return list;
+}
+
+/** All options for a group (deduped by label, sorted small→large). Unmatched stay visible but disabled. */
+function displayGroupOptions(group) {
+  const raw = group?.options || [];
+  const list = group?.id === "kerb-length" ? sortLengthOptions(raw) : raw;
+  const seen = new Set();
+  const out = [];
+  for (const option of list) {
+    const label = specOptionLabel(option) || specOptionKey(option);
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    out.push(option);
+  }
+  return sortSpecOptionsAscending(out);
+}
+
+function optionMatchesParent(option, parent) {
+  if (!parent) return true;
+  if (!option || typeof option !== "object" || !option.parent) return true;
+  return option.parent === parent;
+}
+
+/** Resolve the concrete option row for the current parent pick (needed when labels repeat). */
+function resolveGroupOption(group, labelOrKey, picked) {
   const options = group?.options || [];
-  if (!group?.dependsOn) return options;
+  const parent = group?.dependsOn ? picked?.[group.dependsOn] : "";
+  const want = String(labelOrKey || "").trim();
+  if (!want) return null;
+  const matches = options.filter((option) => {
+    const label = specOptionLabel(option);
+    const key = specOptionKey(option);
+    return label === want || key === want;
+  });
+  if (!matches.length) return null;
+  return matches.find((option) => optionMatchesParent(option, parent)) || matches[0];
+}
+
+function isGroupOptionEnabled(group, option, picked) {
+  if (!group?.dependsOn) return true;
   const parent = picked?.[group.dependsOn];
-  return options.filter((option) => !option?.parent || option.parent === parent);
+  if (!parent) return true;
+  const label = specOptionLabel(option) || specOptionKey(option);
+  return (group.options || []).some((row) => {
+    const rowLabel = specOptionLabel(row) || specOptionKey(row);
+    return rowLabel === label && optionMatchesParent(row, parent);
+  });
+}
+
+/** Enabled concrete keys for the current upstream picks (used when auto-fixing a pick). */
+function enabledGroupKeys(group, picked) {
+  const parent = group?.dependsOn ? picked?.[group.dependsOn] : "";
+  const keys = [];
+  const seen = new Set();
+  for (const option of group?.options || []) {
+    if (!optionMatchesParent(option, parent)) continue;
+    const key = specOptionKey(option);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    keys.push(key);
+  }
+  return keys;
 }
 
 function specGroupsSignature(groups) {
@@ -1082,8 +1152,9 @@ function syncDependentPicks(groups, current) {
   let changed = false;
   for (const group of groups || []) {
     if (group.field === "length") continue;
-    const keys = groupOptions(group, next).map(specOptionKey).filter(Boolean);
-    const selected = keys.includes(next[group.id]) ? next[group.id] : keys[0] || "";
+    const keys = enabledGroupKeys(group, next);
+    if (!keys.length) continue;
+    const selected = keys.includes(next[group.id]) ? next[group.id] : keys[0];
     if (selected !== next[group.id]) {
       next[group.id] = selected;
       changed = true;
@@ -1091,6 +1162,8 @@ function syncDependentPicks(groups, current) {
   }
   return changed ? next : current;
 }
+
+const COMPACT_SPEC_PREVIEW = 3;
 
 export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, onPick, compact = false, moreHref = "", extraSections = 0, onVisibleCount }) {
   const { lang, t } = useLanguage();
@@ -1107,7 +1180,7 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
   }, [onPick, picked]);
   useEffect(() => {
     for (const group of shown || []) {
-      const option = groupOptions(group, picked).find((item) => specOptionKey(item) === picked[group.id]);
+      const option = resolveGroupOption(group, picked[group.id], picked);
       const image = specOptionImage(option);
       if (image) {
         onImage?.(image);
@@ -1117,23 +1190,24 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
   }, [shownKey, onImage, picked]);
   const visible = (shown || []).filter((group) => {
     if (group.field === "length") return true;
-    const options = group.id === "kerb-length" ? sortLengthOptions(groupOptions(group, picked)) : groupOptions(group, picked);
-    return options.length > 0;
+    return displayGroupOptions(group).length > 0;
   });
   if (!visible.length) return null;
   const total = visible.length + extraSections;
-  const chipClass = (on) =>
+  const chipClass = (on, disabled) =>
     `w-fit max-w-full rounded-none border text-left ${
       compact ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-sm"
     } ${
-      on
-        ? "border-brand-700 bg-brand-50 font-semibold text-brand-800"
-        : "border-line bg-white text-ink hover:border-brand-400"
+      disabled
+        ? "cursor-not-allowed border-line/70 bg-paper text-mute/50"
+        : on
+          ? "border-brand-700 bg-brand-50 font-semibold text-brand-800"
+          : "border-line bg-white text-ink hover:border-brand-400"
     }`;
   return (
     <div data-tour="specs" className={`space-y-4 ${className}`}>
       {visible.map((group, index) => {
-        const options = group.field === "length" ? [] : group.id === "kerb-length" ? sortLengthOptions(groupOptions(group, picked)) : groupOptions(group, picked);
+        const options = group.field === "length" ? [] : displayGroupOptions(group);
         const named = groupHeading(group, index, total, lang, t("variantOption"));
         return (
         <div key={group.id}>
@@ -1159,43 +1233,50 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
           <div className={`mt-2 items-start ${compact ? "flex flex-col gap-1.5" : "flex flex-wrap gap-2"}`}>
             {(() => {
               const pickedKey = String(picked[group.id] || "");
-              const selectedOption = options.find((option) => specOptionKey(option) === pickedKey) || options[0];
-              const overflow = compact && options.length > 3;
-              const visible = overflow
-                ? [selectedOption, options.find((option) => option !== selectedOption)].filter(Boolean)
-                : options;
+              const active = resolveGroupOption(group, pickedKey, picked);
+              const activeLabel = specOptionLabel(active) || specOptionKey(active);
+              // Compact cards: preview a few chips, then jump to details for the rest.
+              const canCollapse = compact && moreHref && options.length > COMPACT_SPEC_PREVIEW;
+              const preview = canCollapse ? options.slice(0, COMPACT_SPEC_PREVIEW) : options;
+              const hiddenCount = options.length - preview.length;
               return (
                 <>
-                  {visible.map((option) => {
+                  {preview.map((option) => {
                     const label = specOptionLabel(option);
-                    const key = specOptionKey(option);
+                    const displayKey = label || specOptionKey(option);
                     const customize = isCustomizeChoice(label);
+                    const enabled = customize || isGroupOptionEnabled(group, option, picked);
+                    const on = Boolean(activeLabel) && activeLabel === displayKey;
                     return (
                       <button
-                        key={key}
+                        key={`${group.id}:${displayKey}`}
                         type="button"
-                        aria-pressed={pickedKey === key}
+                        aria-pressed={on}
+                        disabled={!enabled}
                         title={customize ? customizeHint(lang) : undefined}
                         onClick={() => {
+                          if (!enabled) return;
+                          const resolved = resolveGroupOption(group, displayKey, picked) || option;
+                          const nextKey = specOptionKey(resolved);
                           setPicked((current) =>
-                            syncDependentPicks(shown, { ...current, [group.id]: key })
+                            syncDependentPicks(shown, { ...current, [group.id]: nextKey })
                           );
                           if (!customize) return;
                           onCustomize?.(group.id === "slab-size" ? { dimensions: true } : undefined);
                         }}
-                        className={chipClass(pickedKey === key)}
+                        className={chipClass(on, !enabled)}
                       >
                         {customize ? (
-                          <CustomizeChipLabel lang={lang} compact={compact} on={pickedKey === key} />
+                          <CustomizeChipLabel lang={lang} compact={compact} on={on} />
                         ) : (
                           specOptionText(option, lang)
                         )}
                       </button>
                     );
                   })}
-                  {overflow && moreHref ? (
-                    <Link to={moreHref} className={chipClass(false)}>
-                      {t("moreOptions", { n: options.length - visible.length })}
+                  {canCollapse ? (
+                    <Link to={moreHref} className={chipClass(false, false)}>
+                      {t("moreOptions", { n: hiddenCount })}
                     </Link>
                   ) : null}
                 </>

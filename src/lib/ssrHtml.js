@@ -462,7 +462,7 @@ function pageContent(page) {
       ${specs ? `<h2>${lang === "zh" ? "規格" : "Specifications"}</h2><ul>${specs}</ul>` : ""}
       <h2>${lang === "zh" ? "訂購" : "Order"}</h2>
       <dl>
-        <dt>${lang === "zh" ? "臨時 SKU ID" : "Provisional SKU ID"}</dt><dd>${esc(product.productNo || product.id)}</dd>
+        <dt>SKU ID</dt><dd>${esc(product.productNo || product.id)}</dd>
         <dt>${lang === "zh" ? "最低訂購量" : "Min. order qty"}</dt><dd>${esc(product.moq)} ${esc(displayUnit(product.unit, lang))}</dd>
         ${product.unit ? `<dt>${lang === "zh" ? "單位" : "Unit"}</dt><dd>${esc(displayUnit(product.unit, lang))}</dd>` : ""}
         <dt>${lang === "zh" ? "送貨" : "Delivery"}</dt><dd>${esc(lead)}${/天|日|day|week/i.test(lead) ? "" : lang === "zh" ? " 日" : " days"}</dd>

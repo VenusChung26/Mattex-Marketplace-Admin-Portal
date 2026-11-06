@@ -1,16 +1,13 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { blockProductOrders, fetchProductLive, getCatalogEtag, getStoreSnapshot } from "../lib/store";
+import { catalogContentStamp } from "../lib/catalogEtag";
 import { getCatalogVersion } from "../lib/remote";
 import { useLanguage } from "../i18n";
 
 function productIdFromPath(pathname) {
   const match = String(pathname || "").match(/^\/(?:en|zh)\/details\/([^/]+)/);
   return match ? decodeURIComponent(match[1]) : "";
-}
-
-function catalogStamp(value) {
-  return String(value || "").replace(/-ask(?:-[a-z0-9]+)*$/i, "");
 }
 
 export default function CatalogUpdateBanner() {
@@ -29,7 +26,7 @@ export default function CatalogUpdateBanner() {
         if (!res.res.ok || stop) return;
         const data = res.data || {};
         const next = String(data?.etag || "seed");
-        const changed = next !== "seed" && catalogStamp(next) !== catalogStamp(current);
+        const changed = next !== "seed" && catalogContentStamp(next) !== catalogContentStamp(current);
         const productId = productIdFromPath(location.pathname);
         if (changed && productId) {
           const live = await fetchProductLive(productId);

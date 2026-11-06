@@ -1,4 +1,5 @@
 import { getCatalog, getCatalogVersion } from "./remote";
+import { catalogContentStamp } from "./catalogEtag";
 import { seedCatalogSnapshot } from "./store";
 
 let started = false;
@@ -11,7 +12,7 @@ async function pullCatalog() {
   running = true;
   try {
     const version = await getCatalogVersion();
-    const etag = String(version?.data?.etag || "");
+    const etag = catalogContentStamp(version?.data?.etag || "");
     if (!etag || etag === "seed") return;
     if (!primed) {
       primed = true;
@@ -22,7 +23,7 @@ async function pullCatalog() {
     const res = await getCatalog("");
     if (!res?.ok || !Array.isArray(res.data?.products) || !res.data.products.length) return;
     await seedCatalogSnapshot(res.data);
-    lastEtag = String(res.data.etag || etag);
+    lastEtag = catalogContentStamp(res.data.etag || etag);
   } catch {
     /* keep the catalog already on screen */
   } finally {

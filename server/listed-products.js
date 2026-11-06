@@ -23,6 +23,12 @@ const BIG_CATEGORY = {
   Waterproofing: "防水, Waterproofing",
   "Cable Containment": "線槽, Cable Containment",
   Insulation: "保溫, Insulation",
+  "Architectural Finishes": "建築飾面, Architectural Finishes",
+};
+
+/** Product-level category overrides (listed row category/subcategory alone is wrong). */
+const PRODUCT_CATEGORY = {
+  "Wood Plastic Composite": "建築飾面, Architectural Finishes",
 };
 
 const SUB_CATEGORY = {
@@ -175,6 +181,8 @@ function subZh(row) {
 }
 
 function categoryName(row) {
+  const product = clean(row.product);
+  if (product && PRODUCT_CATEGORY[product]) return PRODUCT_CATEGORY[product];
   if (row.market === "PRC" && row.subcategory && SUB_CATEGORY[row.subcategory]) return SUB_CATEGORY[row.subcategory];
   return BIG_CATEGORY[row.category] || clean(row.category);
 }

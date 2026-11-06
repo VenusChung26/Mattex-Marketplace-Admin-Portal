@@ -101,9 +101,15 @@ function jsonPlugin() {
           return;
         }
         if (path === "/api/catalog-version" && req.method === "GET") {
+          const request = new Request(`http://${req.headers.host || "localhost"}${req.url || ""}`, {
+            headers: {
+              cookie: String(req.headers.cookie || ""),
+              "x-mm-catalog": String(req.headers["x-mm-catalog"] || ""),
+            },
+          });
           res.statusCode = 200;
           res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify(await handleCatalogVersion()));
+          res.end(JSON.stringify(await handleCatalogVersion(request)));
           return;
         }
         if (path === "/api/catalog" && req.method === "GET") {
