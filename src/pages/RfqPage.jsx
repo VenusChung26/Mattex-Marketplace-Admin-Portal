@@ -407,6 +407,7 @@ export default function RfqPage() {
     if (code === "project") return t("guestProjectRequired");
     if (code === "delivery_date") return t("deliveryDateRequired");
     if (code === "attachment") return t("guestAttachmentRequired");
+    if (code === "contact_verify") return t("contactVerifyNeeded");
     return "";
   }
 

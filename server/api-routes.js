@@ -3,6 +3,7 @@ export const API_ENDPOINTS = {
   "/api/auth": () => import("../api/auth.js"),
   "/api/blob-upload": () => import("../api/blob-upload.js"),
   "/api/catalog-snapshot": () => import("../api/catalog-snapshot.js"),
+  "/api/contact-verify": () => import("../api/contact-verify.js"),
   "/api/data": () => import("../api/data.js"),
   "/api/product-image": () => import("../api/product-image.js"),
   "/api/promo": () => import("../api/promo.js"),

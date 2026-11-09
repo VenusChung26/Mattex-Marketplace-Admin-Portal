@@ -100,6 +100,7 @@ export default function AuthModal({ open, onClose }) {
     if (code === "project") return t("guestProjectRequired");
     if (code === "delivery_date") return t("deliveryDateRequired");
     if (code === "attachment") return t("guestAttachmentRequired");
+    if (code === "contact_verify") return t("contactVerifyNeeded");
     if (code === "server" || code === "storage" || code === "network") return t("submitFailed");
     return t("submitFailed");
   }

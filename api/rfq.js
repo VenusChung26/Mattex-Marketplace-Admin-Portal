@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { lookupBuyerAccount, readSession } from "./auth.js";
+import { isContactVerified } from "./contact-verify.js";
 import { handlePromoGet } from "./promo.js";
 import { sendResendEmail } from "./send-email.js";
 import { list } from "@vercel/blob";
@@ -195,6 +196,10 @@ async function register(body, actor, request) {
   }
   const missing = guestOrderMissing(body, snapshot);
   if (missing) return { status: 400, body: { ok: false, error: missing } };
+  const contactPhone = text(body?.buyer?.phone || snapshot.buyerPhone, 40);
+  if (!(await isContactVerified(request, { email: buyerEmail, phone: contactPhone }))) {
+    return { status: 403, body: { ok: false, error: "contact_verify" } };
+  }
   const checked = await verifySelections(lines);
   if (!checked.ok) return selectionFailure(checked);
   snapshot.lines = checked.lines.map((line, index) => ({ ...(snapshot.lines?.[index] || {}), ...line }));
@@ -247,6 +252,10 @@ async function createPo(body, actor, request) {
   }
   const missing = guestOrderMissing(body);
   if (missing) return { status: 400, body: { ok: false, error: missing } };
+  const poPhone = text(body?.buyer?.phone, 40);
+  if (!(await isContactVerified(request, { email: buyerEmail, phone: poPhone }))) {
+    return { status: 403, body: { ok: false, error: "contact_verify" } };
+  }
   const checked = await verifySelections(body.lines);
   if (!checked.ok) return selectionFailure(checked);
   if (actor.kind === "guest") {

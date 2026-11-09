@@ -1813,6 +1813,9 @@ function searchSupplierProducts(slugOrName, query) {
 
 const listeners = new Set();
 let authModalOpen = false;
+let contactVerifyRequest = null;
+let contactVerifyWaiter = null;
+let contactVerifiedFlash = "";
 let authModalMode = "invite";
 let lastCartWhatsappResult = null;
 let catalogEpoch = 0;
@@ -1844,6 +1847,8 @@ let storeSnapshot = {
   adminAlerts: [],
   authModalOpen: false,
   authModalMode: "invite",
+  contactVerifyOpen: false,
+  contactVerifiedFlash: "",
   lastCartWhatsappResult: null,
 };
 
@@ -1865,6 +1870,8 @@ function refreshStoreSnapshot() {
     adminAlerts: listAdminAlerts(),
     authModalOpen,
     authModalMode,
+    contactVerifyOpen: Boolean(contactVerifyRequest?.open),
+    contactVerifiedFlash,
     lastCartWhatsappResult,
   };
 }
@@ -1908,7 +1915,6 @@ const WHATSAPP_NUMBER = "85256013989";
 const WHATSAPP_DISPLAY = "852-56013989";
 const WHATSAPP_HREF = `https://wa.me/${WHATSAPP_NUMBER}`;
 const SALES_EMAIL = "sales@mattex.com.hk";
-const RESEND_ACCOUNT_EMAIL = "resend@mattex.com.hk";
 const MATTEX_CHAIN_URL = "https://uat-chain.mattex.com.hk/overview";
 const TMS_INBOUND_RFQ_URL = "https://uat-tms-v2.mattex.com.hk/inbound/inbound-rfq?current=1&pageSize=20";
 const MATTEX_SITE_URL = "https://www.mattex.com.hk/";
@@ -3161,6 +3167,19 @@ async function submitRfq(productIds, options = {}) {
     const missing = guestOrderError((guest || memberOrder) || {});
     if (missing) return { ok: false, error: missing };
   }
+  {
+    const contact = guest || memberOrder || user || {};
+    const verifyEmail = normalizeEmail(contact.email || user?.email || "");
+    const verifyPhone = String(contact.phone || user?.phone || "").trim();
+    if (verifyEmail && verifyPhone) {
+      const verified = await ensureContactVerified({
+        email: verifyEmail,
+        phone: verifyPhone,
+        name: contact.name || user?.name || "",
+      });
+      if (!verified?.ok) return { ok: false, error: "contact_verify" };
+    }
+  }
   const email = accountKey();
   let draft = options.draft || getDraft();
   if (!draft.lines.length) return { ok: false, error: "empty" };
@@ -4161,6 +4180,57 @@ function closeAuthModal() {
   if (!authModalOpen) return;
   authModalOpen = false;
   emitStoreChange();
+}
+
+function getContactVerifyRequest() {
+  return contactVerifyRequest;
+}
+
+function noteContactVerified(trustDays) {
+  const days = Number(trustDays) || 14;
+  contactVerifiedFlash = `verified:${days}:${Date.now()}`;
+  emitStoreChange();
+}
+
+function openContactVerifyModal({ email, phone, name = "", link = false } = {}) {
+  const nextEmail = normalizeEmail(email);
+  const nextPhone = String(phone || "").trim();
+  if (!link && (!nextEmail || !nextPhone)) return Promise.resolve({ ok: false, error: "invalid" });
+  if (contactVerifyWaiter) {
+    const pending = contactVerifyWaiter;
+    contactVerifyWaiter = null;
+    pending({ ok: false, error: "replaced" });
+  }
+  contactVerifyRequest = {
+    open: true,
+    email: nextEmail,
+    phone: nextPhone,
+    name: String(name || "").trim(),
+    link: Boolean(link),
+  };
+  emitStoreChange();
+  return new Promise((resolve) => {
+    contactVerifyWaiter = resolve;
+  });
+}
+
+function openContactVerifyLinkModal() {
+  return openContactVerifyModal({ link: true });
+}
+
+function closeContactVerifyModal(result = { ok: false }) {
+  const waiter = contactVerifyWaiter;
+  contactVerifyWaiter = null;
+  contactVerifyRequest = null;
+  emitStoreChange();
+  if (waiter) waiter(result);
+}
+
+async function ensureContactVerified({ email, phone, name } = {}) {
+  const { contactVerifyStatus } = await import("./contactVerify.js");
+  const status = await contactVerifyStatus({ email, phone });
+  if (status.ok && status.verified) return { ok: true, verified: true };
+  return openContactVerifyModal({ email, phone, name });
 }
 
 function inviteBuyerAuth() {
@@ -5427,6 +5497,7 @@ const PO_ERROR_TEXT = {
     project: "請填寫項目名稱。",
     delivery_date: "請選擇交貨日期，或選 N/A。",
     attachment: "請至少附加一個檔案。",
+    contact_verify: "請先完成電郵驗證，先可以落單。",
   },
   en: {
     default: "The purchase order could not be created. Please try again.",
@@ -5441,6 +5512,7 @@ const PO_ERROR_TEXT = {
     project: "Enter the project name.",
     delivery_date: "Choose a delivery date, or N/A.",
     attachment: "Add at least one attachment.",
+    contact_verify: "Verify your email before placing an order.",
   },
 };
 
@@ -5467,6 +5539,10 @@ async function placeBuyNowPo(product, qty, line, guest) {
     remark: String(contact?.remark || "").trim(),
     attachments: contact?.attachments || [],
   };
+  if (buyer.email && buyer.phone) {
+    const verified = await ensureContactVerified({ email: buyer.email, phone: buyer.phone, name: buyer.name });
+    if (!verified?.ok) return { ok: false, error: "contact_verify" };
+  }
   const placed = await createPurchaseOrderRemote({
     lines: [{ productId: product.id, qty, pickedSpecs: line.pickedSpecs, pickedSize: line.pickedSize }],
     buyer: {
@@ -6264,9 +6340,10 @@ async function deliverRfqReverseDeclinedEmail(rfq) {
 function deliverAccountCreatedEmail(account) {
   const name = String(account?.name || "there").trim() || "there";
   const company = String(account?.companyName || "").trim();
-  const email = account?.email;
+  const email = normalizeEmail(account?.email);
+  if (!email) return { ok: false, error: "email" };
   const mail = {
-    to: RESEND_ACCOUNT_EMAIL,
+    to: email,
     subject: "Your Mattex Marketplace account is ready",
     innerHtml: accountCreatedEmailHtml({
       logoUrl: mattexLogoUrl(),
@@ -6280,7 +6357,7 @@ function deliverAccountCreatedEmail(account) {
   const log = readJson("subbie_buyer_mail_log", []);
   writeJson(
     "subbie_buyer_mail_log",
-    [{ to: RESEND_ACCOUNT_EMAIL, subject: mail.subject, at: new Date().toISOString(), html: true }, ...(Array.isArray(log) ? log : [])].slice(0, 40)
+    [{ to: email, subject: mail.subject, at: new Date().toISOString(), html: true }, ...(Array.isArray(log) ? log : [])].slice(0, 40)
   );
   return postResendEmail({ ...mail });
 }
@@ -9197,6 +9274,12 @@ export {
   setPendingRoute,
   openAuthModal,
   closeAuthModal,
+  getContactVerifyRequest,
+  openContactVerifyModal,
+  openContactVerifyLinkModal,
+  closeContactVerifyModal,
+  noteContactVerified,
+  ensureContactVerified,
   inviteBuyerAuth,
   requireBuyerAuth,
   addFromStorefront,

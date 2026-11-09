@@ -3,13 +3,21 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import AccountMenu from "./AccountMenu";
 import { FallbackImage } from "./ProductCard";
 import AuthModal from "./AuthModal";
+import ContactVerifyModal from "./ContactVerifyModal";
 import LangToggle from "./LangToggle";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { stripLocale, withLocale } from "../lib/locale";
 import { SHOW_RFQ } from "../lib/flags";
 import { usePromo } from "../lib/promo";
-import { closeAuthModal, getCategoryByName, getCategoryDefs, getProductsByCategory, logoutUser } from "../lib/store";
+import {
+  closeAuthModal,
+  getCategoryByName,
+  getCategoryDefs,
+  getProductsByCategory,
+  logoutUser,
+  openContactVerifyLinkModal,
+} from "../lib/store";
 import { ProductSearchBox } from "./SearchSuggestions";
 import { CategorySheet } from "./MobileCategories";
 import { TourReplayButton } from "./MarketplaceTour";
@@ -69,10 +77,17 @@ export default function SiteHeader({
   browseCategories,
   suggestProducts,
 } = {}) {
-  const { user, cartCount, authModalOpen, catalogEpoch } = useStore();
+  const { user, cartCount, authModalOpen, catalogEpoch, contactVerifyOpen } = useStore();
   const { t, lang } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("verifyContact") === "1" && params.get("token") && !contactVerifyOpen) {
+      openContactVerifyLinkModal();
+    }
+  }, [location.search, contactVerifyOpen]);
   const categories = getCategoryDefs();
   const headerRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -538,6 +553,7 @@ export default function SiteHeader({
         </div>
       ) : null}
       <AuthModal open={Boolean(authModalOpen)} onClose={closeAuthModal} />
+      <ContactVerifyModal />
     </header>
     </>
   );

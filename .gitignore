@@ -32,3 +32,4 @@ supabase/.temp
 data/catalog-snapshot.json
 data/catalog-version.json
 data/local-buyer-auth.json
+data/contact-otp.json
