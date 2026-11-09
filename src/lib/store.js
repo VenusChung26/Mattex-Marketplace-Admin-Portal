@@ -2,7 +2,7 @@ import { normalizePickedSpecs, normalizePickedSize, selectionKey, lineReference,
 import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappFileLinks, fitWhatsappUrls, publishCustomLineMedia, uploadGuestOrderFiles, uploadRfqPdf } from "./rfqBlob.js";
 import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
 import { attachmentSummary, guestOrderError, guestOrderPayload, guestUploadFiles, memberOrderSeed, releaseGuestUploadFiles } from "./guestOrder.js";
-import { fetchQuoteSnapshot, fetchRemoteKv, fetchRemoteRfqs, fetchRfqStamp, fetchSessionState, isSupabaseConfigured, persistCatalogTables, persistKv, persistKvNow, probeRemoteData, shouldUseLocalSharedStore } from "./supabasePersist.js";
+import { fetchQuoteSnapshot, fetchRemoteKv, fetchRemoteRfqs, fetchRfqStamp, fetchSessionState, getRemoteDataReady, isSupabaseConfigured, persistCatalogTables, persistKv, persistKvNow, probeRemoteData, shouldUseLocalSharedStore, subscribeRemoteData } from "./supabasePersist.js";
 import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedStore, postAuth, postEmail, postSharedStore, registerRfq, createPurchaseOrderRemote, decideRfqOnServer, assignRfqOnServer, submitQuoteOnServer, freezeWhatsappQuoteOnServer, markWhatsappSentOnServer, syncRfqsFromServer, pushBuyerContent, saveQuoteDraft, saveBuyerPhone, saveGuestFileUrls, createPoFromQuote, verifyProductSelections } from "./remote.js";
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
 import { SHOW_TMS_LINK } from "./flags.js";
@@ -8686,6 +8686,7 @@ function beginLocalSharedSync() {
   let delay = 15000;
   const schedule = (ms) => {
     window.clearTimeout(sharedStoreTimer);
+    if (!shouldUseLocalSharedStore()) return;
     sharedStoreTimer = window.setTimeout(tick, ms);
   };
   const tick = async () => {
@@ -9039,6 +9040,16 @@ function startSharedStoreSync() {
   if (typeof window === "undefined" || startSharedStoreSync.started) return;
   startSharedStoreSync.started = true;
   window.clearInterval(sharedStoreTimer);
+  let wasDown = getRemoteDataReady() === false;
+  subscribeRemoteData(() => {
+    const ready = getRemoteDataReady();
+    if (ready === false) wasDown = true;
+    else if (ready === true && wasDown) {
+      wasDown = false;
+      window.clearTimeout(sharedStoreTimer);
+      void pullSharedStore();
+    }
+  });
   const publishBuyerContact = () => {
     if (isPortalSurface()) return;
     const user = getUser();

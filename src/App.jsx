@@ -25,6 +25,7 @@ import PublicQuotePage from "./pages/PublicQuotePage";
 import SpecMatchPage from "./pages/SpecMatchPage";
 import MidAutumnPage from "./pages/MidAutumnPage";
 import CatalogUpdateBanner from "./components/CatalogUpdateBanner";
+import RemoteDataNotice from "./components/RemoteDataNotice";
 import FloatingActions from "./components/FloatingActions";
 import { getCategoryByName, ensureBuyerSession } from "./lib/store";
 import { adminOrigin, isAdminSurface } from "./lib/origins";
@@ -138,6 +139,7 @@ export default function App() {
     return (
       <BrowserRouter>
         <LanguageProvider>
+          <RemoteDataNotice />
           <BootGate />
           <ScrollToTop />
           <Routes>
@@ -152,6 +154,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <LanguageProvider>
+        <RemoteDataNotice />
         <BootGate />
         <ScrollToTop />
         <GoogleAnalytics />

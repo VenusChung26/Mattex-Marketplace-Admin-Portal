@@ -4,8 +4,6 @@ import { startLiveCatalogRefresh } from "../lib/catalogLive";
 import { jumpToId, scrollToTopNow } from "../lib/jumpTo";
 import { stripLocale } from "../lib/locale";
 
-startLiveCatalogRefresh();
-
 if (typeof window !== "undefined" && "scrollRestoration" in window.history) {
   window.history.scrollRestoration = "manual";
 }
@@ -19,6 +17,7 @@ export default function ScrollToTop() {
   const lastPath = useRef(null);
   const seenRoute = useRef(null);
   const routeKey = `${pathname}${search}`;
+  useEffect(() => startLiveCatalogRefresh(pathname), [pathname]);
   if (seenRoute.current !== routeKey) {
     seenRoute.current = routeKey;
     if (typeof window !== "undefined") scrollToTopNow();

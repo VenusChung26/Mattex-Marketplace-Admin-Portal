@@ -285,9 +285,9 @@ export async function postSharedStore(body) {
   return sendJson("/api/shared-store", { method: "POST", body });
 }
 
-export async function postData(op, payload = {}) {
+export async function postData(op, payload = {}, { timeoutMs } = {}) {
   try {
-    const { res, data } = await sendJson("/api/data", { method: "POST", body: { op, ...payload } });
+    const { res, data } = await sendJson("/api/data", { method: "POST", body: { op, ...payload }, timeoutMs });
     return { ok: Boolean(data?.ok), status: res.status, data };
   } catch {
     return { ok: false, status: 0, data: null };

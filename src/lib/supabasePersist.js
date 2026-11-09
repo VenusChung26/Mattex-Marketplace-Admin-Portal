@@ -8,25 +8,48 @@ export function isSupabaseConfigured() {
 }
 
 let remoteDataReady = null;
+let recoveryTimer = null;
+let probeInFlight = null;
+const remoteDataListeners = new Set();
+
+export const getRemoteDataReady = () => remoteDataReady;
+
+export function subscribeRemoteData(listener) {
+  remoteDataListeners.add(listener);
+  return () => remoteDataListeners.delete(listener);
+}
 
 export function shouldUseLocalSharedStore() {
   return !isSupabaseConfigured() || remoteDataReady === false;
 }
 
-function markRemoteDataDown() {
-  remoteDataReady = false;
+function markRemoteDataReady(ready) {
+  const changed = remoteDataReady !== ready;
+  remoteDataReady = ready;
+  if (ready) {
+    clearTimeout(recoveryTimer);
+    recoveryTimer = null;
+  } else if (typeof window !== "undefined" && recoveryTimer === null) {
+    recoveryTimer = setTimeout(() => {
+      recoveryTimer = null;
+      void probeRemoteData();
+    }, 5000);
+  }
+  if (changed) remoteDataListeners.forEach((listener) => listener());
 }
 
 export async function probeRemoteData() {
   if (!isSupabaseConfigured()) return false;
-  if (remoteDataReady != null) return remoteDataReady;
-  const result = await postData("read", { keys: ["subbie_rfq_seq"] });
-  if (result.status >= 500 || result.status === 0) {
-    markRemoteDataDown();
-    return false;
-  }
-  remoteDataReady = true;
-  return true;
+  if (remoteDataReady === true) return true;
+  if (probeInFlight) return probeInFlight;
+  probeInFlight = postData("read", { keys: ["subbie_rfq_seq"] }, { timeoutMs: 10000 })
+    .then((result) => {
+      const ready = result.ok && result.status >= 200 && result.status < 400;
+      markRemoteDataReady(ready);
+      return ready;
+    })
+    .finally(() => { probeInFlight = null; });
+  return probeInFlight;
 }
 
 const SKIP_KV_KEYS = new Set([
@@ -48,7 +71,8 @@ const inBrowser = () => typeof document !== "undefined" && typeof fetch === "fun
 async function dataApi(op, payload = {}) {
   if (!inBrowser()) return null;
   const result = await postData(op, payload);
-  if (result.status >= 500 || result.status === 0) markRemoteDataDown();
+  if (result.status >= 500 || result.status === 0) markRemoteDataReady(false);
+  else if (result.ok) markRemoteDataReady(true);
   return result.ok ? result.data : null;
 }
 
