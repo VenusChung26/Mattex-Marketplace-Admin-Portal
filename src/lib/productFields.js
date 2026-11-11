@@ -79,12 +79,21 @@ const LEAD_TIME_ZH = {
   "FOB for Ningbo & Shanghai; Or CIF for Port of Hong Kong": "寧波及上海 FOB，或香港港 CIF",
   "EXW in Shenzhen , Transport to Hong Kong to be separate": "深圳出廠，運到香港另計",
   "Self-pickup within the factory, loading assistance, excluding unloading (excluding freight); Delivery at the project site, including unloading (including freight)":
-    "工廠自取，協助裝貨，不包括卸貨（不包括運費）；送到工地並包括卸貨（包括運費）",
+    "工廠自取：包裝貨，運費另計。送到工地：包運費同卸貨。",
+  "Factory pickup: loading included, freight extra. Site delivery includes freight and unloading.":
+    "工廠自取：包裝貨，運費另計。送到工地：包運費同卸貨。",
 };
+
+const FACTORY_PICKUP_LEAD_OLD =
+  "Self-pickup within the factory, loading assistance, excluding unloading (excluding freight); Delivery at the project site, including unloading (including freight)";
+const FACTORY_PICKUP_LEAD =
+  "Factory pickup: loading included, freight extra. Site delivery includes freight and unloading.";
 
 /** Buyer-facing lead time. Stored text stays English. */
 export function localizeLeadTime(text, lang) {
-  const raw = String(text || "").trim();
+  const raw = String(text || "").trim() === FACTORY_PICKUP_LEAD_OLD
+    ? FACTORY_PICKUP_LEAD
+    : String(text || "").trim();
   if (!raw || lang !== "zh") return raw;
   if (LEAD_TIME_ZH[raw]) return LEAD_TIME_ZH[raw];
   const range = raw.match(/^(\d+)\s*[–-]\s*(\d+)\s*days$/i);

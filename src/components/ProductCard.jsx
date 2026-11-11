@@ -185,14 +185,14 @@ export function ProductTagPills({ product, className = "" }) {
   );
 }
 
-const META_CHIP = "inline-flex items-center whitespace-nowrap bg-paper text-[10px] px-1.5 py-0.5";
+const META_CHIP = "inline-flex min-w-0 max-w-full items-center whitespace-normal text-left leading-snug bg-paper text-[10px] px-1.5 py-0.5";
 
 export function ProductMetaChips({ product, className = "", showTags = false }) {
   const { t, lang } = useLanguage();
   const stockKey = stockStatusKey(product.stockStatus);
   const inStock = product.stockStatus === "in_stock";
   return (
-    <div className={`flex flex-wrap items-center gap-1 ${className}`}>
+    <div className={`flex w-full min-w-0 flex-wrap items-center gap-1 ${className}`}>
       <span
         className={`${META_CHIP} font-semibold ${
           inStock ? "bg-brand-50 text-brand-800" : "text-ink"
@@ -607,10 +607,21 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
       </div>
     ) : null;
 
+  const selectionAlert = !selectionIssue.ok ? (
+    <p role="alert" className="text-xs text-amber-800">
+      {selectionMessage(selectionIssue.error, lang, minQty)}
+      {selectionIssue.error === "custom_required" ? (
+        <> <button type="button" className="underline" onClick={openTailor}>{lang === "en" ? "Add specification" : "填寫規格"}</button></>
+      ) : (
+        <> <Link className="underline" to={withLocale(lang, `/details/${product.id}`)}>{lang === "en" ? "Review options" : "檢視規格"}</Link></>
+      )}
+    </p>
+  ) : null;
+
   const buttons = (
     <div data-tour={size === "detail" ? undefined : "buy"} className={size === "detail" ? "space-y-2" : "space-y-1.5"}>
       {actionColumns}
-      {!selectionIssue.ok ? <p role="alert" className="text-xs text-amber-800">{selectionMessage(selectionIssue.error, lang, minQty)} <Link className="underline" to={withLocale(lang, `/details/${product.id}`)}>{lang === "en" ? "Review options" : "檢視規格"}</Link></p> : null}
+      {selectionAlert}
       {size !== "detail" && size !== "bar" ? tailorBtn : null}
       {size === "bar" && tailorBtn ? <div className="grid grid-cols-1">{tailorBtn}</div> : null}
       {tailorNote ? <p className="text-[11px] font-medium text-brand-700">{tailorNote}</p> : null}
@@ -632,7 +643,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
       <div className="space-y-2">
         {stepper}
         {actionColumns}
-        {!selectionIssue.ok ? <p role="alert" className="text-xs text-amber-800">{selectionMessage(selectionIssue.error, lang, minQty)}</p> : null}
+        {selectionAlert}
         {tailorBtn}
         {tailorNote ? <p className="text-[11px] font-medium text-brand-700">{tailorNote}</p> : null}
         {modal}

@@ -157,6 +157,7 @@ export function resolveSelection(product, line) {
   const groups = preparedSpecGroups(product.specGroups);
   const byId = new Map(groups.map((group) => [group.id, group]));
   const invalid = Object.keys(picks).filter((id) => !byId.has(id));
+  const customPending = [];
   for (const group of groups) {
     const value = picks[group.id];
     if (group.field) {
@@ -164,12 +165,15 @@ export function resolveSelection(product, line) {
       continue;
     }
     const option = findPickedSpecOption(group, picks);
-    if (!option || isCustomSelection(selectionOptionLabel(option))) invalid.push(group.id);
+    if (!option) invalid.push(group.id);
+    else if (isCustomSelection(selectionOptionLabel(option))) customPending.push(group.id);
   }
   const size = normalizePickedSize(line?.pickedSize);
   const choices = splitSizeChoices(product.sizeDesc || product.primarySpec);
-  if (size && (isCustomSelection(size) || (choices.length ? !choices.includes(size) : size !== String(product.sizeDesc || "").trim()))) invalid.push("size");
+  if (size && isCustomSelection(size)) customPending.push("size");
+  else if (size && (choices.length ? !choices.includes(size) : size !== String(product.sizeDesc || "").trim())) invalid.push("size");
   if (invalid.length) return { ok: false, error: "selection_invalid", invalidGroups: [...new Set(invalid)] };
+  if (customPending.length) return { ok: false, error: "custom_required", invalidGroups: [...new Set(customPending)] };
   const chosen = selectedProduct({ ...product, specGroups: groups }, line);
   const minimum = Math.max(1, Number(chosen.moq) || 1);
   if (!Number.isInteger(Number(line?.qty)) || Number(line.qty) < minimum) return { ok: false, error: "moq", minimum };
@@ -178,6 +182,9 @@ export function resolveSelection(product, line) {
 }
 
 export function selectionMessage(error, lang = "zh", minimum) {
+  if (error === "custom_required") {
+    return lang === "en" ? "Enter the custom specification before submitting." : "請填寫自訂規格後再提交。";
+  }
   const messages = lang === "en" ? {
     selection_invalid: "Product options have changed. Please reselect before submitting.",
     moq: "The minimum quantity has changed. Confirm your quantity before submitting.",
