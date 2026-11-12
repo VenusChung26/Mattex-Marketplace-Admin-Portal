@@ -186,12 +186,12 @@ export function selectionMessage(error, lang = "zh", minimum) {
     return lang === "en" ? "Enter the custom specification before submitting." : "請填寫自訂規格後再提交。";
   }
   const messages = lang === "en" ? {
-    selection_invalid: "Product options have changed. Please reselect before submitting.",
+    selection_invalid: "Enter the custom specification before submitting.",
     moq: "The minimum quantity has changed. Confirm your quantity before submitting.",
     catalog_unavailable: "We could not verify the latest product options. Your draft is saved; please retry.",
     unavailable: "This product can no longer be ordered. Your draft is saved.",
   } : {
-    selection_invalid: "商品規格已更新，請重新選擇後再提交。其他有效資料已保留。",
+    selection_invalid: "請填寫自訂規格後再提交。",
     moq: "最低購買量已更新，請確認並調整數量後再提交。",
     catalog_unavailable: "暫時無法核對最新商品資料，草稿已保留，請重試。",
     unavailable: "此商品暫時無法訂購，草稿已保留。",

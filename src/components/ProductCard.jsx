@@ -610,11 +610,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
   const selectionAlert = !selectionIssue.ok ? (
     <p role="alert" className="text-xs text-amber-800">
       {selectionMessage(selectionIssue.error, lang, minQty)}
-      {selectionIssue.error === "custom_required" ? (
-        <> <button type="button" className="underline" onClick={openTailor}>{lang === "en" ? "Add specification" : "填寫規格"}</button></>
-      ) : (
-        <> <Link className="underline" to={withLocale(lang, `/details/${product.id}`)}>{lang === "en" ? "Review options" : "檢視規格"}</Link></>
-      )}
+      <> <button type="button" className="underline" onClick={openTailor}>{lang === "en" ? "Add specification" : "填寫規格"}</button></>
     </p>
   ) : null;
 
