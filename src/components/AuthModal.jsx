@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
-import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, cancelPendingWhatsappInvite, currentMemberOrderSeed, loginUser, setAuthInviteHidden } from "../lib/store";
+import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, cancelPendingWhatsappInvite, currentMemberOrderSeed, getContactVerifyRequest, loginUser, setAuthInviteHidden } from "../lib/store";
 import { useRevealFormIssue } from "../lib/formFocus";
 import { PasswordInput } from "./AccountForm";
 import GuestSubmitFields from "./GuestSubmitFields";
@@ -52,6 +52,7 @@ export default function AuthModal({ open, onClose }) {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     function onKey(e) {
+      if (getContactVerifyRequest()?.open) return;
       if (e.key === "Escape" && closeReady.current) {
         if (whatsappContact) cancelWhatsapp();
         else if (invite) dismissInvite();

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLanguage } from "../i18n";
 import { useStore } from "../hooks/useStore";
 import { acceptContactToken, sendContactOtp, verifyContactOtp } from "../lib/contactVerify";
@@ -51,7 +52,7 @@ export default function ContactVerifyModal() {
     return undefined;
   }, [contactVerifyOpen, req?.open, t]);
 
-  if (!contactVerifyOpen || !req?.open) return null;
+  if (!contactVerifyOpen || !req?.open || typeof document === "undefined") return null;
 
   async function sendCode() {
     setBusy(true);
@@ -106,8 +107,9 @@ export default function ContactVerifyModal() {
 
   const showManual = Boolean(req.email && req.phone) && !(req.link && !linkDone);
 
-  return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/40 p-4" role="dialog" aria-modal="true">
+  return createPortal(
+    <div className="fixed inset-0 z-[120] overflow-y-auto bg-ink/40 p-4" role="dialog" aria-modal="true">
+      <div className="flex min-h-full items-center justify-center">
       <div className="w-full max-w-md border border-line bg-white p-5 shadow-xl">
         <h2 className="font-display text-xl font-semibold text-brand-800">{t("contactVerifyTitle")}</h2>
         <p className="mt-2 text-sm text-mute">{t("contactVerifyBody")}</p>
@@ -162,6 +164,8 @@ export default function ContactVerifyModal() {
         {error ? <p className="mt-3 text-sm text-[#8a2b2b]">{error}</p> : null}
         {busy && req.link && !linkDone ? <p className="mt-3 text-sm text-mute">{t("contactVerifyChecking")}</p> : null}
       </div>
-    </div>
+      </div>
+    </div>,
+    document.body
   );
 }

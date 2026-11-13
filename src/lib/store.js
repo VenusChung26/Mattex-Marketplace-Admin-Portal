@@ -3167,20 +3167,6 @@ async function submitRfq(productIds, options = {}) {
     const missing = guestOrderError((guest || memberOrder) || {});
     if (missing) return { ok: false, error: missing };
   }
-  {
-    const contact = guest || memberOrder || user || {};
-    const verifyEmail = normalizeEmail(contact.email || user?.email || "");
-    const verifyPhone = String(contact.phone || user?.phone || "").trim();
-    if (verifyEmail && verifyPhone) {
-      const verified = await ensureContactVerified({
-        email: verifyEmail,
-        phone: verifyPhone,
-        name: contact.name || user?.name || "",
-      });
-      if (!verified?.ok) return { ok: false, error: "contact_verify" };
-    }
-  }
-  const email = accountKey();
   let draft = options.draft || getDraft();
   if (!draft.lines.length) return { ok: false, error: "empty" };
   const skipLogistics = Boolean(options.skipLogistics);
@@ -3217,6 +3203,20 @@ async function submitRfq(productIds, options = {}) {
 
   const verified = await verifyProductSelections(selectedLines);
   if (!verified.ok) return verified;
+  {
+    const contact = guest || memberOrder || user || {};
+    const verifyEmail = normalizeEmail(contact.email || user?.email || "");
+    const verifyPhone = String(contact.phone || user?.phone || "").trim();
+    if (verifyEmail && verifyPhone) {
+      const contactVerified = await ensureContactVerified({
+        email: verifyEmail,
+        phone: verifyPhone,
+        name: contact.name || user?.name || "",
+      });
+      if (!contactVerified?.ok) return { ok: false, error: "contact_verify" };
+    }
+  }
+  const email = accountKey();
   const verifiedById = new Map(verified.lines.map((line) => [lineReference(line), line]));
   const totals = draftTotals({ ...draft, lines: selectedLines.map((line) => verifiedById.get(lineReference(line)) || line) });
   const channel =
