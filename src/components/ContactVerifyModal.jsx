@@ -1,9 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLanguage } from "../i18n";
 import { useStore } from "../hooks/useStore";
 import { acceptContactToken, sendContactOtp, verifyContactOtp } from "../lib/contactVerify";
 import { closeContactVerifyModal, getContactVerifyRequest, noteContactVerified } from "../lib/store";
+
+const OTP_LENGTH = 6;
+
+function toDigitsArray(value) {
+  return Array.from({ length: OTP_LENGTH }, (_, i) => {
+    const ch = value[i];
+    return ch && /\d/.test(ch) ? ch : "";
+  });
+}
+
+function fromDigitsArray(digits) {
+  return digits
+    .map((d) => (d && /\d/.test(d) ? d : " "))
+    .join("")
+    .replace(/\s+$/, "");
+}
 
 export default function ContactVerifyModal() {
   const { t, lang } = useLanguage();
@@ -16,6 +32,7 @@ export default function ContactVerifyModal() {
   const [devCode, setDevCode] = useState("");
   const [trustNote, setTrustNote] = useState(false);
   const [linkDone, setLinkDone] = useState(false);
+  const inputRefs = useRef([]);
 
   useEffect(() => {
     if (!contactVerifyOpen || !req?.open) {
@@ -52,7 +69,82 @@ export default function ContactVerifyModal() {
     return undefined;
   }, [contactVerifyOpen, req?.open, t]);
 
+  useEffect(() => {
+    if (sent) {
+      inputRefs.current[0]?.focus();
+    }
+  }, [sent]);
+
   if (!contactVerifyOpen || !req?.open || typeof document === "undefined") return null;
+
+  function focusBox(index) {
+    const clamped = Math.max(0, Math.min(OTP_LENGTH - 1, index));
+    inputRefs.current[clamped]?.focus();
+  }
+
+  function handleDigitChange(index, event) {
+    const raw = event.target.value.replace(/\D/g, "");
+    const next = toDigitsArray(code);
+    if (!raw) {
+      next[index] = "";
+      setCode(fromDigitsArray(next));
+      return;
+    }
+    const typed = (event.nativeEvent?.data || "").replace(/\D/g, "");
+    if (raw.length === 1 || (typed.length === 1 && next[index] && raw.length === 2)) {
+      next[index] = typed.length === 1 ? typed : raw;
+      setCode(fromDigitsArray(next));
+      if (index < OTP_LENGTH - 1) focusBox(index + 1);
+      return;
+    }
+    const startIndex = raw.length >= OTP_LENGTH ? 0 : index;
+    const slice = raw.slice(0, OTP_LENGTH - startIndex);
+    for (let i = 0; i < slice.length; i += 1) {
+      next[startIndex + i] = slice[i];
+    }
+    setCode(fromDigitsArray(next));
+    focusBox(Math.min(startIndex + slice.length, OTP_LENGTH - 1));
+  }
+
+  function handleDigitKeyDown(index, event) {
+    if (event.key === "Backspace") {
+      event.preventDefault();
+      const next = toDigitsArray(code);
+      if (next[index]) {
+        next[index] = "";
+        setCode(fromDigitsArray(next));
+      } else if (index > 0) {
+        next[index - 1] = "";
+        setCode(fromDigitsArray(next));
+        focusBox(index - 1);
+      }
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      if (index > 0) focusBox(index - 1);
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      if (index < OTP_LENGTH - 1) focusBox(index + 1);
+    }
+  }
+
+  function handleDigitPaste(index, event) {
+    event.preventDefault();
+    const text = event.clipboardData?.getData("text") || "";
+    const pasted = text.replace(/\D/g, "").slice(0, OTP_LENGTH);
+    if (!pasted) return;
+    const next = toDigitsArray(code);
+    const startIndex = pasted.length === OTP_LENGTH ? 0 : index;
+    const slice = pasted.slice(0, OTP_LENGTH - startIndex);
+    for (let i = 0; i < slice.length; i += 1) {
+      next[startIndex + i] = slice[i];
+    }
+    setCode(fromDigitsArray(next));
+    focusBox(Math.min(startIndex + slice.length, OTP_LENGTH - 1));
+  }
 
   async function sendCode() {
     setBusy(true);
@@ -82,13 +174,16 @@ export default function ContactVerifyModal() {
     }
     setSent(true);
     if (result.devCode) setDevCode(String(result.devCode));
+    setTimeout(() => focusBox(0), 0);
   }
 
   async function confirmCode(event) {
     event.preventDefault();
+    const cleanCode = code.replace(/\D/g, "");
+    if (cleanCode.length !== OTP_LENGTH) return;
     setBusy(true);
     setError("");
-    const result = await verifyContactOtp({ email: req.email, phone: req.phone, code });
+    const result = await verifyContactOtp({ email: req.email, phone: req.phone, code: cleanCode });
     setBusy(false);
     if (!result.ok) {
       setError(
@@ -137,18 +232,32 @@ export default function ContactVerifyModal() {
             {devCode ? <p className="mt-2 text-xs text-mute">Dev code: {devCode}</p> : null}
             {sent ? (
               <form className="mt-4 space-y-3" onSubmit={confirmCode}>
-                <label className="block text-sm font-semibold text-ink">
-                  {t("contactVerifyCode")}
-                  <input
-                    className="field-input mt-1 w-full tracking-[0.35em] text-lg font-semibold"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    value={code}
-                    onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                  />
-                </label>
-                <button type="submit" className="btn-primary" disabled={busy || code.length !== 6}>
+                <div>
+                  <span className="block text-sm font-semibold text-ink">{t("contactVerifyCode")}</span>
+                  <div className="mt-2 flex items-center justify-between gap-2 sm:gap-2.5">
+                    {Array.from({ length: OTP_LENGTH }, (_, index) => {
+                      const digit = (code[index] || "").trim();
+                      return (
+                        <input
+                          key={index}
+                          ref={(el) => {
+                            inputRefs.current[index] = el;
+                          }}
+                          className="field-input !w-11 sm:!w-12 !px-0 !py-2.5 text-center text-lg font-semibold tabular-nums"
+                          inputMode="numeric"
+                          autoComplete={index === 0 ? "one-time-code" : "off"}
+                          aria-label={`${t("contactVerifyCode")} ${index + 1} / ${OTP_LENGTH}`}
+                          value={digit}
+                          onFocus={(event) => event.target.select()}
+                          onChange={(event) => handleDigitChange(index, event)}
+                          onKeyDown={(event) => handleDigitKeyDown(index, event)}
+                          onPaste={(event) => handleDigitPaste(index, event)}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+                <button type="submit" className="btn-primary" disabled={busy || code.replace(/\D/g, "").length !== OTP_LENGTH}>
                   {t("contactVerifyConfirm")}
                 </button>
               </form>
