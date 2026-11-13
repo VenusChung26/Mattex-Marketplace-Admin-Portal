@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { readSession, secureSessionCookie } from "./auth.js";
 import { sendResendEmail } from "./send-email.js";
-import { renderMattexEmail, wrapEmailSend } from "../src/lib/mailTemplate.js";
+import { mailOtpCodeBlock, renderMattexEmail, wrapEmailSend } from "../src/lib/mailTemplate.js";
 
 const TRUST_COOKIE = "mm_contact_v";
 const TRUST_DAYS = 14;
@@ -159,24 +159,32 @@ async function markBuyerVerified(email, phone) {
     .eq("kind", "buyer");
 }
 
-function otpEmailHtml({ logoUrl, name, code, verifyHref, shopHref, toEmail }) {
+function otpEmailHtml({ logoUrl, name, code, verifyHref, shopHref, toEmail, lang = "en" }) {
+  const zh = lang === "zh";
   return renderMattexEmail({
     logoUrl,
     salesEmail: SALES_EMAIL,
     toEmail,
-    title: "Verify your email for Mattex Marketplace",
-    greeting: `Hi ${name || "there"},`,
-    paragraphs: [
-      "Use this code to verify your contact details before requesting a quote or placing an order.",
-      `Your verification code is: ${code}`,
-      "The code expires in 10 minutes.",
-    ],
-    buttonLabel: "Verify email",
+    title: zh ? "驗證你的 Mattex Marketplace 電郵" : "Verify your email for Mattex Marketplace",
+    greeting: zh ? `你好${name ? ` ${name}` : ""}，` : `Hi ${name || "there"},`,
+    paragraphs: zh
+      ? ["請用以下驗證碼確認聯絡資料，先可以問價或落單。", "驗證碼 10 分鐘內有效。"]
+      : [
+          "Use this code to verify your contact details before requesting a quote or placing an order.",
+          "The code expires in 10 minutes.",
+        ],
+    heroHtml: mailOtpCodeBlock(code, {
+      label: zh ? "驗證碼" : "Verification code",
+      hint: zh ? "選取驗證碼即可複製" : "Select the code to copy",
+    }),
+    buttonLabel: zh ? "驗證電郵" : "Verify email",
     buttonHref: verifyHref,
-    footnote: "If the button does not work, open Marketplace and enter the code manually.",
+    footnote: zh
+      ? "如果按鈕無效，請開啟 Marketplace 並手動輸入驗證碼。"
+      : "If the button does not work, open Marketplace and enter the code manually.",
     footerLinks: [
-      { label: "Back to Marketplace", href: shopHref },
-      { label: "Contact", href: `mailto:${SALES_EMAIL}` },
+      { label: zh ? "返回 Marketplace" : "Back to Marketplace", href: shopHref },
+      { label: zh ? "聯絡我們" : "Contact", href: `mailto:${SALES_EMAIL}` },
     ],
   });
 }
@@ -246,8 +254,9 @@ async function sendOtp(body, request) {
   const origin = siteOrigin(request);
   const shopHref = `${origin}/${lang}`;
   const verifyHref = `${origin}/${lang}?verifyContact=1&token=${encodeURIComponent(linkToken)}`;
+  const subject = lang === "zh" ? "驗證你的電郵 — Mattex Marketplace" : "Verify your email — Mattex Marketplace";
   const html = wrapEmailSend({
-    subject: "Verify your email — Mattex Marketplace",
+    subject,
     innerHtml: otpEmailHtml({
       logoUrl: `${origin}/assets/mattex-logo.webp`,
       name,
@@ -255,10 +264,11 @@ async function sendOtp(body, request) {
       verifyHref,
       shopHref,
       toEmail: email,
+      lang,
     }),
     fontBase: origin,
   });
-  const mailed = await sendResendEmail({ to: email, subject: "Verify your email — Mattex Marketplace", html });
+  const mailed = await sendResendEmail({ to: email, subject, html });
   if (!mailed.ok && process.env.VERCEL_ENV) return { status: 502, body: { ok: false, error: mailed.error || "mail" } };
   return {
     body: {

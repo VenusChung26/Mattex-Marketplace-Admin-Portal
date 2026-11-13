@@ -140,7 +140,7 @@ export default function ContactVerifyModal() {
                 <label className="block text-sm font-semibold text-ink">
                   {t("contactVerifyCode")}
                   <input
-                    className="field-input mt-1 w-full"
+                    className="field-input mt-1 w-full tracking-[0.35em] text-lg font-semibold"
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     maxLength={6}

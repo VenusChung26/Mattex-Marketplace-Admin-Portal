@@ -3196,7 +3196,9 @@ async function submitRfq(productIds, options = {}) {
       ? productIds.map(String)
       : draft.lines.map(lineReference);
   const selectedSet = new Set(selectedIds);
-  const selectedLines = draft.lines.filter((l) => selectedSet.has(lineReference(l)));
+  const selectedLines = draft.lines.filter(
+    (l) => selectedSet.has(lineReference(l)) || selectedSet.has(String(l.productId || ""))
+  );
   if (!selectedLines.length) return { ok: false, error: "none_selected" };
   const blocked = selectedLines.filter((l) => !l.custom && (isProductOrderBlocked(l.productId) || !isOrderable(getProduct(l.productId))));
   if (blocked.length) return { ok: false, error: "discontinued" };
@@ -5609,22 +5611,23 @@ async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false
     // The server has no PO store here (production for now): keep the old behaviour below.
   }
   const snapshot = skipCart ? getDraft() : null;
-  if (skipCart) {
-    const others = snapshot.lines.filter((row) => String(row.productId) !== String(productId) || row.custom);
-    setDraft({ ...snapshot, lines: [...others, line] });
-  } else {
+  const draftForSubmit = skipCart
+    ? {
+        ...snapshot,
+        lines: [...snapshot.lines.filter((row) => String(row.productId) !== String(productId) || row.custom), line],
+      }
+    : null;
+  if (!skipCart) {
     addToCart(productId, { intent, qty: addQty, pickedSpecs: picks, pickedSize: size });
   }
-  // submitRfq reads the draft before its first await, so the cart can be put back straight away.
-  const pending = submitRfq([productId], {
+  const submitted = await submitRfq([lineReference(line)], {
     kind: intent,
     skipLogistics: true,
     channel: "whatsapp",
     allowGuest: !isLoggedIn(),
     guest,
+    ...(draftForSubmit ? { draft: draftForSubmit } : {}),
   });
-  if (skipCart) setDraft(snapshot);
-  const submitted = await pending;
   if (!submitted.ok && submitted.error !== "not_logged_in") return submitted;
   const rfq = submitted.ok ? submitted.rfq : null;
   return {

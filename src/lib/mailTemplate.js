@@ -130,6 +130,43 @@ function footerTextLinks(links) {
   return `<p style="margin:16px 0 0;${FACE}font-size:13px;line-height:1.5;">${html}</p>`;
 }
 
+/** Large OTP / one-shot code block for email (select to copy — email clients block JS clipboard). */
+export function mailOtpCodeBlock(code, { label = "Verification code", hint = "Select the code to copy" } = {}) {
+  const value = String(code || "").trim();
+  if (!value) return "";
+  const copyIcon = `
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="display:inline-table;vertical-align:middle;margin-right:8px;">
+                    <tr>
+                      <td>
+                        <table role="presentation" cellpadding="0" cellspacing="0">
+                          <tr>
+                            <td style="width:12px;height:14px;border:1.5px solid ${MUTE};border-radius:2px;background:#ffffff;"></td>
+                          </tr>
+                        </table>
+                      </td>
+                      <td style="width:0;font-size:0;line-height:0;">
+                        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:-10px 0 0 -8px;">
+                          <tr>
+                            <td style="width:12px;height:14px;border:1.5px solid ${MUTE};border-radius:2px;background:#f3f7f5;"></td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>`;
+  return `
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 22px;">
+              <tr>
+                <td align="center" style="background:#f3f7f5;border:1px solid ${LINE};border-radius:12px;padding:26px 18px 22px;">
+                  <p style="margin:0 0 12px;${FACE}font-size:12px;line-height:1.4;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:${MUTE};">${escapeHtml(label)}</p>
+                  <p style="margin:0;${FACE}font-size:48px;line-height:1.1;font-weight:700;letter-spacing:0.32em;color:${BRAND};font-variant-numeric:tabular-nums;-webkit-user-select:all;user-select:all;">${escapeHtml(value)}</p>
+                  <p style="margin:16px 0 0;${FACE}font-size:13px;line-height:1.4;color:${MUTE};">
+                    ${copyIcon}<span style="vertical-align:middle;">${escapeHtml(hint)}</span>
+                  </p>
+                </td>
+              </tr>
+            </table>`;
+}
+
 export function renderMattexEmail({
   logoUrl,
   brandName = "Mattex Marketplace",
@@ -144,6 +181,7 @@ export function renderMattexEmail({
   buttonHref,
   footnote,
   footerLinks = [],
+  heroHtml = "",
 }) {
   const body = (paragraphs || [])
     .filter(Boolean)
@@ -181,6 +219,7 @@ export function renderMattexEmail({
             <h1 style="margin:0 0 16px;${TITLE}font-size:28px;line-height:1.25;color:${INK};text-align:left;">${escapeHtml(title)}</h1>
             ${greeting ? `<p style="margin:0 0 12px;${FACE}font-size:15px;line-height:1.6;color:${INK};">${escapeHtml(greeting)}</p>` : ""}
             ${body}
+            ${heroHtml || ""}
           </td>
         </tr>
         ${
