@@ -6,6 +6,28 @@ import { acceptContactToken, sendContactOtp, verifyContactOtp } from "../lib/con
 import { closeContactVerifyModal, getContactVerifyRequest, noteContactVerified } from "../lib/store";
 
 const OTP_LENGTH = 6;
+const RESEND_SECONDS = 60;
+
+const COPY = {
+  zh: {
+    close: "關閉",
+    edit: "修改",
+    sending: "正在傳送驗證碼…",
+    sentTo: "驗證碼已傳送至",
+    resend: "重新傳送驗證碼",
+    resendIn: (s) => `${s}秒後可重新傳送`,
+    verifying: "正在驗證…",
+  },
+  en: {
+    close: "Close",
+    edit: "Edit",
+    sending: "Sending code…",
+    sentTo: "Code sent to",
+    resend: "Resend code",
+    resendIn: (s) => `Resend in ${s}s`,
+    verifying: "Verifying…",
+  },
+};
 
 function toDigitsArray(value) {
   return Array.from({ length: OTP_LENGTH }, (_, i) => {
@@ -23,26 +45,40 @@ function fromDigitsArray(digits) {
 
 export default function ContactVerifyModal() {
   const { t, lang } = useLanguage();
+  const copy = lang === "en" ? COPY.en : COPY.zh;
   const { contactVerifyOpen } = useStore();
   const req = getContactVerifyRequest();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState("");
   const [sent, setSent] = useState(false);
   const [devCode, setDevCode] = useState("");
   const [trustNote, setTrustNote] = useState(false);
   const [linkDone, setLinkDone] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const inputRefs = useRef([]);
+  const autoSentRef = useRef(false);
+  const submittingRef = useRef(false);
+
+  const isOpen = Boolean(contactVerifyOpen && req?.open);
+  const showManual = Boolean(isOpen && req.email && req.phone) && !(req.link && !linkDone);
 
   useEffect(() => {
-    if (!contactVerifyOpen || !req?.open) {
+    if (!isOpen) {
       setCode("");
       setBusy(false);
+      setSending(false);
+      setVerifying(false);
       setError("");
       setSent(false);
       setDevCode("");
       setTrustNote(false);
       setLinkDone(false);
+      setCooldown(0);
+      autoSentRef.current = false;
+      submittingRef.current = false;
       return undefined;
     }
     const params = new URLSearchParams(window.location.search);
@@ -67,15 +103,38 @@ export default function ContactVerifyModal() {
       });
     }
     return undefined;
-  }, [contactVerifyOpen, req?.open, t]);
+  }, [isOpen, t]);
 
   useEffect(() => {
-    if (sent) {
-      inputRefs.current[0]?.focus();
-    }
-  }, [sent]);
+    if (!showManual || autoSentRef.current) return;
+    autoSentRef.current = true;
+    sendCode();
+  }, [showManual]);
 
-  if (!contactVerifyOpen || !req?.open || typeof document === "undefined") return null;
+  useEffect(() => {
+    if (cooldown <= 0) return undefined;
+    const timer = window.setTimeout(() => setCooldown((s) => Math.max(0, s - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [cooldown]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    function onKey(event) {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      if (!busy) closeContactVerifyModal({ ok: false });
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [isOpen, busy]);
+
+  useEffect(() => {
+    if (!showManual) return;
+    const clean = code.replace(/\D/g, "");
+    if (clean.length === OTP_LENGTH && !submittingRef.current) confirmCode(clean);
+  }, [code, showManual]);
+
+  if (!isOpen || typeof document === "undefined") return null;
 
   function focusBox(index) {
     const clamped = Math.max(0, Math.min(OTP_LENGTH - 1, index));
@@ -85,6 +144,7 @@ export default function ContactVerifyModal() {
   function handleDigitChange(index, event) {
     const raw = event.target.value.replace(/\D/g, "");
     const next = toDigitsArray(code);
+    if (error) setError("");
     if (!raw) {
       next[index] = "";
       setCode(fromDigitsArray(next));
@@ -137,6 +197,7 @@ export default function ContactVerifyModal() {
     const pasted = text.replace(/\D/g, "").slice(0, OTP_LENGTH);
     if (!pasted) return;
     const next = toDigitsArray(code);
+    if (error) setError("");
     const startIndex = pasted.length === OTP_LENGTH ? 0 : index;
     const slice = pasted.slice(0, OTP_LENGTH - startIndex);
     for (let i = 0; i < slice.length; i += 1) {
@@ -147,7 +208,8 @@ export default function ContactVerifyModal() {
   }
 
   async function sendCode() {
-    setBusy(true);
+    if (sending) return;
+    setSending(true);
     setError("");
     const result = await sendContactOtp({
       email: req.email,
@@ -155,7 +217,7 @@ export default function ContactVerifyModal() {
       name: req.name,
       lang,
     });
-    setBusy(false);
+    setSending(false);
     if (result.verified) {
       noteContactVerified(result.trustDays);
       setTrustNote(true);
@@ -163,6 +225,7 @@ export default function ContactVerifyModal() {
       return;
     }
     if (!result.ok) {
+      if (result.error === "cooldown") setCooldown(RESEND_SECONDS);
       setError(
         result.error === "cooldown"
           ? t("contactVerifyCooldown")
@@ -173,18 +236,20 @@ export default function ContactVerifyModal() {
       return;
     }
     setSent(true);
+    setCooldown(RESEND_SECONDS);
     if (result.devCode) setDevCode(String(result.devCode));
     setTimeout(() => focusBox(0), 0);
   }
 
-  async function confirmCode(event) {
-    event.preventDefault();
-    const cleanCode = code.replace(/\D/g, "");
-    if (cleanCode.length !== OTP_LENGTH) return;
+  async function confirmCode(cleanCode) {
+    if (submittingRef.current || cleanCode.length !== OTP_LENGTH) return;
+    submittingRef.current = true;
+    setVerifying(true);
     setBusy(true);
     setError("");
     const result = await verifyContactOtp({ email: req.email, phone: req.phone, code: cleanCode });
     setBusy(false);
+    setVerifying(false);
     if (!result.ok) {
       setError(
         result.error === "expired"
@@ -193,6 +258,9 @@ export default function ContactVerifyModal() {
             ? t("contactVerifyBadCode")
             : t("contactVerifyFailed")
       );
+      setCode("");
+      submittingRef.current = false;
+      setTimeout(() => focusBox(0), 0);
       return;
     }
     noteContactVerified(result.trustDays);
@@ -200,79 +268,102 @@ export default function ContactVerifyModal() {
     closeContactVerifyModal({ ok: true });
   }
 
-  const showManual = Boolean(req.email && req.phone) && !(req.link && !linkDone);
+  function onSubmit(event) {
+    event.preventDefault();
+    confirmCode(code.replace(/\D/g, ""));
+  }
+
+  const digitsReady = code.replace(/\D/g, "").length === OTP_LENGTH;
 
   return createPortal(
-    <div className="fixed inset-0 z-[120] overflow-y-auto bg-ink/40 p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[120] overflow-y-auto bg-ink/40 p-4" role="dialog" aria-modal="true" aria-labelledby="contact-verify-title">
       <div className="flex min-h-full items-center justify-center">
-      <div className="w-full max-w-md border border-line bg-white p-5 shadow-xl">
-        <h2 className="font-display text-xl font-semibold text-brand-800">{t("contactVerifyTitle")}</h2>
-        <p className="mt-2 text-sm text-mute">{t("contactVerifyBody")}</p>
-        {req.email ? (
-          <p className="mt-3 text-sm text-ink">
-            <span className="font-semibold">{t("email")}:</span> {req.email}
-          </p>
-        ) : null}
-        {req.phone ? (
-          <p className="text-sm text-ink">
-            <span className="font-semibold">{t("phone")}:</span> {req.phone}
-          </p>
-        ) : null}
-        {trustNote ? <p className="mt-3 text-sm text-brand-700">{t("contactVerifyTrustNote")}</p> : null}
-        {showManual ? (
-          <>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" className="btn-primary" disabled={busy} onClick={sendCode}>
-                {sent ? t("contactVerifyResend") : t("contactVerifySend")}
-              </button>
-              <button type="button" className="btn-secondary" disabled={busy} onClick={() => closeContactVerifyModal({ ok: false })}>
-                {t("cancel")}
+        <div className="relative w-full max-w-sm border border-line bg-white p-6 shadow-xl">
+          <button
+            type="button"
+            className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center text-xl leading-none text-mute transition hover:bg-brand-50 hover:text-ink disabled:opacity-50"
+            aria-label={copy.close}
+            title={copy.close}
+            disabled={busy}
+            onClick={() => closeContactVerifyModal({ ok: false })}
+          >
+            ×
+          </button>
+          <h2 id="contact-verify-title" className="pr-8 font-display text-xl font-semibold text-brand-800">
+            {t("contactVerifyTitle")}
+          </h2>
+          <p className="mt-2 text-sm text-mute">{t("contactVerifyBody")}</p>
+          {req.email || req.phone ? (
+            <div className="mt-4 flex items-start justify-between gap-3 border border-line bg-paper/60 px-3 py-2.5">
+              <div className="min-w-0 text-sm">
+                {sent || sending ? <p className="text-xs text-mute">{sent ? copy.sentTo : copy.sending}</p> : null}
+                {req.email ? <p className="break-all font-semibold text-ink">{req.email}</p> : null}
+                {req.phone ? <p className="text-mute">{req.phone}</p> : null}
+              </div>
+              <button
+                type="button"
+                className="shrink-0 text-sm font-semibold text-brand-700 underline-offset-2 hover:underline disabled:opacity-50"
+                disabled={busy}
+                onClick={() => closeContactVerifyModal({ ok: false })}
+              >
+                {copy.edit}
               </button>
             </div>
-            {devCode ? <p className="mt-2 text-xs text-mute">Dev code: {devCode}</p> : null}
-            {sent ? (
-              <form className="mt-4 space-y-3" onSubmit={confirmCode}>
-                <div>
-                  <span className="block text-sm font-semibold text-ink">{t("contactVerifyCode")}</span>
-                  <div className="mt-2 flex items-center justify-between gap-2 sm:gap-2.5">
-                    {Array.from({ length: OTP_LENGTH }, (_, index) => {
-                      const digit = (code[index] || "").trim();
-                      return (
-                        <input
-                          key={index}
-                          ref={(el) => {
-                            inputRefs.current[index] = el;
-                          }}
-                          className="field-input !w-11 sm:!w-12 !px-0 !py-2.5 text-center text-lg font-semibold tabular-nums"
-                          inputMode="numeric"
-                          autoComplete={index === 0 ? "one-time-code" : "off"}
-                          aria-label={`${t("contactVerifyCode")} ${index + 1} / ${OTP_LENGTH}`}
-                          value={digit}
-                          onFocus={(event) => event.target.select()}
-                          onChange={(event) => handleDigitChange(index, event)}
-                          onKeyDown={(event) => handleDigitKeyDown(index, event)}
-                          onPaste={(event) => handleDigitPaste(index, event)}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-                <button type="submit" className="btn-primary" disabled={busy || code.replace(/\D/g, "").length !== OTP_LENGTH}>
-                  {t("contactVerifyConfirm")}
-                </button>
-              </form>
-            ) : null}
-          </>
-        ) : (
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button type="button" className="btn-secondary" disabled={busy} onClick={() => closeContactVerifyModal({ ok: false })}>
-              {t("cancel")}
-            </button>
-          </div>
-        )}
-        {error ? <p className="mt-3 text-sm text-[#8a2b2b]">{error}</p> : null}
-        {busy && req.link && !linkDone ? <p className="mt-3 text-sm text-mute">{t("contactVerifyChecking")}</p> : null}
-      </div>
+          ) : null}
+          {trustNote ? <p className="mt-3 text-sm text-brand-700">{t("contactVerifyTrustNote")}</p> : null}
+          {showManual ? (
+            <form className="mt-5" onSubmit={onSubmit}>
+              <span className="block text-center text-sm font-semibold text-ink">{t("contactVerifyCode")}</span>
+              <div className="mt-3 flex items-center justify-center gap-2.5">
+                {Array.from({ length: OTP_LENGTH }, (_, index) => {
+                  const digit = (code[index] || "").trim();
+                  return (
+                    <input
+                      key={index}
+                      ref={(el) => {
+                        inputRefs.current[index] = el;
+                      }}
+                      className={`h-12 w-10 border bg-white p-0 text-center text-xl font-semibold tabular-nums text-ink caret-brand-600 outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-600/30 sm:w-11 ${
+                        digit ? "border-brand-600 bg-brand-50/60" : "border-line"
+                      } ${error ? "border-[#dc2626]" : ""}`}
+                      inputMode="numeric"
+                      autoComplete={index === 0 ? "one-time-code" : "off"}
+                      aria-label={`${t("contactVerifyCode")} ${index + 1} / ${OTP_LENGTH}`}
+                      aria-invalid={error ? "true" : undefined}
+                      readOnly={busy}
+                      value={digit}
+                      onFocus={(event) => event.target.select()}
+                      onChange={(event) => handleDigitChange(index, event)}
+                      onKeyDown={(event) => handleDigitKeyDown(index, event)}
+                      onPaste={(event) => handleDigitPaste(index, event)}
+                    />
+                  );
+                })}
+              </div>
+              {devCode ? <p className="mt-2 text-center text-xs text-mute">Dev code: {devCode}</p> : null}
+              {error ? <p className="mt-3 text-center text-sm text-[#8a2b2b]">{error}</p> : null}
+              <button type="submit" className="btn-primary mt-5 w-full disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || !digitsReady}>
+                {verifying ? copy.verifying : t("contactVerifyConfirm")}
+              </button>
+              <p className="mt-3 text-center text-sm">
+                {cooldown > 0 ? (
+                  <span className="tabular-nums text-mute">{copy.resendIn(cooldown)}</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="font-semibold text-brand-700 underline-offset-2 hover:underline disabled:text-mute disabled:no-underline"
+                    disabled={busy || sending}
+                    onClick={sendCode}
+                  >
+                    {sending ? copy.sending : copy.resend}
+                  </button>
+                )}
+              </p>
+            </form>
+          ) : null}
+          {!showManual && error ? <p className="mt-3 text-sm text-[#8a2b2b]">{error}</p> : null}
+          {busy && req.link && !linkDone ? <p className="mt-3 text-sm text-mute">{t("contactVerifyChecking")}</p> : null}
+        </div>
       </div>
     </div>,
     document.body
