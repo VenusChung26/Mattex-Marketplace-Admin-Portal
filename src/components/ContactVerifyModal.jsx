@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useLanguage } from "../i18n";
 import { useStore } from "../hooks/useStore";
 import { acceptContactToken, sendContactOtp, verifyContactOtp } from "../lib/contactVerify";
+import { SHOW_CONTACT_VERIFY } from "../lib/flags";
 import { closeContactVerifyModal, getContactVerifyRequest, noteContactVerified } from "../lib/store";
 
 const OTP_LENGTH = 6;
@@ -62,7 +63,7 @@ export default function ContactVerifyModal() {
   const autoSentRef = useRef(false);
   const submittingRef = useRef(false);
 
-  const isOpen = Boolean(contactVerifyOpen && req?.open);
+  const isOpen = SHOW_CONTACT_VERIFY && Boolean(contactVerifyOpen && req?.open);
   const showManual = Boolean(isOpen && req.email && req.phone) && !(req.link && !linkDone);
 
   useEffect(() => {

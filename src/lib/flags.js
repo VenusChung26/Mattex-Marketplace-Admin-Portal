@@ -27,3 +27,6 @@ export const SHOW_SPEC_MATCH = true;
 
 /** TMS product and iRFQ links and buttons in the Portal. Off: hidden from the frontend. */
 export const SHOW_TMS_LINK = false;
+
+/** Buyer email and phone verification before quote or order. Off: hidden, and orders are not blocked. */
+export const SHOW_CONTACT_VERIFY = false;

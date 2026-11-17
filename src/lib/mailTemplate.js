@@ -309,7 +309,7 @@ export function accountCreatedEmailHtml({ logoUrl, salesEmail, name, email, comp
     title: "Your Mattex Marketplace account is ready",
     greeting: `Hi ${name},`,
     paragraphs: [
-      "Your account was created. Please verify your email in Marketplace before requesting quotes or placing orders.",
+      "Your account was created. You can request quotes and place orders in Marketplace.",
     ],
     detailsTitle: "Here's your account:",
     details: [

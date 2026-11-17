@@ -5,7 +5,7 @@ import { attachmentSummary, guestOrderError, guestOrderPayload, guestUploadFiles
 import { fetchQuoteSnapshot, fetchRemoteKv, fetchRemoteRfqs, fetchRfqStamp, fetchSessionState, getRemoteDataReady, isSupabaseConfigured, persistCatalogTables, persistKv, persistKvNow, probeRemoteData, shouldUseLocalSharedStore, subscribeRemoteData } from "./supabasePersist.js";
 import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedStore, postAuth, postEmail, postSharedStore, registerRfq, createPurchaseOrderRemote, decideRfqOnServer, assignRfqOnServer, submitQuoteOnServer, freezeWhatsappQuoteOnServer, markWhatsappSentOnServer, syncRfqsFromServer, pushBuyerContent, saveQuoteDraft, saveBuyerPhone, saveGuestFileUrls, createPoFromQuote, verifyProductSelections } from "./remote.js";
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
-import { SHOW_TMS_LINK } from "./flags.js";
+import { SHOW_CONTACT_VERIFY, SHOW_TMS_LINK } from "./flags.js";
 import { activeOfferPrice } from "./offer.js";
 import { normalizeProfileProjects, snapshotRfqRequest, rfqRequestVersionList, activityDedupeKey, applyDecision, applyDeliveredQuoteVersion, buildDeliveredQuoteVersion, freezeQuoteLines, nextQuoteVersionNo, planLoadQuoteVersion, planQuoteSubmit, quoteDraftIsDirty, quoteEffectiveVersionNo, quoteVersionLines, quoteVersionList, snapshotLineImage, canBuyerRequestCancel, canBuyerReverse, getQuoteVersion, inboxStatus, planAssign, planCancelReverse, planDecision, mergeOwned, draftPricesOf, deliveredLinePrices, salesLine, planPoFromQuote, rfqBuyerKind, pushRfqActivity, rfqNeedsSalesReverse } from "./rfqRules.js";
 import { adoptGuestSpecMatch } from "./specMatchSession.js";
@@ -4195,6 +4195,7 @@ function noteContactVerified(trustDays) {
 }
 
 function openContactVerifyModal({ email, phone, name = "", link = false } = {}) {
+  if (!SHOW_CONTACT_VERIFY) return Promise.resolve({ ok: true, verified: true });
   const nextEmail = normalizeEmail(email);
   const nextPhone = String(phone || "").trim();
   if (!link && (!nextEmail || !nextPhone)) return Promise.resolve({ ok: false, error: "invalid" });
@@ -4229,6 +4230,7 @@ function closeContactVerifyModal(result = { ok: false }) {
 }
 
 async function ensureContactVerified({ email, phone, name } = {}) {
+  if (!SHOW_CONTACT_VERIFY) return { ok: true, verified: true };
   const { contactVerifyStatus } = await import("./contactVerify.js");
   const status = await contactVerifyStatus({ email, phone });
   if (status.ok && status.verified) return { ok: true, verified: true };

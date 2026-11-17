@@ -8,7 +8,7 @@ import LangToggle from "./LangToggle";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { stripLocale, withLocale } from "../lib/locale";
-import { SHOW_RFQ } from "../lib/flags";
+import { SHOW_CONTACT_VERIFY, SHOW_RFQ } from "../lib/flags";
 import { usePromo } from "../lib/promo";
 import {
   closeAuthModal,
@@ -84,6 +84,7 @@ export default function SiteHeader({
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
+    if (!SHOW_CONTACT_VERIFY) return;
     if (params.get("verifyContact") === "1" && params.get("token") && !contactVerifyOpen) {
       openContactVerifyLinkModal();
     }
