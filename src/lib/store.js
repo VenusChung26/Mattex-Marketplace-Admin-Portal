@@ -3352,7 +3352,7 @@ async function submitRfq(productIds, options = {}) {
     const contact = guest || memberOrder || user || {};
     const verifyEmail = normalizeEmail(contact.email || user?.email || "");
     const verifyPhone = String(contact.phone || user?.phone || "").trim();
-    if (verifyEmail) {
+    if (verifyEmail && verifyPhone) {
       const contactVerified = await ensureContactVerified({
         email: verifyEmail,
         phone: verifyPhone,

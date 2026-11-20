@@ -48,7 +48,7 @@ export default function ContactVerifyModal() {
   const { t, lang } = useLanguage();
   const copy = lang === "en" ? COPY.en : COPY.zh;
   const { contactVerifyOpen } = useStore();
-  const req = getContactVerifyRequest() || {};
+  const req = getContactVerifyRequest();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
@@ -64,7 +64,7 @@ export default function ContactVerifyModal() {
   const submittingRef = useRef(false);
 
   const isOpen = SHOW_CONTACT_VERIFY && Boolean(contactVerifyOpen && req?.open);
-  const showManual = Boolean(isOpen && req.email) && !(req.link && !linkDone);
+  const showManual = Boolean(isOpen && req.email && req.phone) && !(req.link && !linkDone);
 
   useEffect(() => {
     if (!isOpen) {
@@ -294,11 +294,12 @@ export default function ContactVerifyModal() {
             {t("contactVerifyTitle")}
           </h2>
           <p className="mt-2 text-sm text-mute">{t("contactVerifyBody")}</p>
-          {req.email ? (
+          {req.email || req.phone ? (
             <div className="mt-4 flex items-start justify-between gap-3 border border-line bg-paper/60 px-3 py-2.5">
               <div className="min-w-0 text-sm">
                 {sent || sending ? <p className="text-xs text-mute">{sent ? copy.sentTo : copy.sending}</p> : null}
-                <p className="break-all font-semibold text-ink">{req.email}</p>
+                {req.email ? <p className="break-all font-semibold text-ink">{req.email}</p> : null}
+                {req.phone ? <p className="text-mute">{req.phone}</p> : null}
               </div>
               <button
                 type="button"
