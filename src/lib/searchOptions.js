@@ -1,10 +1,14 @@
-import { foldHan } from "./han";
+import { foldHan } from "./han.js";
+import { bestSpecMatch } from "./specSearch.js";
+import { CATEGORY_LIST_PAUSED } from "./categoryPause.js";
+import { shopCategoryRows } from "./categoryTree.js";
 
 export function productSku(product) {
   return String(product?.productNo || product?.provisionalSku || product?.id || "").trim();
 }
 
 export function categoriesInCatalog(catalog) {
+  if (CATEGORY_LIST_PAUSED) return [];
   const categories = new Map();
   for (const product of catalog || []) {
     const category = String(product?.category || "").trim();
@@ -14,7 +18,30 @@ export function categoriesInCatalog(catalog) {
   return [...categories.entries()].sort((a, b) => a[0].localeCompare(b[0], "zh"));
 }
 
-export function searchSuggestOptions(catalog, query, { excludeIds = [], wordLimit = 8, categoryLimit = 6, productLimit = 8 } = {}) {
+function shopTreeCategoryHits(catalog, query) {
+  const tally = new Map();
+  for (const product of catalog || []) {
+    const id = String(product?.shopCategoryId || "");
+    if (!id) continue;
+    tally.set(id, (tally.get(id) || 0) + 1);
+  }
+  const childSum = new Map();
+  const rows = shopCategoryRows();
+  for (const row of rows) {
+    if (!row.parentId) continue;
+    childSum.set(row.parentId, (childSum.get(row.parentId) || 0) + (tally.get(row.id) || 0));
+  }
+  const hits = [];
+  for (const row of rows) {
+    const name = String(row.name || "").trim();
+    if (!name || !foldHan(name).toLowerCase().includes(query)) continue;
+    const count = (tally.get(row.id) || 0) + (row.parentId ? 0 : childSum.get(row.id) || 0);
+    hits.push([name, count]);
+  }
+  return hits;
+}
+
+export function searchSuggestOptions(catalog, query, { excludeIds = [], wordLimit = 8, categoryLimit = 6, productLimit = 8, includeShopTree = false } = {}) {
   const q = foldHan(String(query || "").trim()).toLowerCase();
   if (!q) return { words: [], categories: [], products: [] };
   const skip = new Set(excludeIds);
@@ -22,7 +49,7 @@ export function searchSuggestOptions(catalog, query, { excludeIds = [], wordLimi
   const words = new Map();
   const categories = new Map();
   for (const product of available) {
-    const category = String(product.category || "").trim();
+    const category = CATEGORY_LIST_PAUSED ? "" : String(product.category || "").trim();
     const categoryFold = foldHan(category).toLowerCase();
     if (category && categoryFold.includes(q)) {
       categories.set(category, (categories.get(category) || 0) + 1);
@@ -38,10 +65,22 @@ export function searchSuggestOptions(catalog, query, { excludeIds = [], wordLimi
       words.set(lower, current);
     }
   }
+  if (includeShopTree) {
+    for (const [name, count] of shopTreeCategoryHits(available, q)) {
+      categories.set(name, Math.max(categories.get(name) || 0, count));
+    }
+  }
   const products = available
-    .filter((product) => foldHan(`${product.name || ""} ${productSku(product)} ${product.category || ""}`).toLowerCase().includes(q))
+    .map((product) => {
+      const named = foldHan(`${product.name || ""} ${productSku(product)} ${CATEGORY_LIST_PAUSED ? "" : product.category || ""}`).toLowerCase().includes(q);
+      const match = bestSpecMatch(product, q);
+      if (!named && !match) return null;
+      if (!named && match?.label) return { ...product, matchLabel: match.label };
+      return product;
+    })
+    .filter(Boolean)
     .sort((a, b) => {
-      const rank = (product) => (foldHan(product.name || "").toLowerCase().startsWith(q) ? 0 : 1);
+      const rank = (product) => (foldHan(product.name || "").toLowerCase().startsWith(q) ? 0 : product.matchLabel ? 1 : 2);
       return rank(a) - rank(b) || String(a.name || "").localeCompare(String(b.name || ""));
     })
     .slice(0, productLimit);

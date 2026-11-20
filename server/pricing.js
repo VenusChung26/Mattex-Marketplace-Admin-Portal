@@ -1,6 +1,6 @@
 import { resolveSelection, selectionKey, selectionDescription } from "../src/lib/productSelection.js";
 import { findProductOffer } from "../src/lib/offer.js";
-import { orderMinimum, sellingAmount } from "../src/lib/productFields.js";
+import { buyerListPrice, orderMinimum, sellingAmount } from "../src/lib/productFields.js";
 
 /**
  * Server-side price for a purchase order. The browser says which product and how many; the price,

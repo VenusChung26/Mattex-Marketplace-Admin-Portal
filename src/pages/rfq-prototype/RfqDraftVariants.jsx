@@ -1167,6 +1167,7 @@ function LinesList({
                     </p>
                   ) : null}
                   {!l.custom && (l.pickedSize || l.pickedSpecs) ? <p className="mt-1 text-xs font-medium text-ink">{[l.pickedSize, ...Object.values(l.pickedSpecs || {})].filter(Boolean).join(" · ")}</p> : null}
+                  {l.remark ? <p className="mt-1 whitespace-pre-wrap text-xs text-ink">{l.remark}</p> : null}
                   {l.selectionIssue ? <div className="mt-2 text-xs text-amber-800" role="alert">
                     {selectionMessage(l.selectionIssue, lang, l.moq)}
                     {l.selectionIssue === "selection_invalid" ? <Link className="ml-2 underline" to={withLocale(lang, `/details/${l.productId}?selection=${encodeURIComponent(lineReference(l))}`)}>{lang === "en" ? "Reselect options" : "重新選擇規格"}</Link> : null}

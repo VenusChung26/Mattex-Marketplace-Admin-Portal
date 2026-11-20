@@ -4,8 +4,9 @@ import { Link, useNavigate } from "react-router-dom";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
-import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, cancelPendingWhatsappInvite, currentMemberOrderSeed, loginUser, setAuthInviteHidden } from "../lib/store";
+import { closeAuthModal, consumePendingAfterAuth, consumePendingInviteContinue, cancelPendingWhatsappInvite, currentMemberOrderSeed, getContactVerifyRequest, loginUser, setAuthInviteHidden } from "../lib/store";
 import { useRevealFormIssue } from "../lib/formFocus";
+import { selectionMessage } from "../lib/productSelection.js";
 import { PasswordInput } from "./AccountForm";
 import GuestSubmitFields from "./GuestSubmitFields";
 import { emptyGuestOrder, guestOrderError, guestOrderPayload } from "../lib/guestOrder";
@@ -52,6 +53,7 @@ export default function AuthModal({ open, onClose }) {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     function onKey(e) {
+      if (getContactVerifyRequest()?.open) return;
       if (e.key === "Escape" && closeReady.current) {
         if (whatsappContact) cancelWhatsapp();
         else if (invite) dismissInvite();
@@ -101,8 +103,7 @@ export default function AuthModal({ open, onClose }) {
     if (code === "delivery_date") return t("deliveryDateRequired");
     if (code === "attachment") return t("guestAttachmentRequired");
     if (code === "contact_verify") return t("contactVerifyNeeded");
-    if (code === "server" || code === "storage" || code === "network") return t("submitFailed");
-    return t("submitFailed");
+    return selectionMessage(code, lang) || t("submitFailed");
   }
 
   async function onGuestSubmit(e) {

@@ -140,10 +140,8 @@ export async function readUatCatalog({ fresh = false, strict = false } = {}) {
         )
       )
       .filter((row) => row.id && row.name));
-    if (!mapped.length) {
-      if (strict) throw new Error("catalog_unavailable");
-      return null;
-    }
+    // No live UAT rows means the shop is served from the saved snapshot; selections must be checked against that same catalog.
+    if (!mapped.length) return null;
     const names = [...new Set(mapped.map((row) => row.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     const body = JSON.stringify(mapped.map((row) => [row.id, row.unit_price, row.name]));
     const etag = createHash("sha256").update(body).digest("hex").slice(0, 16);

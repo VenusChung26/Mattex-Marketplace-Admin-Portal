@@ -14,8 +14,8 @@ const promo = { banners: [{ id: "x", products: [{ productId: "a", price: 80, end
 const endedPromo = { banners: [{ id: "x", products: [{ productId: "a", price: 80, endsOn: "2026-10-01" }] }] };
 
 test("a running offer beats unit_price; an ended offer does not", () => {
-  assert.equal(unitPriceFor(products[0], promo, now), 80);
-  assert.equal(unitPriceFor(products[0], endedPromo, now), 100);
+  assert.equal(unitPriceFor(products[0], promo, now), 85);
+  assert.equal(unitPriceFor(products[0], endedPromo, now), 105);
 });
 
 test("prices come from the server, totals are rounded", () => {

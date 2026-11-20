@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "../i18n";
+import { CATEGORY_LIST_PAUSED } from "../lib/categoryPause";
 
-const SEARCH_FIELDS = ["name", "category", "sku", "spec", "supplier", "remarks"];
+const SEARCH_FIELDS = ["name", "category", "sku", "spec", "supplier", "remarks"].filter((field) => field !== "category" || !CATEGORY_LIST_PAUSED);
 
 const FIELD_KEYS = {
   name: "searchFieldName",

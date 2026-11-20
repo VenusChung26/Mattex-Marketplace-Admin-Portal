@@ -2,11 +2,12 @@ import "./ssrNodePolyfill.js";
 import { absAsset, absUrl, siteOrigin, stripLocale, withLocale } from "./locale.js";
 import { OG_HEIGHT, OG_WIDTH, categoryOgPath, isSizedOgImage, ogImagePath } from "./ogImage.js";
 import { staffCertText, staffPrimaryText, staffRemarkText, staffSizeText } from "./editedProductText.js";
-import { buyerPurposes, displayUnit, isLeadSpec, localizeLeadTime, specParts, lowerDeliveryQty } from "./productFields.js";
+import { buyerPurposes, displayUnit, lowerDeliveryQty } from "./productFields.js";
 import { seoCopy } from "./seoCopy.js";
 import { breadcrumbJsonLd, orgJsonLd, productJsonLd } from "./seoJsonLd.js";
 import {
   catalogPathForCategory,
+  CATEGORY_LIST_PAUSED,
   getCategoryBySlug,
   getCategoryDefs,
   getGreenProducts,
@@ -21,6 +22,8 @@ import {
   searchProducts,
   productDescriptionText,
   specificationRows,
+  certStandardLines,
+  shopCategoryTrail,
   supplierDisplayName,
   supplierPath,
 } from "./store.js";
@@ -192,7 +195,7 @@ export function resolvePublicPage(pathname, origin = siteOrigin()) {
       productJsonLd(origin, product, parsed.lang),
       crumbs(origin, parsed.lang, [
         { name: "Mattex Marketplace", path: "/" },
-        { name: product.category, path: catalogPathForCategory(product.category) },
+        ...(CATEGORY_LIST_PAUSED || !product.category ? [] : [{ name: product.category, path: catalogPathForCategory(product.category) }]),
         { name: product.name, path: `/details/${product.id}` },
       ]),
     ],
@@ -326,17 +329,12 @@ const HOME_COPY = {
 };
 
 function buyerSpecHtml(lang, product) {
-  return specificationRows(product)
-    .filter((row) => row.kind === "cert" || !isLeadSpec(row.text))
-    .map((row) =>
-      row.kind === "cert"
-        ? `<li>${lang === "zh" ? "認證" : "Cert"} ${row.lines.map((line) => esc(line)).join(" ")}</li>`
-        : (() => {
-            const parts = specParts(row.text, lang);
-            return parts.label ? `<li>${esc(parts.label)} ${esc(parts.value)}</li>` : `<li>${esc(parts.value)}</li>`;
-          })()
-    )
-    .join("");
+  const certs = specificationRows(product).filter((row) => row.kind === "cert" && row.lines?.length);
+  const lines = certs.length
+    ? certs.flatMap((row) => row.lines)
+    : [staffCertText(product) || product.standard || ""].filter(Boolean);
+  if (!lines.length) return "";
+  return `<li>${lang === "zh" ? "認證" : "Cert"} ${lines.map((line) => esc(line)).join("<br>")}</li>`;
 }
 
 function buyerPurposeHtml(lang, product) {
@@ -345,33 +343,38 @@ function buyerPurposeHtml(lang, product) {
     .join("");
 }
 
+function shopCategoryHtml(lang, product) {
+  const trail = shopCategoryTrail(product);
+  if (!trail.length) return "";
+  return trail
+    .map((node) => `<a href="${esc(withLocale(lang, `/catalog/${node.id}`))}">${esc(node.name)}</a>`)
+    .join(" / ");
+}
+
 function productBlock(lang, product) {
   const href = withLocale(lang, `/details/${product.id}`);
-  const categoryHref = withLocale(lang, catalogPathForCategory(product.category));
+  const shopCategories = shopCategoryHtml(lang, product);
+  const categoryHref = shopCategories || CATEGORY_LIST_PAUSED ? "" : withLocale(lang, catalogPathForCategory(product.category));
   const supplierHref = product.supplier ? withLocale(lang, supplierPath(product.supplier)) : "";
   const specs = buyerSpecHtml(lang, product);
   const purposes = buyerPurposeHtml(lang, product);
   return `<article>
-        <p><a href="${esc(categoryHref)}">${esc(product.category)}</a></p>
+        ${shopCategories ? `<p>${shopCategories}</p>` : categoryHref ? `<p><a href="${esc(categoryHref)}">${esc(product.category)}</a></p>` : ""}
         <h3><a href="${esc(href)}">${esc(product.name)}</a></h3>
-        <p>${esc(product.productNo || product.provisionalSku || "")}${
+        ${
           product.supplier
-            ? ` · <a href="${esc(supplierHref)}">${esc(supplierDisplayName(product.supplier))}</a>`
+            ? `<p><a href="${esc(supplierHref)}">${esc(supplierDisplayName(product.supplier))}</a></p>`
             : ""
-        }</p>
+        }
         <p>${esc(
           [
             product.unit ? `Unit ${product.unit}` : "",
-            product.moq != null ? `MOQ ${product.moq}` : "",
-            localizeLeadTime(product.leadTimeLabel || "", lang),
             product.standard || "",
           ]
             .filter(Boolean)
             .join(" · ")
         )}</p>
         ${paragraphs(product.description)}
-        ${paragraphs(product.sizeDesc)}
-        ${paragraphs(product.primarySpec)}
         ${paragraphs(product.certifications)}
         ${specs ? `<ul>${specs}</ul>` : ""}
         ${purposes ? `<ul>${purposes}</ul>` : ""}
@@ -417,23 +420,18 @@ function pageContent(page) {
               } or more.`,
         )}</p>`
       : "";
-    const lead = localizeLeadTime(
-      product.leadTimeLabel ||
-        (product.leadTime
-          ? product.leadTime.min === product.leadTime.max
-            ? `${product.leadTime.min} days`
-            : `${product.leadTime.min}–${product.leadTime.max} days`
-          : ""),
-      lang,
-    );
     return `<article class="mattex-ssr">
       <nav>
         <a href="${esc(withLocale(lang, "/"))}">${lang === "zh" ? "產品目錄" : "Catalog"}</a>
-        /
-        <a href="${esc(withLocale(lang, catalogPathForCategory(product.category)))}">${esc(product.category)}</a>
+        ${shopCategoryHtml(lang, product) ? ` / ${shopCategoryHtml(lang, product)}` : CATEGORY_LIST_PAUSED ? "" : `/ <a href="${esc(withLocale(lang, catalogPathForCategory(product.category)))}">${esc(product.category)}</a>`}
       </nav>
       ${gallery.map((src) => `<img src="${esc(src)}" alt="${esc(product.name)}" />`).join("\n")}
-      <p><a href="${esc(withLocale(lang, catalogPathForCategory(product.category)))}">${esc(product.category)}</a></p>
+      ${(() => {
+        const shop = shopCategoryHtml(lang, product);
+        if (shop) return `<p>${shop}</p>`;
+        if (CATEGORY_LIST_PAUSED) return "";
+        return `<p><a href="${esc(withLocale(lang, catalogPathForCategory(product.category)))}">${esc(product.category)}</a></p>`;
+      })()}
       <h1>${esc(product.name)}</h1>
       ${
         product.green
@@ -463,10 +461,8 @@ function pageContent(page) {
       <h2>${lang === "zh" ? "訂購" : "Order"}</h2>
       <dl>
         <dt>SKU ID</dt><dd>${esc(product.productNo || product.id)}</dd>
-        <dt>${lang === "zh" ? "最低訂購量" : "Min. order qty"}</dt><dd>${esc(product.moq)} ${esc(displayUnit(product.unit, lang))}</dd>
         ${product.unit ? `<dt>${lang === "zh" ? "單位" : "Unit"}</dt><dd>${esc(displayUnit(product.unit, lang))}</dd>` : ""}
-        <dt>${lang === "zh" ? "送貨" : "Delivery"}</dt><dd>${esc(lead)}${/天|日|day|week/i.test(lead) ? "" : lang === "zh" ? " 日" : " days"}</dd>
-        <dt>${lang === "zh" ? "文件列明標準" : "Documented standard"}</dt><dd>${esc(staffCertText(product) || product.standard || "")}</dd>
+        <dt>${lang === "zh" ? "文件列明標準" : "Documented standard"}</dt><dd>${certStandardLines(staffCertText(product) || product.standard || "").map((line) => esc(line)).join("<br>")}</dd>
       </dl>
       ${deliveryLine}
       ${
@@ -527,7 +523,7 @@ function pageContent(page) {
       ${products.map((product) => productBlock(lang, product)).join("\n")}
     </article>`;
   }
-  const categories = getCategoryDefs().filter((category) => category.count > 0);
+  const categories = getCategoryDefs();
   const products = visibleProducts();
   const featured = getTopProducts(12);
   const greens = getGreenProducts(8);
@@ -549,7 +545,7 @@ function pageContent(page) {
         <h3>${esc(copy.step5Title)}</h3>
         <p>${esc(copy.step5Body)}</p>
       </section>
-      <section>
+      ${categories.length ? `<section>
         <h2>${esc(copy.materialCategories)}</h2>
         <ul>
           ${categories
@@ -559,7 +555,7 @@ function pageContent(page) {
             )
             .join("\n          ")}
         </ul>
-      </section>
+      </section>` : ""}
       <section>
         <h2>${esc(copy.greenHeadline)}</h2>
         <p>${esc(copy.greenSupport)}</p>

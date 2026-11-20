@@ -1,0 +1,30 @@
+---
+description: Show shop category and sub-category on product cards and details
+alwaysApply: true
+---
+
+# Shop category on the card (locked spec)
+
+When a product has `shopCategoryId`, show **category and sub-category** on the landing product card and the details page. This applies to every later product update, not only Clay Pipe.
+
+- Trail comes from `shopCategoryTrail`: parent, then the child. Names are the tree names. Link each to `/catalog/{id}#catalog-top`.
+- Card (list and grid): one line above the title, `Parent / Child`.
+- Details: breadcrumb `Catalog / Parent / Child`, and the same line above the title.
+- SSR product card and details nav use the same trail.
+- No `shopCategoryId`: keep the category line hidden while `CATEGORY_LIST_PAUSED`. Do not show the old `product.category` string.
+- One product, one sub-category. Assign the child id. Do not hard-code a product name into the label.
+
+# Sidebar and search
+
+- A selected category auto-expands once. Clicking its name or chevron again collapses it and it stays collapsed. The selection does not change.
+- Several parent categories may stay open together.
+- Search suggestions include parent and sub-category names. Picking one selects that row, expands its parent, clears the search text, and lists products the same way as the sidebar. The page does not jump. Only the sidebar list scrolls the row into view.
+
+```jsx
+// ❌ BAD
+{product.category}
+<p>Pipe (Clay)</p> // only for Clay Pipe
+
+// ✅ GOOD
+<ShopCategoryLinks product={product} lang={lang} />
+```

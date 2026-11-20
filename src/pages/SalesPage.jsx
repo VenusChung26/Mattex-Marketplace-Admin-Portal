@@ -11,7 +11,7 @@ import { useLanguage } from "../i18n";
 import { catalogGroupIndex, collapseCatalog, useCatalogGroups } from "../lib/catalogGroups";
 import { categoriesInCatalog } from "../lib/searchOptions";
 import { jumpToId } from "../lib/jumpTo";
-import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
+import { allProductsTo, freshCatalogLocation, productDetailsLocation, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
 import { addFromStorefront, getSalesProducts, searchProducts } from "../lib/store";
 
@@ -40,7 +40,11 @@ export default function SalesPage() {
 
   function openProduct(product) {
     if (!product?.id) return;
-    navigate(withLocale(lang, `/details/${product.id}`));
+    navigate(productDetailsLocation(lang, product));
+  }
+
+  function searchFromHere(value) {
+    navigate(freshCatalogLocation(lang, value));
   }
 
   function pickCategory(name) {
@@ -74,11 +78,10 @@ export default function SalesPage() {
       />
       <SiteHeader
         searchValue={searchQuery}
-        onSearchChange={setSearchQuery}
+        onSearchChange={searchFromHere}
         onSearchSubmit={(event, value) => {
           event?.preventDefault();
-          setSearchQuery(value ?? "");
-          jumpToId("catalog-results");
+          searchFromHere(value ?? "");
         }}
         onSearchCategory={pickCategory}
         browseCategories={browseCategories}
@@ -114,11 +117,8 @@ export default function SalesPage() {
             <span className="sr-only">{t("search")}</span>
             <ProductSearchBox
               value={searchQuery}
-              onValue={setSearchQuery}
-              onTerm={(term) => {
-                setSearchQuery(term);
-                jumpToId("catalog-results");
-              }}
+              onValue={searchFromHere}
+              onTerm={searchFromHere}
               onProduct={openProduct}
               onCategory={pickCategory}
               products={suggestPool}

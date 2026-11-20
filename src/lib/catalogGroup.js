@@ -150,7 +150,7 @@ function splitBilingual(name) {
       /[\u4e00-\u9fff]/.test(left) &&
       right &&
       !/[\u4e00-\u9fff]/.test(right) &&
-      /^[A-Z]/.test(right) &&
+      /^[A-Za-z]/.test(right) &&
       parensBalanced(left)
     ) {
       const leftTail = dashParts(left).slice(1).join(" — ");

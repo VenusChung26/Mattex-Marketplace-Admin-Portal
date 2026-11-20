@@ -7,8 +7,8 @@ import ContactVerifyModal from "./ContactVerifyModal";
 import LangToggle from "./LangToggle";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
-import { stripLocale, withLocale } from "../lib/locale";
-import { SHOW_RFQ } from "../lib/flags";
+import { productDetailsLocation, stripLocale, withLocale } from "../lib/locale";
+import { SHOW_CONTACT_VERIFY, SHOW_RFQ } from "../lib/flags";
 import { usePromo } from "../lib/promo";
 import {
   closeAuthModal,
@@ -84,6 +84,7 @@ export default function SiteHeader({
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
+    if (!SHOW_CONTACT_VERIFY) return;
     if (params.get("verifyContact") === "1" && params.get("token") && !contactVerifyOpen) {
       openContactVerifyLinkModal();
     }
@@ -97,6 +98,15 @@ export default function SiteHeader({
   const [navSolid, setNavSolid] = useState(!overlay);
   const [query, setQuery] = useState(searchValue || "");
   const isHome = stripLocale(location.pathname) === "/";
+  const isCatalog = /^\/catalog\/[^/]+$/.test(stripLocale(location.pathname));
+  const sheetCategories = useMemo(() => {
+    const rows = [];
+    for (const category of categories) {
+      rows.push(category);
+      for (const child of category.children || []) rows.push(child);
+    }
+    return rows;
+  }, [categories]);
   const fallbackCatalog = useMemo(() => getProductsByCategory(), [catalogEpoch]);
   const suggestPool = suggestProducts || fallbackCatalog;
   const browseList = useMemo(() => {
@@ -211,13 +221,7 @@ export default function SiteHeader({
   function openProduct(product) {
     if (!product?.id) return;
     closeMenu();
-    if (isHome && onSearchSubmit) {
-      const name = String(product.name || product.productNo || "").trim();
-      setSearch(name);
-      onSearchSubmit(null, name);
-      return;
-    }
-    navigate(lp(`/details/${product.id}`));
+    navigate(productDetailsLocation(lang, product));
   }
 
   function pickSearchCategory(name) {
@@ -259,6 +263,11 @@ export default function SiteHeader({
 
   function pickCategory(name) {
     closeMenu();
+    setCatsOpen(false);
+    if ((isHome || isCatalog) && onSearchCategory) {
+      onSearchCategory(name);
+      return;
+    }
     navigate(catalogTo({ cat: name }));
   }
 
@@ -333,8 +342,10 @@ export default function SiteHeader({
               value={query}
               onValue={setSearch}
               onTerm={pickTerm}
+              onSubmit={(text) => submitSearch(null, text)}
               onProduct={openProduct}
               onCategory={pickSearchCategory}
+              includeShopTree
               products={suggestPool}
               browseCategories={browseList}
               placeholder={t("searchPlaceholder")}
@@ -394,8 +405,10 @@ export default function SiteHeader({
             value={query}
             onValue={setSearch}
             onTerm={pickTerm}
+            onSubmit={(text) => submitSearch(null, text)}
             onProduct={openProduct}
             onCategory={pickSearchCategory}
+            includeShopTree
             products={suggestPool}
             browseCategories={browseList}
             placeholder={t("searchPlaceholder")}
@@ -430,7 +443,7 @@ export default function SiteHeader({
                     onClick={() => pickCategory(c.name)}
                     className={`nav-cat-item text-left ${selectedCategories.includes(c.name) ? "!bg-brand-600/40 !text-white" : ""}`}
                   >
-                    {catsOpen ? <FallbackImage src={c.image} fallback={c.imageFallback} alt="" loading="lazy" decoding="async" /> : <span className="nav-cat-ph" aria-hidden />}
+                    {catsOpen && (c.image || c.imageFallback) ? <FallbackImage src={c.image} fallback={c.imageFallback} alt="" loading="lazy" decoding="async" /> : <span className="nav-cat-ph" aria-hidden />}
                     <span className="min-w-0">
                       <span className="block text-[12px] font-semibold leading-snug line-clamp-2">{c.name}</span>
                       <span className="block text-[10px] text-white/45 mt-0.5">{c.count} items</span>
@@ -487,7 +500,7 @@ export default function SiteHeader({
             <CategorySheet
               open={mobileCatsOpen}
               onClose={() => setMobileCatsOpen(false)}
-              categories={categories}
+              categories={sheetCategories}
               onPick={(c) => {
                 setMobileCatsOpen(false);
                 pickCategory(c.name);

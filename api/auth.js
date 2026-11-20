@@ -266,8 +266,18 @@ async function sendMail(to, subject, innerHtml, fontBase) {
   return sendResendEmail({ to, subject, html }).catch(() => ({ ok: false }));
 }
 
+async function adoptVerifiedEmail(request, email) {
+  if (!email) return;
+  try {
+    const { adoptGuestEmailTrust } = await import("./contact-verify.js");
+    await adoptGuestEmailTrust(request, email);
+  } catch (error) {
+    console.error("auth adopt contact", error?.message || error);
+  }
+}
+
 const actions = {
-  async login({ kind, email, password }) {
+  async login({ kind, email, password }, request) {
     if (!isKind(kind)) return { status: 400, body: { ok: false, error: "invalid" } };
     let account;
     try {
@@ -279,7 +289,9 @@ const actions = {
         return { cookie: sessionCookie(kind, address), body: { ok: true, account: localStaffAccount(address) } };
       }
       if (error?.message === "auth_not_configured" && kind === "buyer" && localBuyersEnabled()) {
-        return localBuyerLogin(email, password);
+        const result = localBuyerLogin(email, password);
+        if (result.body?.ok) await adoptVerifiedEmail(request, normalizeEmail(email));
+        return result;
       }
       throw error;
     }
@@ -288,6 +300,7 @@ const actions = {
     if (!account.enabled) return { body: { ok: false, error: kind === "buyer" ? "disabled" : "password" } };
     if (account.extra?.invitePending) return { body: { ok: false, error: "invite" } };
     if (!(await verifyPassword(account.email, kind, password))) return { body: { ok: false, error: "password" } };
+    if (kind === "buyer") await adoptVerifiedEmail(request, account.email);
     return { cookie: sessionCookie(kind, account.email), body: { ok: true, account } };
   },
 
@@ -304,7 +317,7 @@ const actions = {
     return { body: { ok: true, buyers: data || [] } };
   },
 
-  async signup({ email, password, profile = {} }) {
+  async signup({ email, password, profile = {} }, request) {
     const address = normalizeEmail(email);
     if (!EMAIL_RE.test(address)) return { body: { ok: false, error: "email" } };
     if (!passwordOk(password)) return { body: { ok: false, error: "password" } };
@@ -313,7 +326,9 @@ const actions = {
       existing = await findAccount(address);
     } catch (error) {
       if (error?.message === "auth_not_configured" && localBuyersEnabled()) {
-        return localBuyerSignup(address, password, profile);
+        const result = localBuyerSignup(address, password, profile);
+        if (result.body?.ok) await adoptVerifiedEmail(request, address);
+        return result;
       }
       throw error;
     }
@@ -346,6 +361,7 @@ const actions = {
       if (error) return { body: { ok: false, error: "exists" } };
     }
     if (!(await setPassword(address, "buyer", password))) return { status: 500, body: { ok: false, error: "server" } };
+    await adoptVerifiedEmail(request, address);
     return { cookie: sessionCookie("buyer", address), body: { ok: true, email: address } };
   },
 

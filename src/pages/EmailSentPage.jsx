@@ -165,6 +165,25 @@ export default function EmailSentPage() {
 
             <p className="mt-6">{t("emailSignOff")}</p>
             <p className="mt-1 font-medium">{fromName || fromEmail}</p>
+            <p className="mt-5 border-t border-[#e8eaed] pt-3 text-xs leading-relaxed text-mute">
+              {lang === "en" ? (
+                <>
+                  This order is subject to Mattex Asia Development Limited’s Terms and Conditions of Sale (
+                  <a href="https://marketplace.mattex.com.hk/" className="underline hover:text-brand-700">
+                    https://marketplace.mattex.com.hk/
+                  </a>
+                  ). Mattex Asia Development Limited reserves the final right of decision on all orders.
+                </>
+              ) : (
+                <>
+                  本訂單受 Mattex Asia Development Limited 之《銷售條款及細則》（
+                  <a href="https://marketplace.mattex.com.hk/" className="underline hover:text-brand-700">
+                    https://marketplace.mattex.com.hk/
+                  </a>
+                  ）約束。Mattex Asia Development Limited 對所有訂單保留最終決定權。
+                </>
+              )}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-[#e8eaed] bg-[#f8f9fa]">

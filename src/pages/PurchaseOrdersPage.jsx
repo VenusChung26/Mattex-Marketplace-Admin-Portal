@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import SiteHeader from "../components/SiteHeader";
+import { selectSearchOnFocus } from "../components/SearchSuggestions";
 import Seo from "../components/Seo";
 import { useStore } from "../hooks/useStore";
 import { usePurchaseOrders } from "../hooks/usePurchaseOrders";
@@ -210,6 +211,7 @@ export default function PurchaseOrdersPage() {
                     type="search"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
+                    onFocus={selectSearchOnFocus}
                     placeholder={copy.search}
                     aria-label={copy.search}
                     className="mt-2 w-full border border-line bg-paper/60 px-3 py-1.5 text-sm text-ink"
@@ -317,6 +319,25 @@ export default function PurchaseOrdersPage() {
                   </div>
                   <p className="mt-3 border-t border-line pt-3 text-right text-base font-bold text-ink">
                     {copy.total} {money(selected.total)}
+                  </p>
+                  <p className="mt-4 border-t border-line pt-3 text-xs leading-relaxed text-mute">
+                    {lang === "en" ? (
+                      <>
+                        This order is subject to Mattex Asia Development Limited’s Terms and Conditions of Sale (
+                        <a href="https://marketplace.mattex.com.hk/" className="underline hover:text-brand-700">
+                          https://marketplace.mattex.com.hk/
+                        </a>
+                        ). Mattex Asia Development Limited reserves the final right of decision on all orders.
+                      </>
+                    ) : (
+                      <>
+                        本訂單受 Mattex Asia Development Limited 之《銷售條款及細則》（
+                        <a href="https://marketplace.mattex.com.hk/" className="underline hover:text-brand-700">
+                          https://marketplace.mattex.com.hk/
+                        </a>
+                        ）約束。Mattex Asia Development Limited 對所有訂單保留最終決定權。
+                      </>
+                    )}
                   </p>
                 </>
               ) : (

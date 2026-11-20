@@ -120,8 +120,18 @@ export function guestOrderError(info) {
   if (!row.phone) return "phone";
   if (info?.addPhone && !row.otherPhone) return "phone2";
   if (!row.project) return "project";
-  if (!row.deliveryDate) return "delivery_date";
+  if (!row.deliveryDate || isPastDeliveryDate(row.deliveryDate)) return "delivery_date";
   return "";
+}
+
+function isPastDeliveryDate(value) {
+  const text = String(value || "").trim();
+  if (!text || text === "N/A" || !/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  return text < todayInHongKong();
+}
+
+function todayInHongKong() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
 
 export function attachmentSummary(files) {

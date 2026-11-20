@@ -1,4 +1,4 @@
-import { formatUnitPrice } from "../lib/productFields";
+import { buyerListPrice, formatUnitPrice } from "../lib/productFields";
 import { formatPrice, formatQuoteDate, formatQuoteDateShort, getEffectivePrice } from "../lib/store";
 import { findEndedProductOffer, findProductOffer } from "../lib/offer";
 import { usePromo } from "../lib/promo";

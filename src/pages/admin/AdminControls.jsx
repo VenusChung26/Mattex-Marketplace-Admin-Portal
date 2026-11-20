@@ -1,6 +1,7 @@
 import { startTransition, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useLanguage } from "../../i18n";
 import { adminText } from "../../lib/adminCopy";
+import { selectSearchOnFocus } from "../../components/SearchSuggestions";
 
 const SUGGEST_LIMIT = 8;
 
@@ -80,7 +81,10 @@ export function AdminSearchBar({ value, onChange, placeholder, label, options, o
           setOpen(true);
           setActiveIndex(0);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={(event) => {
+          selectSearchOnFocus(event);
+          setOpen(true);
+        }}
         onBlur={() => {
           window.setTimeout(() => setOpen(false), 120);
         }}

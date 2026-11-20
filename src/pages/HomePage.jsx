@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import CategorySideNav from "../components/CategorySideNav";
+import ListFilters from "../components/ListFilters";
 import ProductCard, { FallbackImage, ProductCardSkeleton, ProductListRow } from "../components/ProductCard";
 import SupplierLogo from "../components/SupplierLogo";
 import CustomProductModal from "../components/CustomProductModal";
@@ -14,8 +15,20 @@ import { useLanguage } from "../i18n";
 import HowStepGraphic from "../components/HowStepGraphic";
 import SpecMatchLaunch from "../components/SpecMatchLaunch";
 import { SHOW_SPEC_MATCH } from "../lib/flags";
-import { jumpToId } from "../lib/jumpTo";
-import { siteOrigin, withLocale } from "../lib/locale";
+import { jumpToId, sectionAlreadyInView } from "../lib/jumpTo";
+import { productDetailsLocation, siteOrigin, withLocale } from "../lib/locale";
+import {
+  applyListFilter,
+  clearTileSearchParams,
+  emptyTileQuery,
+  isVinylFloor,
+  readTileQuery,
+  tileProductNote,
+  tileSearchParams,
+  VINYL_CATEGORY_ID,
+  vinylFacetsActive,
+  withTilePatch,
+} from "../lib/tileBrowse.js";
 import { landingBanners, OFFER_SECTION_HERO, sectionTitle, sentenceOf, usePromo } from "../lib/promo";
 import { bannerProductOffers } from "../lib/offer";
 import { collapseCatalog, catalogGroupIndex, useCatalogGroups } from "../lib/catalogGroups";
@@ -26,6 +39,7 @@ import {
   getCategoryByName,
   getCategoryBySlug,
   getCategoryDefs,
+  CATEGORY_LIST_PAUSED,
   productShowsPrice,
   getProduct,
   getProductsByCategory,
@@ -163,15 +177,44 @@ export default function HomePage() {
     setTourOpen(true);
   }
   const holdCatalogPinRef = useRef(false);
-  const jumpToResultsRef = useRef(false);
   const searchStuck = catalogStuck || catalogPinned;
   const origin = siteOrigin();
   const copy = seoCopy(lang);
   const homePath = withLocale(lang, "/");
 
-  useEffect(() => {
-    setNavQuery(searchQuery);
-  }, [searchQuery]);
+  function dropUrlSearch() {
+    if (!params.get("q")) return;
+    const next = new URLSearchParams(params);
+    next.delete("q");
+    const qs = next.toString();
+    navigate(
+      { pathname: withLocale(lang, "/"), search: qs ? `?${qs}` : "", hash: window.location.hash },
+      { replace: true },
+    );
+  }
+
+  function applySearchText(value) {
+    const next = value ?? "";
+    setSearchQuery(next);
+    setNavQuery(next);
+    setSelectedCategories([]);
+    setPriceFilter("all");
+    setSearchFields([]);
+    setGreenOnly(false);
+    const nextParams = new URLSearchParams(params);
+    let changed = false;
+    for (const key of ["q", "filter", "green", "cat", "kind", "pattern", "colour", "size", "slip", "type", "thickness", "standard", "sizeCustom", "slipCustom", "sizeNote", "slipNote"]) {
+      if (!nextParams.has(key)) continue;
+      nextParams.delete(key);
+      changed = true;
+    }
+    if (!changed) return;
+    const qs = nextParams.toString();
+    navigate(
+      { pathname: withLocale(lang, "/"), search: qs ? `?${qs}` : "", hash: window.location.hash },
+      { replace: true },
+    );
+  }
 
   useEffect(() => {
     try {
@@ -255,14 +298,46 @@ export default function HomePage() {
   const greenCols = phone ? 1 : contentWidth < 992 ? 2 : 4;
   const topCols = phone ? 1 : fitColumns(top.length, contentWidth, 260);
 
+  const tileState = readTileQuery(params, { optional: true });
+  const vinylCategory = selectedCategories.length === 1 && getCategoryByName(selectedCategories[0])?.id === VINYL_CATEGORY_ID;
+  const tileEngaged = vinylCategory && vinylFacetsActive(tileState);
+  const tileKey = [
+    tileState.kind,
+    tileState.pattern.join(","),
+    tileState.colour.join(","),
+    tileState.size.join(","),
+    tileState.slip.join(","),
+    tileState.type.join(","),
+    tileState.thickness.join(","),
+    tileState.standard.join(","),
+    tileState.code.join(","),
+    tileState.vcolor.join(","),
+    tileState.fire.join(","),
+    tileState.vsize.join(","),
+    tileState.sizeCustom,
+    tileState.slipCustom,
+  ].join("|");
+
   const products = useMemo(() => {
-    let list = searchProducts(searchQuery, selectedCategories, { fields: searchFields });
+    const vinylOn = selectedCategories.length === 1 && getCategoryByName(selectedCategories[0])?.id === VINYL_CATEGORY_ID;
+    let list = vinylOn
+      ? getProductsByCategory().filter(isVinylFloor)
+      : searchProducts(searchQuery, selectedCategories, { fields: searchFields });
+    if (vinylOn && String(searchQuery || "").trim()) {
+      const matched = new Set(searchProducts(searchQuery, [], { fields: searchFields }).map((product) => product.id));
+      list = list.filter((product) => matched.has(product.id));
+    }
     if (greenOnly) list = list.filter((p) => p.green);
     if (priceFilter === "priced") list = list.filter((p) => productShowsPrice(p));
     if (priceFilter === "unpriced") list = list.filter((p) => !productShowsPrice(p));
     if (priceFilter === "hot") list = list.filter((p) => isHitProduct(p));
     return collapseCatalog(list, catalogGroupIndex());
   }, [searchQuery, selectedCategories, greenOnly, priceFilter, searchFields, catalogEpoch, groupEpoch]);
+
+  const gridEntries = useMemo(() => {
+    if (!tileEngaged) return products.map((entry) => ({ ...entry, key: entry.product.id, hideSpecGroups: [] }));
+    return applyListFilter(products.map((entry) => entry.product), { ...tileState, kind: "vinyl" }) || [];
+  }, [tileEngaged, products, tileState]);
 
   useEffect(() => {
     try {
@@ -281,22 +356,17 @@ export default function HomePage() {
 
   useEffect(() => {
     setCatalogShown(CATALOG_BATCH);
-  }, [searchQuery, selectedCategories, greenOnly, priceFilter, searchFields]);
+  }, [searchQuery, selectedCategories, greenOnly, priceFilter, searchFields, tileKey]);
 
-  useEffect(() => {
-    if (!jumpToResultsRef.current) return;
-    jumpToResultsRef.current = false;
-    jumpToId("catalog-results");
-  }, [selectedCategories, navHeight, toolbarHeight]);
-
-  const visibleCatalog = products.slice(0, catalogShown);
+  const visibleCatalog = gridEntries.slice(0, catalogShown);
 
   const hasFilters =
     greenOnly ||
     selectedCategories.length > 0 ||
     Boolean(searchQuery.trim()) ||
     priceFilter !== "all" ||
-    searchFields.length > 0;
+    searchFields.length > 0 ||
+    tileEngaged;
 
   useEffect(() => {
     if (params.get("custom") !== "1") return;
@@ -321,7 +391,14 @@ export default function HomePage() {
     showToast(t("addedCustomToRfq"));
   }
 
+  function scrollToResultHeading() {
+    holdCatalogPinRef.current = true;
+    setCatalogPinned(true);
+    jumpToId("catalog-results");
+  }
+
   function scrollToCatalog({ animate = false } = {}) {
+    if (sectionAlreadyInView("products")) return;
     holdCatalogPinRef.current = true;
     setCatalogPinned(true);
     jumpToId("products", { gap: -1, animate });
@@ -353,6 +430,18 @@ export default function HomePage() {
         return undefined;
       }
     }
+    if (urlQ) {
+      setSearchQuery(urlQ);
+      setNavQuery(urlQ);
+      setSelectedCategories([]);
+      setPriceFilter("all");
+      setSearchFields([]);
+      setGreenOnly(false);
+      holdCatalogPinRef.current = true;
+      setCatalogPinned(true);
+      const timer = window.setTimeout(() => jumpToId("catalog-results"), 80);
+      return () => window.clearTimeout(timer);
+    }
     if (urlFilter) {
       const found = getCategoryBySlug(urlFilter) || getCategoryByName(urlFilter);
       if (found) setSelectedCategories([found.name]);
@@ -362,6 +451,7 @@ export default function HomePage() {
       setPriceFilter("all");
       setSelectedCategories([]);
       setSearchQuery("");
+      setNavQuery("");
       setSearchFields([]);
       const next = new URLSearchParams(params);
       next.delete("green");
@@ -370,18 +460,33 @@ export default function HomePage() {
       const timer = window.setTimeout(() => scrollToCatalog(), 80);
       return () => window.clearTimeout(timer);
     }
-    if (!urlQ) return undefined;
-    setSearchQuery(urlQ);
-    setNavQuery(urlQ);
-    setGreenOnly(/\bgreen\b/i.test(urlQ));
-    holdCatalogPinRef.current = true;
-    setCatalogPinned(true);
-    const timer = window.setTimeout(() => jumpToId("catalog-results"), 80);
-    return () => window.clearTimeout(timer);
   }, [urlQ, urlCat, urlFilter, urlGreen, lang, navigate, params]);
 
+  function writeHomeQuery(searchParams, { hash = "products", preserveScroll = false } = {}) {
+    const qs = searchParams.toString();
+    navigate(
+      { pathname: withLocale(lang, "/"), search: qs ? `?${qs}` : "", hash },
+      { replace: true, preventScrollReset: preserveScroll, state: preserveScroll ? { keepScroll: true } : undefined },
+    );
+  }
+
+  function writeTile(next, { preserveScroll = false } = {}) {
+    const keptHash = preserveScroll ? window.location.hash.replace(/^#/, "") : "products";
+    writeHomeQuery(tileSearchParams(next, params), { hash: keptHash, preserveScroll });
+    setSelectedCategories([]);
+  }
+
+  function clearTile({ preserveScroll = false } = {}) {
+    const keptHash = preserveScroll ? window.location.hash.replace(/^#/, "") : "products";
+    writeHomeQuery(clearTileSearchParams(params), { hash: keptHash, preserveScroll });
+  }
+
   function handleAdd(productId, intent = "quote", qty, options) {
-    const result = addFromStorefront(productId, intent, qty, lang, options || {});
+    const note = tileEngaged ? tileProductNote(options?.tileNote, lang, tileState) : "";
+    const result = addFromStorefront(productId, intent, qty, lang, {
+      ...(options || {}),
+      ...(note ? { remark: note } : {}),
+    });
     if (!result?.ok || intent === "quote-now" || intent === "buy-now") return;
     showToast({
       message: t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq"),
@@ -392,14 +497,26 @@ export default function HomePage() {
   function clearFilters() {
     setGreenOnly(false);
     setSearchQuery("");
+    setNavQuery("");
     setSelectedCategories([]);
     setPriceFilter("all");
     setSearchFields([]);
+    const next = clearTileSearchParams(params);
+    for (const key of ["q", "filter", "green", "cat"]) next.delete(key);
+    writeHomeQuery(next);
   }
 
-  function selectCategory(name, { scroll } = {}) {
-    setSelectedCategories([name]);
-    if (scroll ?? !catalogStuck) scrollToCatalog();
+  function selectCategory(name, { scroll = false } = {}) {
+    const found = getCategoryByName(name);
+    if (found?.id === "tiles") {
+      writeTile(withTilePatch(emptyTileQuery(), { kind: "ceramic" }), { preserveScroll: !scroll });
+    } else {
+      const next = clearTileSearchParams(params);
+      for (const key of ["q", "filter", "green", "cat"]) next.delete(key);
+      writeHomeQuery(next, { hash: scroll ? "products" : "", preserveScroll: !scroll });
+      setSelectedCategories([name]);
+    }
+    if (scroll) scrollToResultHeading();
   }
 
   function onCartClick() {
@@ -417,14 +534,14 @@ export default function HomePage() {
   );
 
   function scrollToResults({ animate = true } = {}) {
+    if (sectionAlreadyInView("products")) return;
     holdCatalogPinRef.current = true;
     setCatalogPinned(true);
     jumpToId("products", { gap: -1, animate });
   }
 
   function onCatalogQueryChange(value) {
-    setSearchQuery(value);
-    setGreenOnly(/\bgreen\b/i.test(value));
+    applySearchText(value);
   }
 
   function runCatalogSearch(value) {
@@ -434,20 +551,18 @@ export default function HomePage() {
 
   function openProduct(product) {
     if (!product?.id) return;
-    navigate(withLocale(lang, `/details/${product.id}`));
+    navigate(productDetailsLocation(lang, product));
   }
 
   function pickSearchCategory(name) {
+    setSearchQuery("");
+    setNavQuery("");
     selectCategory(name, { scroll: false });
-    scrollToResults();
   }
 
   function submitNavSearch(event, value) {
     event?.preventDefault();
-    const next = value ?? navQuery;
-    setSearchQuery(next);
-    setNavQuery(next);
-    setGreenOnly(/\bgreen\b/i.test(next));
+    applySearchText(value ?? navQuery);
     scrollToResults();
   }
 
@@ -466,7 +581,7 @@ export default function HomePage() {
       <SiteHeader
         overlay
         searchValue={navQuery}
-        onSearchChange={setNavQuery}
+        onSearchChange={applySearchText}
         onSearchSubmit={submitNavSearch}
         onSearchCategory={pickSearchCategory}
         browseCategories={browseCategories}
@@ -622,6 +737,7 @@ export default function HomePage() {
             ) : null}
           </section>
         ) : null}
+        {categories.length ? (
         <section id="categories" className="max-w-7xl mx-auto px-4 pt-9 sm:pt-11" style={{ scrollMarginTop: navHeight }}>
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-5">
             <div>
@@ -671,6 +787,7 @@ export default function HomePage() {
             ))}
           </div>
         </section>
+        ) : null}
 
         <section id="green" className="max-w-7xl mx-auto px-4 pt-14 sm:pt-16" style={{ scrollMarginTop: navHeight }}>
           <div className="relative mb-7 overflow-hidden rounded-xl bg-brand-800 px-6 py-8 text-white sm:px-9 sm:py-10">
@@ -885,6 +1002,7 @@ export default function HomePage() {
                       onSubmit={runCatalogSearch}
                       onProduct={openProduct}
                       onCategory={pickSearchCategory}
+                      includeShopTree
                       products={suggestionsPool}
                       browseCategories={browseCategories}
                       placeholder={t("searchPlaceholder")}
@@ -973,8 +1091,12 @@ export default function HomePage() {
 
           <div className="max-w-7xl mx-auto px-4 py-8">
             <div className="flex min-w-0 flex-col gap-8 lg:flex-row">
-              <aside className="w-full min-w-0 max-w-full lg:w-56 lg:shrink-0 xl:w-60">
+              <aside
+                className="flex w-full min-w-0 max-w-full flex-col lg:sticky lg:w-80 lg:shrink-0 lg:overflow-hidden xl:w-[22rem]"
+                style={{ top: navHeight + toolbarHeight, maxHeight: `calc(100dvh - ${navHeight + toolbarHeight}px - 12px)` }}
+              >
                 <CategorySideNav
+                  contained
                   activeSlug={
                     selectedCategories.length === 1
                       ? getCategoryByName(selectedCategories[0])?.id || ""
@@ -983,17 +1105,21 @@ export default function HomePage() {
                   offsetTop={navHeight + toolbarHeight}
                   filterMode
                   onSelectAll={() => {
-                    jumpToResultsRef.current = true;
-                    setCatalogPinned(true);
-                    holdCatalogPinRef.current = true;
+                    const next = clearTileSearchParams(params);
+                    for (const key of ["q", "filter", "green", "cat"]) next.delete(key);
+                    writeHomeQuery(next, { hash: "", preserveScroll: true });
                     setSelectedCategories([]);
                   }}
                   onSelectCategory={(category) => {
-                    jumpToResultsRef.current = true;
-                    setCatalogPinned(true);
-                    holdCatalogPinRef.current = true;
                     setSearchQuery("");
                     setNavQuery("");
+                    if (category.id === "tiles") {
+                      writeTile(withTilePatch(emptyTileQuery(), { kind: "ceramic" }), { preserveScroll: true });
+                      return;
+                    }
+                    const next = clearTileSearchParams(params);
+                    for (const key of ["q", "filter", "green", "cat"]) next.delete(key);
+                    writeHomeQuery(next, { hash: "", preserveScroll: true });
                     setSelectedCategories([category.name]);
                   }}
                 />
@@ -1006,11 +1132,11 @@ export default function HomePage() {
                     <p className="mb-1 text-sm font-semibold text-brand-700">{t("searchFor", { q: searchQuery.trim() })}</p>
                   ) : null}
                   <h3 className="font-display text-2xl font-semibold text-brand-800">
-                    {catalogLoading && !products.length
+                    {catalogLoading && !gridEntries.length
                       ? t("loadingCatalog")
-                      : products.length === 1
+                      : gridEntries.length === 1
                         ? t("productLabelOne")
-                        : t("productsLabel", { n: products.length })}
+                        : t("productsLabel", { n: gridEntries.length })}
                   </h3>
                 </div>
                 {hasFilters ? (
@@ -1027,7 +1153,15 @@ export default function HomePage() {
                 {t("openRfqDraft")} →
               </Link>
             </div>
-            {catalogLoading && !products.length ? (
+            {vinylCategory ? (
+              <ListFilters
+                lang={lang}
+                products={products.map((entry) => entry.product)}
+                state={tileState}
+                onChange={(next) => writeHomeQuery(tileSearchParams(next, params), { hash: "", preserveScroll: true })}
+              />
+            ) : null}
+            {catalogLoading && !gridEntries.length ? (
               <div
                 className={catalogView === "list" ? "min-w-0 space-y-4" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}
                 aria-busy="true"
@@ -1035,7 +1169,7 @@ export default function HomePage() {
               >
                 <ProductCardSkeleton count={6} />
               </div>
-            ) : products.length === 0 ? (
+            ) : gridEntries.length === 0 ? (
               <div className="border border-dashed border-line bg-white/60 px-6 py-12 text-center">
                 <p className="text-base font-semibold text-brand-800">{t("noProducts")}</p>
                 <p className="mt-2 text-sm text-mute">{t("noProductsHint")}</p>
@@ -1054,31 +1188,35 @@ export default function HomePage() {
                   {visibleCatalog.map((entry) =>
                     catalogView === "list" ? (
                       <ProductListRow
-                        key={entry.product.id}
+                        key={entry.key}
                         product={entry.product}
                         grouped={entry.grouped}
                         title={entry.groupName}
+                        hideSpecGroups={entry.hideSpecGroups}
+                        tileCustom={tileEngaged ? { size: tileState.sizeCustom, slip: tileState.slipCustom } : null}
                         onAdd={handleAdd}
                       />
                     ) : (
                       <ProductCard
-                        key={entry.product.id}
+                        key={entry.key}
                         product={entry.product}
                         grouped={entry.grouped}
                         title={entry.groupName}
+                        hideSpecGroups={entry.hideSpecGroups}
+                        tileCustom={tileEngaged ? { size: tileState.sizeCustom, slip: tileState.slipCustom } : null}
                         onAdd={handleAdd}
                       />
                     )
                   )}
                 </div>
-                {catalogShown < products.length ? (
+                {catalogShown < gridEntries.length ? (
                   <div className="mt-6 flex justify-center">
                     <button
                       type="button"
                       onClick={() => setCatalogShown((n) => n + CATALOG_BATCH)}
                       className="btn-soft !px-5 !py-2.5"
                     >
-                      {t("showMore")} ({products.length - catalogShown})
+                      {t("showMore")} ({gridEntries.length - catalogShown})
                     </button>
                   </div>
                 ) : null}

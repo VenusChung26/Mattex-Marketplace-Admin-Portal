@@ -1,5 +1,5 @@
 import { splitSizeChoices } from "./catalogGroup.js";
-import { pickedSpecFields, findPickedSpecOption } from "./productFields.js";
+import { pickedSpecFields, findPickedSpecOption, specGroupApplies } from "./productFields.js";
 
 export function normalizePickedSpecs(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -76,8 +76,18 @@ export function selectionOptionKey(option) {
   return String(option && typeof option === "object" ? option.key || option.label || "" : option || "");
 }
 
+function isCustomizeSizeSelection(value) {
+  return /^(customize size|custom dimensions)$/i.test(String(value || "").trim());
+}
+
 function isCustomSelection(value) {
   return /^(customize|customization|customize size|customize drawing upload)$/i.test(String(value || "").trim());
+}
+
+function optionNeedsCustomForm(group, option) {
+  const label = selectionOptionLabel(option);
+  if ((group?.id === "mesh-size" || group?.id === "vinyl-size") && isCustomizeSizeSelection(label)) return false;
+  return isCustomSelection(label);
 }
 
 function mergeVinylType(groups) {
@@ -133,19 +143,90 @@ function mergeSlabCustomize(groups) {
     .map((group) => (group?.id === "slab-size" ? { ...group, options } : group));
 }
 
+function mergeShoeCustomize(groups) {
+  const list = Array.isArray(groups) ? groups : [];
+  const model = list.find((group) => group?.id === "shoe-model");
+  const custom = list.find((group) => group?.id === "shoe-custom");
+  if (!model || !custom) return list;
+  const options = [...(model.options || [])];
+  if (!options.some((option) => isCustomSelection(selectionOptionLabel(option)))) options.push("Customize");
+  return list
+    .filter((group) => group?.id !== "shoe-custom")
+    .map((group) => (group?.id === "shoe-model" ? { ...group, options } : group));
+}
+
+function groupHasMatchingOption(group, picked) {
+  if (!specGroupApplies(group, picked)) return false;
+  const parent = group?.dependsOn ? picked?.[group.dependsOn] : "";
+  return (group?.options || []).some((option) => {
+    if (option?.parent && option.parent !== parent) return false;
+    if (option?.with && option.with !== picked?.[option.withGroup]) return false;
+    return true;
+  });
+}
+
+function isCustomOnlyGroup(group, picked) {
+  const parent = group?.dependsOn ? picked?.[group.dependsOn] : "";
+  const usable = (group?.options || []).filter((option) => (!option?.parent || option.parent === parent) && (!option?.with || option.with === picked?.[option.withGroup]));
+  return usable.length > 0 && usable.every((option) => isCustomSelection(selectionOptionLabel(option)));
+}
+
+/** Same label under the current parent, otherwise the first listed option that is not a custom form. */
+function standardOptionForParent(group, picked, preferLabel) {
+  const parent = group?.dependsOn ? String(picked?.[group.dependsOn] || "") : "";
+  const usable = (option) => {
+    if (option?.parent && String(option.parent) !== parent) return false;
+    if (option?.with && String(option.with) !== String(picked?.[option.withGroup] || "")) return false;
+    const label = selectionOptionLabel(option);
+    return !isCustomSelection(label) && !isCustomizeSizeSelection(label);
+  };
+  const options = group?.options || [];
+  if (preferLabel) {
+    const same = options.find((option) => usable(option) && selectionOptionLabel(option) === preferLabel);
+    if (same) return same;
+  }
+  return options.find(usable) || null;
+}
+
 export function preparedSpecGroups(groups) {
-  return dropDrawingGroup(dropXpsGrade(mergeSlabCustomize(mergeVinylType(groups)))).filter(
-    (group) => group?.field === "length" || (group?.options || []).length > 0
+  return dropDrawingGroup(dropXpsGrade(mergeShoeCustomize(mergeSlabCustomize(mergeVinylType(groups))))).filter(
+    (group) => group?.field || (group?.options || []).length > 0
   );
 }
 
-export function initialSpecPicks(groups) {
+function optionMatchesWanted(option, wanted) {
+  const selected = String(wanted || "");
+  if (!selected) return false;
+  const key = selectionOptionKey(option);
+  const label = selectionOptionLabel(option);
+  return key === selected || label === selected || key.endsWith(`::${selected}`);
+}
+
+export function initialSpecPicks(groups, preferred) {
   const picked = {};
+  const prefer = preferred && typeof preferred === "object" ? preferred : {};
   for (const group of groups || []) {
-    const option = (group.options || []).find((option) => !option?.parent || option.parent === picked[group.dependsOn]);
-    picked[group.id] = group.field ? "" : selectionOptionKey(option);
+    if (group.field) {
+      picked[group.id] = "";
+      continue;
+    }
+    if (!specGroupApplies(group, picked)) continue;
+    const parent = group.dependsOn ? picked[group.dependsOn] : "";
+    const usable = (option) => (!option?.parent || option.parent === parent) && (!option?.with || option.with === picked?.[option.withGroup]);
+    const standard = (option) => !isCustomSelection(selectionOptionLabel(option)) && !isCustomizeSizeSelection(selectionOptionLabel(option));
+    const wanted = prefer[group.id];
+    const option = (group.options || []).find((item) => usable(item) && standard(item) && optionMatchesWanted(item, wanted))
+      || (group.options || []).find((item) => usable(item) && standard(item));
+    if (option) picked[group.id] = selectionOptionKey(option);
   }
   return picked;
+}
+
+/** The product's own first listed combination, then the first option under that parent. */
+export function openingSpecPicks(product) {
+  const groups = preparedSpecGroups(product?.specGroups);
+  const first = (product?.specChoices || []).find((choice) => choice?.picks && Object.keys(choice.picks).length);
+  return initialSpecPicks(groups, first?.picks);
 }
 
 export function resolveSelection(product, line) {
@@ -157,34 +238,64 @@ export function resolveSelection(product, line) {
   const groups = preparedSpecGroups(product.specGroups);
   const byId = new Map(groups.map((group) => [group.id, group]));
   const invalid = Object.keys(picks).filter((id) => !byId.has(id));
+  const customPending = [];
+  const corrected = { ...picks };
   for (const group of groups) {
-    const value = picks[group.id];
+    const value = corrected[group.id];
     if (group.field) {
-      if (value && !(Number(value) > 0 && Number.isFinite(Number(value)))) invalid.push(group.id);
+      const parent = group.dependsOn ? corrected[group.dependsOn] : "";
+      const required = isCustomizeSizeSelection(parent);
+      const numberOk = Number(value) > 0 && Number.isFinite(Number(value));
+      if ((required && !numberOk) || (value && !numberOk)) invalid.push(group.id);
       continue;
     }
-    const option = findPickedSpecOption(group, picks);
-    if (!option || isCustomSelection(selectionOptionLabel(option))) invalid.push(group.id);
+    if (!groupHasMatchingOption(group, corrected)) continue;
+    const option = findPickedSpecOption(group, corrected);
+    if (!option) {
+      // Empty, or a listed option from another size/thickness, follows the current parent.
+      // A saved option that no longer exists stays invalid.
+      const known = value && (group.options || []).find((item) => selectionOptionKey(item) === value || selectionOptionLabel(item) === value);
+      if (!value || known) {
+        const fallback = standardOptionForParent(group, corrected, known ? selectionOptionLabel(known) : "");
+        if (fallback) {
+          corrected[group.id] = selectionOptionKey(fallback);
+          continue;
+        }
+      }
+      if (!isCustomOnlyGroup(group, corrected)) invalid.push(group.id);
+    } else if (optionNeedsCustomForm(group, option)) {
+      customPending.push(group.id);
+    }
   }
   const size = normalizePickedSize(line?.pickedSize);
   const choices = splitSizeChoices(product.sizeDesc || product.primarySpec);
-  if (size && (isCustomSelection(size) || (choices.length ? !choices.includes(size) : size !== String(product.sizeDesc || "").trim()))) invalid.push("size");
+  if (size && isCustomSelection(size)) customPending.push("size");
+  else if (size && (choices.length ? !choices.includes(size) : size !== String(product.sizeDesc || "").trim())) invalid.push("size");
   if (invalid.length) return { ok: false, error: "selection_invalid", invalidGroups: [...new Set(invalid)] };
-  const chosen = selectedProduct({ ...product, specGroups: groups }, line);
+  if (customPending.length) return { ok: false, error: "custom_required", invalidGroups: [...new Set(customPending)] };
+  const nextLine = { ...line, pickedSpecs: normalizePickedSpecs(corrected) || line?.pickedSpecs || null };
+  const chosen = selectedProduct({ ...product, specGroups: groups }, nextLine);
   const minimum = Math.max(1, Number(chosen.moq) || 1);
   if (!Number.isInteger(Number(line?.qty)) || Number(line.qty) < minimum) return { ok: false, error: "moq", minimum };
-  const selectionSnapshot = snapshotSelection({ ...product, specGroups: groups }, line);
-  return { ok: true, product: chosen, line: { ...line, lineId: lineReference(line), selectionSnapshot } };
+  const selectionSnapshot = snapshotSelection({ ...product, specGroups: groups }, nextLine);
+  return { ok: true, product: chosen, line: { ...nextLine, lineId: lineReference(nextLine), selectionSnapshot } };
 }
 
-export function selectionMessage(error, lang = "zh", minimum) {
+export function selectionMessage(error, lang = "zh", minimum, invalidGroups) {
+  const missing = invalidGroups || [];
+  if (error === "selection_invalid" && missing.length && missing.every((id) => id === "mesh-width" || id === "mesh-length")) {
+    return lang === "en" ? "Enter the width and length." : "請填寫闊度及長度。";
+  }
+  if (error === "custom_required") {
+    return lang === "en" ? "Enter the custom specification before submitting." : "請填寫自訂規格後再提交。";
+  }
   const messages = lang === "en" ? {
-    selection_invalid: "Product options have changed. Please reselect before submitting.",
+    selection_invalid: "Choose one of the available specifications.",
     moq: "The minimum quantity has changed. Confirm your quantity before submitting.",
     catalog_unavailable: "We could not verify the latest product options. Your draft is saved; please retry.",
     unavailable: "This product can no longer be ordered. Your draft is saved.",
   } : {
-    selection_invalid: "商品規格已更新，請重新選擇後再提交。其他有效資料已保留。",
+    selection_invalid: "請選擇目前提供的規格。",
     moq: "最低購買量已更新，請確認並調整數量後再提交。",
     catalog_unavailable: "暫時無法核對最新商品資料，草稿已保留，請重試。",
     unavailable: "此商品暫時無法訂購，草稿已保留。",

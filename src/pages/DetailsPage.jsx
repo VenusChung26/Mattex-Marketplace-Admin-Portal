@@ -1,4 +1,5 @@
-import { findSelectionLine, resolveSelection, selectedProduct, selectionMessage } from "../lib/productSelection.js";
+import { findSelectionLine, initialSpecPicks, openingSpecPicks, preparedSpecGroups, resolveSelection, selectedProduct, selectionMessage } from "../lib/productSelection.js";
+import { migratePickedSpecs, searchSpecPicks } from "../lib/specSearch.js";
 import { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import CopyLinkButton from "../components/CopyLinkButton";
@@ -7,16 +8,17 @@ import SiteFooter from "../components/SiteFooter";
 import Seo, { breadcrumbJsonLd, orgJsonLd, productJsonLd } from "../components/Seo";
 import ProductPrice from "../components/ProductPrice";
 import ProductRating from "../components/ProductRating";
-import { FallbackImage, ProductActions, ProductBadges, ProductImage, QtyStepper, SizeChoicePicker, SpecGroupPicker, sectionNameFromLabels } from "../components/ProductCard";
+import { ProductActions, ProductBadges, ProductImage, QtyStepper, ShopCategoryLinks, SizeChoicePicker, SpecGroupPicker, sectionNameFromLabels, sortMembersAscending } from "../components/ProductCard";
 import CartToast from "../components/CartToast";
 import { productImageList } from "../lib/compressImage";
-import { buyerPurposes, displayUnit, isColorLabel, isLeadSpec, looksLikeSize, lowerDeliveryQty, pickedSpecFields, productImageUrl, specParts } from "../lib/productFields";
+import { buyerPurposes, displayUnit, looksLikeSize, lowerDeliveryQty, pickedSpecFields, productImageUrl } from "../lib/productFields";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { bootProduct } from "../lib/bootPage";
 import { staffCertText, staffPrimaryText, staffRemarkText, staffSizeText } from "../lib/editedProductText";
 import { groupOf, useCatalogGroups } from "../lib/catalogGroups";
 import { groupSizeChoices, localizeSpecText, optionLabels, sharedOptionPrefix, shopTitle, stripOptionPrefix } from "../lib/catalogGroup";
+import { HOMOGENOUS_REFERENCES, homogenousColorOption } from "../lib/homogenousColors";
 import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
 import { usePromo } from "../lib/promo";
@@ -29,12 +31,14 @@ import {
   fetchProductLive,
   isProductOrderBlocked,
   catalogPathForCategory,
-  displayLeadTime,
+  CATEGORY_LIST_PAUSED,
   getEffectivePrice,
   getProduct,
   isBuyerVisible,
   productSkuId,
   productDescriptionText,
+  shopCategoryTrail,
+  certStandardLines,
   specificationRows,
   stockStatusKey,
   supplierDisplayName,
@@ -78,6 +82,84 @@ function DetailLine({ label, children, className = "" }) {
   );
 }
 
+function ProductSlides({ slides, alt, lang, fallback = "" }) {
+  const slideKey = slides.join("|");
+  const [index, setIndex] = useState(0);
+  const [seenKey, setSeenKey] = useState(slideKey);
+  const keyChanged = seenKey !== slideKey;
+  if (keyChanged) {
+    setSeenKey(slideKey);
+    setIndex(0);
+  }
+  const safe = slides.length ? Math.min(keyChanged ? 0 : index, slides.length - 1) : 0;
+  const src = slides[safe] || "";
+  if (slides.length < 2) {
+    return (
+      <ProductImage
+        src={src}
+        fallback={fallback}
+        alt={alt}
+        className="block w-full"
+        imgClassName="block w-full h-auto"
+      />
+    );
+  }
+  const step = (delta) => setIndex((current) => (current + delta + slides.length) % slides.length);
+  return (
+    <div className="relative">
+      <img src={src} alt={alt} decoding="async" fetchPriority="high" className="block aspect-square w-full object-cover" />
+      <button
+        type="button"
+        aria-label={lang === "zh" ? "上一張" : "Previous image"}
+        className="fab-round absolute left-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center bg-white/90 text-brand-800 shadow"
+        onClick={() => step(-1)}
+      >
+        <svg viewBox="0 0 20 20" className="h-5 w-5" aria-hidden="true">
+          <path d="M12.5 4.5 7 10l5.5 5.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        aria-label={lang === "zh" ? "下一張" : "Next image"}
+        className="fab-round absolute right-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center bg-white/90 text-brand-800 shadow"
+        onClick={() => step(1)}
+      >
+        <svg viewBox="0 0 20 20" className="h-5 w-5" aria-hidden="true">
+          <path d="M7.5 4.5 13 10l-5.5 5.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <div className="absolute bottom-3 left-0 right-0 z-10 flex justify-center">
+        <div className="flex gap-1.5 rounded-full bg-black/35 px-2 py-1.5">
+          {slides.map((slide, slideIndex) => (
+            <button
+              key={`${slide}:${slideIndex}`}
+              type="button"
+              aria-label={lang === "zh" ? `第 ${slideIndex + 1} 張` : `Image ${slideIndex + 1}`}
+              aria-current={slideIndex === safe ? "true" : undefined}
+              className={`fab-round h-2 w-2 ${slideIndex === safe ? "bg-white" : "bg-white/45"}`}
+              onClick={() => setIndex(slideIndex)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function specPicksFor(product, line, pickLabel) {
+  const shown = preparedSpecGroups(product?.specGroups);
+  if (line?.pickedSpecs) return migratePickedSpecs(shown, line.pickedSpecs);
+  if (!pickLabel) return openingSpecPicks(product);
+  return searchSpecPicks(product, pickLabel) || openingSpecPicks(product);
+}
+
+function certRows(product, label) {
+  const fromSpecs = specificationRows(product).filter((row) => row.kind === "cert" && row.lines?.length);
+  if (fromSpecs.length) return fromSpecs.map((row) => ({ key: "cert", label, value: row.lines }));
+  const standard = staffCertText(product) || String(product?.standard || "").trim();
+  return standard ? [{ key: "cert", label, value: standard }] : [];
+}
+
 export default function DetailsPage() {
   const { id } = useParams();
   const [params, setSearchParams] = useSearchParams();
@@ -88,16 +170,21 @@ export default function DetailsPage() {
   const editingLine = editRef ? findSelectionLine(getDraft().lines, editRef) : null;
   const navigate = useNavigate();
   const group = groupOf(product?.id);
-  const variantOptions = (group?.members || [])
-    .map((member) => ({ ...member, product: getProduct(member.productId) }))
-    .filter((member) => member.product && isBuyerVisible(member.product));
+  const variantOptions = sortMembersAscending(
+    (group?.members || [])
+      .map((member) => ({ ...member, product: getProduct(member.productId) }))
+      .filter((member) => member.product && isBuyerVisible(member.product))
+  );
   const sizeChoices = groupSizeChoices(variantOptions);
   const offline = Boolean(product && isProductOrderBlocked(product.id));
   const orderLock = useRef(false);
   const { t, lang } = useLanguage();
   usePromo();
   const [qty, setQty] = useState(1);
-  const [pickedSpecs, setPickedSpecs] = useState(null);
+  const shown = preparedSpecGroups(product?.specGroups);
+  const shownKey = shown.map((group) => `${group.id}:${(group.options || []).length}`).join("|");
+  const pickLabel = params.get("pick") || "";
+  const [pickedSpecs, setPickedSpecs] = useState(() => specPicksFor(product, editingLine, pickLabel));
   const [sizeChoice, setSizeChoice] = useState("");
   const pickedFields = pickedSpecFields(product?.specGroups, pickedSpecs || {}, product?.specChoices);
   const orderMoq = Math.max(1, Number(pickedFields.moq != null && pickedFields.moq !== "" ? pickedFields.moq : product?.moq) || 1);
@@ -111,16 +198,33 @@ export default function DetailsPage() {
   const autoOpenTailor = params.get("tailor") === "1";
   const gallery = productImageList(product);
   const [activeImage, setActiveImage] = useState(gallery[0] || product?.image || "");
+  const colorTile = homogenousColorOption(product?.specGroups, pickedSpecs);
+  const colorReferences = colorTile?.references?.length ? colorTile.references : HOMOGENOUS_REFERENCES;
+  const slides = colorTile?.image
+    ? [colorTile.image, ...colorReferences]
+    : activeImage && !gallery.includes(activeImage)
+      ? [activeImage, ...gallery.filter((src) => src !== activeImage)]
+      : gallery.length
+        ? gallery
+        : [activeImage || product?.image || ""].filter(Boolean);
 
   // Only reset picks when navigating to another product. Catalog refresh rebuilds
   // product.images/image references and must not wipe the buyer's selections.
   useEffect(() => {
-    setPickedSpecs(editingLine?.pickedSpecs || null);
+    setPickedSpecs(specPicksFor(product, editingLine, params.get("pick") || ""));
     setSizeChoice(editingLine?.pickedSize || "");
     setQty(editingLine?.qty || product?.moq || 1);
     const next = productImageList(product);
     setActiveImage(next[0] || product?.image || "");
-  }, [product?.id, editRef]);
+  }, [product?.id, editRef, pickLabel]);
+
+  useEffect(() => {
+    if (editingLine || !shown.length) return;
+    setPickedSpecs((current) => {
+      if (current && Object.keys(current).length) return current;
+      return specPicksFor(product, null, pickLabel);
+    });
+  }, [shownKey, editingLine]);
 
   useEffect(() => {
     if (params.get("tailor") !== "1") return;
@@ -150,13 +254,14 @@ export default function DetailsPage() {
   const discontinued = Boolean(product.discontinued);
   const priced = !discontinued && canDirectBuy(selectedProduct(product, { pickedSpecs, pickedSize: sizeChoice }));
   const priceStatus = getEffectivePrice(selectedProduct(product, { pickedSpecs, pickedSize: sizeChoice })).status;
-  const priceHint =
-    priceStatus === "quoted"
+  const priceHint = discontinued
+    ? t("discontinuedHint")
+    : priceStatus === "quoted"
       ? `${t("quotedBuyHint")} ${t("requestQuoteHint")}`
       : priceStatus === "expired-requote"
         ? t("quotedPriceExpiredRequote")
         : priced
-          ? t("requestQuoteHint")
+          ? ""
           : t("requestQuoteOnlyHint");
   const viewProduct = {
     ...selectedProduct(product, { pickedSpecs, pickedSize: sizeChoice }),
@@ -168,52 +273,30 @@ export default function DetailsPage() {
     leadTimeLabel: pickedFields.leadTimeLabel || (pickedFields.leadTime ? "" : product.leadTimeLabel),
   };
   const minQty = orderMoq;
-  const leadTime = displayLeadTime(viewProduct, lang) || "—";
   const unitLabel = displayUnit(viewProduct.unit || viewProduct.salesUnit, lang);
   const pickedDetail = pickedFields.detail;
   const pickedSize = pickedDetail && looksLikeSize(pickedDetail) ? pickedDetail : "";
-  const description = pickedFields.summary || (pickedDetail && !pickedSize ? pickedDetail : "") || productDescriptionText(product);
+  const summaryText = String(pickedFields.summary || "").trim();
+  const summaryLines = summaryText.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  const summaryIsSizeList = summaryLines.length > 0 && summaryLines.every((line) => looksLikeSize(line));
+  const description = (summaryText && !summaryIsSizeList ? summaryText : "")
+    || (pickedDetail && !pickedSize ? pickedDetail : "")
+    || productDescriptionText(product);
+  const orderStandard = certStandardLines(staffCertText(product) || product.standard || "");
   const facts = [
-    { label: t("productNo"), value: pickedFields.sku || productSkuId(viewProduct) || product.id.toUpperCase() },
     {
       label: t("stockStatus"),
       value: discontinued ? t("discontinued") : t(stockStatusKey(product.stockStatus)),
       pill: true,
       tone: discontinued ? "bg-[#f8e8e8] text-[#8a2b2b]" : STOCK_TONE[product.stockStatus] || STOCK_TONE.in_stock,
     },
-    { label: t("moq"), value: `${viewProduct.moq} ${unitLabel}`.trim() },
     unitLabel ? { label: t("salesUnit"), value: unitLabel } : null,
-    { label: t("leadTime"), value: leadTime },
-    { label: t("standard"), value: staffCertText(product) || product.standard },
+    orderStandard.length ? { label: t("standard"), value: orderStandard } : null,
   ].filter(Boolean);
-  const sizeText = staffSizeText(product);
-  const shownSizeText = pickedFields.summary && pickedDetail
-    ? pickedDetail
-    : pickedSize
-      ? pickedSize
-      : sizeText && !isColorLabel(sizeText)
-        ? sizeText
-        : "";
-  const primaryText = staffPrimaryText(product);
+  const shownSizeText = "";
+  const primaryText = "";
   const remarkText = staffRemarkText(product);
-  const specRows = specificationRows(viewProduct)
-    .filter((row) => row.kind === "cert" || !isLeadSpec(row.text))
-    .map((row) => {
-      if (row.kind === "cert") return { key: "cert", label: t("cert"), value: row.lines };
-      const parts = specParts(row.text, lang);
-      return { key: row.text, label: parts.label, value: parts.value };
-    })
-    .filter((row) => {
-      const sizeLabel = lang === "zh" ? "尺寸" : "Size";
-      return !(row.label === sizeLabel && isColorLabel(row.value));
-    });
-  if (pickedDetail) {
-    const sizeLabel = lang === "zh" ? "尺寸" : "Size";
-    const index = specRows.findIndex((row) => row.label === sizeLabel);
-    const next = { key: `detail:${pickedDetail}`, label: sizeLabel, value: pickedDetail };
-    if (index >= 0) specRows[index] = next;
-    else specRows.unshift(next);
-  }
+  const specRows = certRows(viewProduct, t("cert"));
 
   const purposes = buyerPurposes(product, lang);
 
@@ -273,43 +356,34 @@ export default function DetailsPage() {
           <Link to={allProductsTo(lang)} className="hover:text-brand-600">
             {t("catalog")}
           </Link>
-          <span className="mx-2 text-line">/</span>
-          <Link to={`${withLocale(lang, catalogPathForCategory(product.category))}#catalog-top`} className="relative z-10 hover:text-brand-600">
-            {product.category}
-          </Link>
+          {shopCategoryTrail(product).length ? (
+            shopCategoryTrail(product).map((node) => (
+              <span key={node.id}>
+                <span className="mx-2 text-line">/</span>
+                <Link to={`${withLocale(lang, `/catalog/${node.id}`)}#catalog-top`} className="relative z-10 hover:text-brand-600">
+                  {node.name}
+                </Link>
+              </span>
+            ))
+          ) : CATEGORY_LIST_PAUSED ? null : (
+            <>
+              <span className="mx-2 text-line">/</span>
+              <Link to={`${withLocale(lang, catalogPathForCategory(product.category))}#catalog-top`} className="relative z-10 hover:text-brand-600">
+                {product.category}
+              </Link>
+            </>
+          )}
         </nav>
 
-        <div className="grid lg:grid-cols-2 gap-8 lg:gap-12">
-          <div className="relative self-start w-full overflow-hidden rounded-xl border border-line bg-brand-50 lg:sticky lg:top-28">
+        <div className="grid lg:grid-cols-[minmax(0,480px)_minmax(0,1fr)] gap-8 lg:gap-12">
+          <div className="relative self-start w-full lg:max-w-[480px] overflow-hidden rounded-xl border border-line bg-brand-50 lg:sticky lg:top-28">
             <ProductBadges product={product} />
-            <ProductImage
-              src={activeImage || productImageUrl(product)}
-              fallback={activeImage === product.image ? product.imageFallback : ""}
+            <ProductSlides
+              slides={slides}
               alt={shopTitle(product)}
-              className="block w-full"
-              imgClassName="block w-full h-auto"
+              lang={lang}
+              fallback={slides[0] === product.image ? product.imageFallback : ""}
             />
-            {gallery.length > 1 ? (
-              <div className="flex gap-2 overflow-x-auto bg-white border-t border-line px-3 py-2">
-                {gallery.map((src) => (
-                  <button
-                    key={src}
-                    type="button"
-                    className={`h-14 w-14 shrink-0 overflow-hidden border ${
-                      src === activeImage ? "border-brand-600" : "border-line"
-                    }`}
-                    onClick={() => setActiveImage(src)}
-                  >
-                    <FallbackImage
-                      src={src}
-                      fallback={src === product.image ? product.imageFallback : ""}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
-                  </button>
-                ))}
-              </div>
-            ) : null}
             <p className="px-3 py-2 text-[11px] leading-snug text-mute bg-white border-t border-line">
               {t("specSubjectToQuote")}
             </p>
@@ -317,11 +391,15 @@ export default function DetailsPage() {
 
           <div className="reveal">
             <div className="flex items-center justify-between gap-3">
+              {shopCategoryTrail(product).length ? (
+                <ShopCategoryLinks product={product} lang={lang} className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-600" />
+              ) : CATEGORY_LIST_PAUSED ? null : (
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-600">
                 <Link to={`${withLocale(lang, catalogPathForCategory(product.category))}#catalog-top`} className="relative z-10 hover:underline">
                   {product.category}
                 </Link>
               </p>
+              )}
               <CopyLinkButton path={path} />
             </div>
             <h1 className="mt-2 font-display text-3xl sm:text-4xl font-semibold text-brand-800 leading-tight">
@@ -339,8 +417,9 @@ export default function DetailsPage() {
             ) : null}
             {product.specGroups?.length || Object.keys(pickedSpecs || {}).length ? (
               <SpecGroupPicker
-                    value={pickedSpecs}
-                key={product.id}
+                value={editingLine || pickLabel ? pickedSpecs : undefined}
+                seed={product.specChoices?.[0]?.picks}
+                key={`${product.id}:${pickLabel}`}
                 groups={product.specGroups}
                 className="mt-4"
                 onImage={setActiveImage}
@@ -399,7 +478,7 @@ export default function DetailsPage() {
             {editingLine ? (
               <div className="mb-3 space-y-2 rounded border border-amber-200 bg-amber-50 p-3 text-sm">
                 <p>{lang === "en" ? "Review this draft line and apply your selection." : "請重新選擇此行規格，再套用至草稿。"}</p>
-                {!selectionStatus.ok ? <p role="alert">{selectionMessage(selectionStatus.error, lang, orderMoq)}</p> : null}
+                {!selectionStatus.ok ? <p role="alert">{selectionMessage(selectionStatus.error, lang, orderMoq, selectionStatus.invalidGroups)}</p> : null}
                 {selectionStatus.invalidGroups?.includes("size") && !sizeChoices.length ? (
                   <button type="button" className="underline" onClick={() => setSizeChoice("")}>
                     {lang === "en" ? "Confirm current standard size" : "確認目前標準尺寸"}
@@ -439,6 +518,10 @@ export default function DetailsPage() {
             </p>
             <ProductRating product={product} size="lg" className="mt-2" />
             <ProductPrice product={viewProduct} size="detail" />
+            <p className="mt-3 max-w-prose text-sm leading-relaxed text-ink">
+              <span className="block font-medium">{t("companyPriceAsk")}</span>
+              <span className="mt-1 block text-mute">{t("companyPriceAskHint")}</span>
+            </p>
             <div className="mt-4 hidden lg:block">
               {discontinued ? (
                 <span className="inline-flex items-center bg-[#f8e8e8] text-[#8a2b2b] text-xs font-bold uppercase tracking-wide px-3 py-2">
@@ -463,14 +546,14 @@ export default function DetailsPage() {
                 </>
               )}
             </div>
-            <p className="mt-3 text-xs text-mute leading-relaxed max-w-prose">
-              {discontinued ? t("discontinuedHint") : priceHint}
-            </p>
             {description ? (
               <>
-                <h2 className="mt-8 text-sm font-semibold text-ink">{t("description")}</h2>
-                <p className="mt-3 text-sm text-mute leading-relaxed">{description}</p>
+                <h2 className="mt-6 text-sm font-semibold text-ink">{t("description")}</h2>
+                <p className="mt-3 text-sm text-mute leading-relaxed whitespace-pre-line">{description}</p>
               </>
+            ) : null}
+            {priceHint ? (
+              <p className="mt-3 text-xs text-mute leading-relaxed max-w-prose">{priceHint}</p>
             ) : null}
             {shownSizeText ? (
               <>
@@ -508,6 +591,12 @@ export default function DetailsPage() {
                   <DetailLine key={row.label} label={row.label}>
                     {row.pill ? (
                       <span className={`inline-flex px-2 py-0.5 text-xs font-semibold ${row.tone}`}>{row.value}</span>
+                    ) : Array.isArray(row.value) ? (
+                      row.value.map((line, index) => (
+                        <span key={`${line}:${index}`} className="block">
+                          {line}
+                        </span>
+                      ))
                     ) : (
                       row.value
                     )}

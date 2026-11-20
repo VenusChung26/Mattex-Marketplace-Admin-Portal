@@ -13,6 +13,15 @@ export function sellingAmount(product) {
   return finiteNumber(product?.unit_price);
 }
 
+const LIST_PRICE_UPLIFT_HKD = 5;
+
+/** Buyer price for a positive list price. Unpriced goods stay unpriced. */
+export function buyerListPrice(amount) {
+  const n = finiteNumber(amount);
+  if (n == null || n <= 0) return n;
+  return Math.round((n + LIST_PRICE_UPLIFT_HKD) * 100) / 100;
+}
+
 function requestPriceLabel(lang) {
   if (lang === "zh" || lang === "en") return lang === "zh" ? "價格待定" : "Price Upon Request";
   try {
@@ -67,6 +76,7 @@ const LEAD_TIME_ZH = {
   "20 days": "20 日",
   "Normally 5 days to Hongkong": "一般 5 日到香港",
   "Around 7 days to Hongkong": "約 7 日到香港",
+  "From 4 days.": "最快 4 日起。",
   "As customer's requirement": "按客戶要求",
   "14 days, Urgent service available": "14 日，可加急",
   "Logistics to the site 2-3 days": "送到工地 2–3 日",
@@ -79,7 +89,9 @@ const LEAD_TIME_ZH = {
   "FOB for Ningbo & Shanghai; Or CIF for Port of Hong Kong": "寧波及上海 FOB，或香港港 CIF",
   "EXW in Shenzhen , Transport to Hong Kong to be separate": "深圳出廠，運到香港另計",
   "Self-pickup within the factory, loading assistance, excluding unloading (excluding freight); Delivery at the project site, including unloading (including freight)":
-    "工廠自取，協助裝貨，不包括卸貨（不包括運費）；送到工地並包括卸貨（包括運費）",
+    "工廠自取：包裝貨，運費另計。送到工地：包運費同卸貨。",
+  "Factory pickup: loading included, freight extra. Site delivery includes freight and unloading.":
+    "工廠自取：包裝貨，運費另計。送到工地：包運費同卸貨。",
 };
 
 /** Buyer-facing lead time. Stored text stays English. */
@@ -124,9 +136,19 @@ export function specParts(text, lang) {
       return { label, value: custom[2].trim() };
     }
   }
-  const cover = raw.match(/^~?\s*([\d.]+)\s*kg\/m²\/mm thick$/i);
-  if (cover && locale === "zh") return { label: "", value: `用量約 ${cover[1]} 公斤／平方米／毫米厚` };
-  return { label: "", value: raw };
+  const cover = raw.match(/^~?\s*([\d.]+)\s*kg\s*\/\s*m(?:²|2)\s*\/\s*mm thick$/i);
+  if (cover) {
+    return locale === "zh"
+      ? { label: "用量", value: `約 ${cover[1]} 公斤／平方米／毫米厚` }
+      : { label: "Coverage", value: raw };
+  }
+  if (isColorLabel(raw)) {
+    return { label: locale === "zh" ? "顏色" : "Colour", value: raw };
+  }
+  if (looksLikeSize(raw)) {
+    return { label: SPEC_LABEL[locale].size, value: raw };
+  }
+  return { label: locale === "zh" ? "規格" : "Specification", value: raw };
 }
 
 /** The selected spec option's own product detail, stored on the option. The option name is not a size. */
@@ -147,15 +169,30 @@ function optionFacts(option) {
   return facts;
 }
 
+/** A group with `when` is only in play for those parent picks. */
+export function specGroupApplies(group, picked = {}) {
+  if (!group?.dependsOn || !Array.isArray(group.when) || !group.when.length) return true;
+  const parent = String(picked?.[group.dependsOn] || "");
+  return group.when.some((value) => String(value) === parent);
+}
+
+/** A dependent option stays visible only for its parent, and for its paired group when it has one. */
+export function specOptionFits(option, picked, group) {
+  if (!option || typeof option !== "object") return true;
+  const parent = group?.dependsOn ? String(picked?.[group.dependsOn] || "") : "";
+  if (option.parent && parent && String(option.parent) !== parent) return false;
+  if (option.with) return String(picked?.[option.withGroup] || "") === String(option.with);
+  return true;
+}
+
 /** Resolve repeated labels against the current upstream option, on screen and at submission. */
 export function findPickedSpecOption(group, picked = {}) {
   const selected = String(picked[group?.id] || "");
   if (!selected) return null;
-  const parent = group?.dependsOn ? picked[group.dependsOn] : "";
   return (group.options || []).find((item) => {
     const key = item && typeof item === "object" ? String(item.key || item.label || "") : String(item || "");
     const label = item && typeof item === "object" ? String(item.label || "") : String(item || "");
-    return (key === selected || label === selected) && (!item?.parent || item.parent === parent);
+    return (key === selected || label === selected) && specOptionFits(item, picked, group);
   }) || null;
 }
 
@@ -187,10 +224,14 @@ export function pickedSpecFields(groups, picked = {}, choices = []) {
     }
     if (!conflict && score > 0) ranked.push({ item, score });
   }
-  ranked.sort((a, b) => b.score - a.score);
+  ranked.sort((a, b) => b.score - a.score || choiceCompleteness(b.item) - choiceCompleteness(a.item));
   const top = ranked.filter((entry) => entry.score === ranked[0]?.score);
   if (top.length === 1) return { ...found, ...optionFacts(top[0].item) };
   if (top.length > 1) {
+    const richest = [...top].sort((a, b) => choiceCompleteness(b.item) - choiceCompleteness(a.item));
+    if (choiceCompleteness(richest[0].item) > choiceCompleteness(richest[1].item)) {
+      return { ...found, ...optionFacts(richest[0].item) };
+    }
     const detailed = top.filter((entry) => String(entry.item.detail || "").trim());
     const skus = [...new Set(detailed.map((entry) => String(entry.item.sku || "").trim()).filter(Boolean))];
     const picked = detailed.length === 1 ? detailed[0] : skus.length === 1 ? detailed.find((entry) => entry.item.sku) : null;
@@ -201,22 +242,37 @@ export function pickedSpecFields(groups, picked = {}, choices = []) {
   return found;
 }
 
+function choiceCompleteness(item) {
+  let score = 0;
+  if (Array.isArray(item?.specs) && item.specs.length) score += 4;
+  if (item?.unit) score += 2;
+  if (item?.moq != null && item.moq !== "") score += 1;
+  if (item?.leadTime || item?.leadTimeLabel) score += 1;
+  const summary = String(item?.summary || "").trim();
+  if (summary && !summary.includes("??")) score += 1;
+  const sku = String(item?.sku || "");
+  if (sku && !/^MKT-LIST-/i.test(sku)) score += 3;
+  return score;
+}
+
 /** A colour name stored as a size, such as Color: Grey. It is an option name, not a dimension. */
 export function isColorLabel(value) {
   return /^colou?r\s*:/i.test(String(value || "").trim());
 }
 
-/** A short dimension, such as 800*800mm Glazed. Longer descriptions stay in 描述. */
+/** A short dimension, such as 800*800mm Glazed or 3" × 6". Longer descriptions stay in 描述. */
 export function looksLikeSize(value) {
   const text = String(value || "").trim();
   if (!text || text.length > 60 || /[。]/.test(text)) return false;
-  return /^\d+(?:\.\d+)?\s*[*x×]\s*\d+/i.test(text);
+  return /^\d+(?:\.\d+)?\s*(?:["”″']|mm|cm|m)?\s*[*x×]\s*\d+/i.test(text);
 }
 
 function specLineKey(line) {
   return String(line || "")
     .trim()
     .replace(/^(size|packing|lead|cert|sales unit|moq|unit\s*\/\s*pallet|units per pallet|pallet)\s*:\s*/i, "")
+    .replace(/[×*]/g, "x")
+    .replace(/m²/gi, "m2")
     .replace(/\s+/g, "")
     .toLowerCase();
 }
@@ -237,7 +293,12 @@ export function buyerSpecSourceLines(product) {
   const described = String(product?.description || "").trim();
   const size = String(product?.sizeDesc || "").trim();
   const sizeValue = size && size !== described ? size : looksLikeSize(described) ? described : looksLikeSize(size) ? size : "";
-  if (sizeValue) add(/^size\s*:/i.test(sizeValue) ? sizeValue : `Size: ${sizeValue}`);
+  if (sizeValue) {
+    const parts = sizeValue.split(/\s*·\s*/).filter(Boolean);
+    if (parts.length <= 1 || !parts.every((part) => seen.has(specLineKey(part)))) {
+      add(/^size\s*:/i.test(sizeValue) ? sizeValue : `Size: ${sizeValue}`);
+    }
+  }
   return lines;
 }
 

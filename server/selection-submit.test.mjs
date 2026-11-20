@@ -17,10 +17,16 @@ const product = { id: "board-test", name: "Board test", category: "Board test", 
     { picks: { thickness: "100mm" }, sku: "BOARD-100", unit_price: 150 },
   ] };
 await writeFile("data/catalog-snapshot.json", JSON.stringify({ etag: "test", products: [product], categories: [] }));
-for (const key of ["SUPABASE_URL", "VITE_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "RFQ_STORE", "VERCEL", "VERCEL_ENV"]) delete process.env[key];
+for (const key of ["SUPABASE_URL", "VITE_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "RFQ_STORE", "VERCEL", "VERCEL_ENV", "RESEND_API_KEY"]) delete process.env[key];
+process.env.SESSION_SECRET = "selection-test-session-secret-32-characters";
 const { handleRfqPost } = await import("../api/rfq.js");
+const { handleContactVerify } = await import("../api/contact-verify.js");
 test.after(async () => { globalThis.fetch = previousFetch; process.chdir(previousCwd); await rm(dir, { recursive: true, force: true }); });
 const request = new Request("http://localhost/api/rfq");
+const sentCode = await handleContactVerify({ action: "send-otp", email: "buyer@example.test", name: "Buyer", lang: "en" }, request);
+const verifiedCode = await handleContactVerify({ action: "verify-otp", email: "buyer@example.test", code: sentCode.body.devCode }, request);
+const trustPair = String(verifiedCode.cookie || "").split(";")[0];
+const trusted = new Request("http://localhost/api/rfq", { headers: { cookie: trustPair } });
 const buyer = { email: "buyer@example.test", name: "Buyer", company: "Company", phone: "12345678" };
 const line = (pick, qty = 2) => ({ productId: product.id, name: "Board", qty, pickedSpecs: { thickness: pick } });
 
@@ -64,7 +70,7 @@ test("採購單按不同商品選擇分行並以各規格售價計價", async ()
   const result = await handleRfqPost({ action: "po_create", buyer, project: "Site", delivery: { address: "HK", date: "N/A" },
     lines: [line("80mm"), line("100mm", 3)] }, request);
   assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(result.body.po.total, 650);
+  assert.equal(result.body.po.total, 675);
   assert.deepEqual(result.body.po.lines.map((l) => [l.sku, l.qty]), [["BOARD-80", 2], ["BOARD-100", 3]]);
 });
 
@@ -75,10 +81,10 @@ test("相依選項顯示文字相同時，伺服器仍按正確上游規格保�
   ]}]};
   await writeFile("data/catalog-snapshot.json",JSON.stringify({products:[dependent]}));
   try {
-    const result=await handleRfqPost({action:"po_create",buyer,project:"Site",delivery:{address:"HK",date:"N/A"},lines:[{productId:product.id,qty:2,pickedSpecs:{type:"B",size:"100"}}]},request);
+    const result=await handleRfqPost({action:"po_create",buyer,project:"Site",delivery:{address:"HK",date:"N/A"},lines:[{productId:product.id,qty:2,pickedSpecs:{type:"B",size:"100"}}]},trusted);
     assert.equal(result.status,200);
     assert.equal(result.body.po.lines[0].sku,"B-100");
-    assert.equal(result.body.po.total,300);
+    assert.equal(result.body.po.total,310);
     assert.equal(result.body.po.lines[0].selectionSnapshot.product.specGroups[1].options[0].parent,"B");
   } finally { await writeFile("data/catalog-snapshot.json",JSON.stringify({products:[product]})); }
 });
@@ -116,7 +122,7 @@ test("買家只修改數量時保留標準規格快照及訂製描述", async ()
 test("所選規格沒有售價時不套用另一規格的售價建立採購單", async () => {
   await writeFile("data/catalog-snapshot.json",JSON.stringify({products:[{...product,specChoices:[{picks:{thickness:"80mm"},unit_price:null}]}]}));
   try {
-    const result=await handleRfqPost({action:"po_create",buyer,project:"Site",delivery:{address:"HK",date:"N/A"},lines:[line("80mm")]},request);
+    const result=await handleRfqPost({action:"po_create",buyer,project:"Site",delivery:{address:"HK",date:"N/A"},lines:[line("80mm")]},trusted);
     assert.equal(result.status,400);
     assert.equal(result.body.error,"no_price");
   } finally { await writeFile("data/catalog-snapshot.json",JSON.stringify({products:[product]})); }

@@ -7,6 +7,7 @@ import { useStore } from "../hooks/useStore";
 import { buildSupplierBankInfo, formatPrice, getProduct, inboxStatus, requestRfqCancelRemote, requestRfqReverseRemote, canBuyerRequestCancel, canBuyerReverse, resubmitRfq, rfqDiscussEmailHref, rfqDiscussWhatsappText, openWhatsappChat, rfqProjectName, createBuyerPurchaseOrderRemote, quoteVersionList, quoteEffectiveVersionNo, getEffectiveQuoteVersion, rfqActivityLog, rfqLastActivity, rfqActivityLabel, formatQuoteVersionStamp, hydrateRfqDecisionActivity, updateBuyerRfqDetails, rfqRequestVersionList, rfqRequestEffectiveVersionNo, applyRfqRequestVersion, ensureBuyerSession } from "../lib/store";
 import { useEffect, useMemo, useRef, useState } from "react";
 import SiteHeader from "../components/SiteHeader";
+import { selectSearchOnFocus } from "../components/SearchSuggestions";
 import Seo from "../components/Seo";
 import { useLanguage } from "../i18n";
 import { withLocale } from "../lib/locale";
@@ -20,7 +21,7 @@ import QuoteVersionSelect, { RfqRequestVersionSelect } from "../components/Quote
 import CustomProductForm from "../components/CustomProductForm";
 import RfqActivityLog from "../components/RfqActivityLog";
 import MyPurchaseOrders from "../components/MyPurchaseOrders";
-import DateField from "../components/DateField";
+import DateField, { todayIso } from "../components/DateField";
 
 function isCodPaymentTerm(value) {
   const raw = String(value || "").toLowerCase();
@@ -170,6 +171,7 @@ function RfqDetailsSummary({ rfq, t, editing = false, onPatch }) {
               <DateField
                 compact
                 className="mt-0.5"
+                min={todayIso()}
                 value={deliveryDate}
                 onChange={setDeliveryDate}
                 onBlur={(iso) => save({ deliveryDate: iso })}
@@ -506,6 +508,7 @@ function RfqDocSwitcher({ list, selectedId, onSelect, onViewQuote, acceptedByRfq
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onFocus={selectSearchOnFocus}
               placeholder={t("searchRfqs")}
               className="w-full border border-line bg-paper/60 px-3 py-1.5 text-sm text-ink"
               autoComplete="off"
@@ -1385,6 +1388,7 @@ function DocStatus({ steps }) {
 }
 
 function PurchaseOrderStep({ rfq, acceptance, po, t, onCreated, onBack }) {
+  const { lang } = useLanguage();
   const [creating, setCreating] = useState(false);
   const created = Boolean(po?.id || po?.status === "created" || po?.confirmedAt);
   const lines = created && po?.lines?.length ? po.lines : acceptance?.lines || [];
@@ -1491,6 +1495,26 @@ function PurchaseOrderStep({ rfq, acceptance, po, t, onCreated, onBack }) {
           </tfoot>
         </table>
       </div>
+
+      <p className="mt-4 text-xs leading-relaxed text-mute">
+        {lang === "en" ? (
+          <>
+            This order is subject to Mattex Asia Development Limited’s Terms and Conditions of Sale (
+            <a href="https://marketplace.mattex.com.hk/" className="underline hover:text-brand-700">
+              https://marketplace.mattex.com.hk/
+            </a>
+            ). Mattex Asia Development Limited reserves the final right of decision on all orders.
+          </>
+        ) : (
+          <>
+            本訂單受 Mattex Asia Development Limited 之《銷售條款及細則》（
+            <a href="https://marketplace.mattex.com.hk/" className="underline hover:text-brand-700">
+              https://marketplace.mattex.com.hk/
+            </a>
+            ）約束。Mattex Asia Development Limited 對所有訂單保留最終決定權。
+          </>
+        )}
+      </p>
 
       <div className="mt-5 flex flex-wrap gap-2">
         <button type="button" className="btn-soft !px-4 !py-2.5" onClick={onBack}>

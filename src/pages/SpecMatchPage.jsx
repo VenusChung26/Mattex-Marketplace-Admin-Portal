@@ -14,7 +14,7 @@ import { withLocale } from "../lib/locale";
 import { scrollToTopNow } from "../lib/jumpTo";
 import { uploadSpecFile } from "../lib/rfqBlob";
 import { clearSpecFiles, loadSpecFiles, saveSpecFile } from "../lib/specMatchFiles";
-import { displayUnit, formatUnitPrice, localizeSpecLine } from "../lib/productFields";
+import { buyerListPrice, displayUnit, formatUnitPrice, localizeSpecLine } from "../lib/productFields";
 import { scrollNodeIntoView } from "../lib/scrollInto";
 import { commitSpecMatch, displayLeadTime, formatQuoteDate, getEffectivePrice, getProduct, isLoggedIn, matchSpecToCatalog, productSkuId, requireBuyerAuth, specificationRows, stockStatusKey, WHATSAPP_HREF } from "../lib/store";
 import { productImageList } from "../lib/compressImage";
@@ -298,7 +298,7 @@ function OfferPrice({ productId, promo, t, lang }) {
   const product = getProduct(productId);
   const offer = findProductOffer(productId, promo);
   const list = product ? getEffectivePrice(product).displayPrice : null;
-  const shown = list != null && offer ? offer.price : list;
+  const shown = list != null && offer ? buyerListPrice(offer.price) : list;
   return (
     <span className="mt-1 block text-sm font-semibold leading-5 text-ink">
       {formatUnitPrice(shown, lang)}
@@ -1650,7 +1650,7 @@ function listPrice(row, promo, lang) {
   if (!match) return "—";
   const offer = findProductOffer(match.productId, promo);
   const list = getEffectivePrice(getProduct(match.productId)).displayPrice;
-  return formatUnitPrice(list != null && offer ? offer.price : list, lang);
+  return formatUnitPrice(list != null && offer ? buyerListPrice(offer.price) : list, lang);
 }
 
 function SpecRowEditor({ row, index, t, promo, lang, setChoice, openDetail, changeQty, chooseSuggestion, openCustom, returnToCatalog, deleteCustom }) {
@@ -1848,7 +1848,6 @@ function MatchFace({ match, current = false, selected = false, t, promo, lang, o
             </span>
             {spec ? <span className="mt-1 block text-sm leading-5 text-mute">{spec}</span> : null}
             {!selected && current ? <span className="mt-1 block text-sm font-semibold leading-5 text-brand-700">{t("specMatchPick")}</span> : null}
-            <span className="mt-1 block text-sm leading-5 text-mute">{moqText(t, match)}</span>
             <OfferPrice productId={match.productId} promo={promo} t={t} lang={lang} />
           </button>
           <button type="button" className="btn-soft shrink-0 !px-3 !py-1.5" onClick={onOpen}>
@@ -1896,10 +1895,7 @@ function ProductDetailDialog({ productId, match, t, onClose }) {
           </div>
         ) : null}
         <dl className="mt-4 divide-y divide-line border-y border-line text-sm">
-          {sku ? <div className="flex justify-between gap-4 py-2"><dt className="text-mute">{t("productNo")}</dt><dd className="font-medium text-ink">{sku}</dd></div> : null}
-          {product ? <div className="flex justify-between gap-4 py-2"><dt className="text-mute">{t("moq")}</dt><dd className="font-medium text-ink">{product.moq} {displayUnit(product.unit, lang)}</dd></div> : null}
           {product ? <div className="flex justify-between gap-4 py-2"><dt className="text-mute">{t("stockStatus")}</dt><dd className="font-medium text-ink">{product.discontinued ? t("discontinued") : t(stockStatusKey(product.stockStatus))}</dd></div> : null}
-          {product && displayLeadTime(product, lang) ? <div className="flex justify-between gap-4 py-2"><dt className="text-mute">{t("leadTime")}</dt><dd className="font-medium text-ink">{displayLeadTime(product, lang)}</dd></div> : null}
         </dl>
         {product ? <div className="mt-4"><ProductPrice product={product} size="detail" /></div> : null}
         {specs.length ? (

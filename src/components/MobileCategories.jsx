@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { useLanguage } from "../i18n";
 import { allProductsTo, withLocale } from "../lib/locale";
+import { selectSearchOnFocus } from "./SearchSuggestions";
 
 const COPY = {
   zh: { all: "全部分類", search: "搜尋分類…", none: "沒有符合的分類", close: "關閉", items: "件" },
@@ -48,6 +49,8 @@ export function CategorySheet({ open, onClose, categories, activeSlug = "", onPi
           <input
             type="search"
             value={query}
+            onMouseDown={selectSearchOnFocus}
+            onFocus={selectSearchOnFocus}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={copy.search}
             aria-label={copy.search}
@@ -57,7 +60,7 @@ export function CategorySheet({ open, onClose, categories, activeSlug = "", onPi
         <ul className="min-h-0 flex-1 divide-y divide-line overflow-y-auto overscroll-contain border-t border-line">
           {shown.map((c) => {
             const active = activeSlug === c.id;
-            const cls = `flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm ${active ? "bg-brand-50 font-semibold text-brand-800" : "text-ink"}`;
+            const cls = `flex w-full items-center justify-between gap-3 py-3 pr-4 text-left text-sm ${c.depth ? "pl-8" : "pl-4"} ${active ? "bg-brand-50 font-semibold text-brand-800" : "text-ink"}`;
             const body = (
               <>
                 <span className="min-w-0 break-words">{c.name}</span>
@@ -95,6 +98,14 @@ export default function MobileCategoryTabs({ categories, activeSlug = "", filter
   const [sheet, setSheet] = useState(false);
   const allActive = !activeSlug;
   const ordered = categories;
+  const sheetCategories = useMemo(() => {
+    const rows = [];
+    for (const category of categories) {
+      rows.push(category);
+      for (const child of category.children || []) rows.push(child);
+    }
+    return rows;
+  }, [categories]);
 
   const chip = (active) =>
     `shrink-0 whitespace-nowrap rounded-none border px-3.5 py-1.5 text-left text-sm ${
@@ -138,7 +149,7 @@ export default function MobileCategoryTabs({ categories, activeSlug = "", filter
       <CategorySheet
         open={sheet}
         onClose={() => setSheet(false)}
-        categories={categories}
+        categories={sheetCategories}
         activeSlug={activeSlug}
         onPick={pickCategory}
         renderLink={

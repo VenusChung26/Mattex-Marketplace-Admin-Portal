@@ -1,16 +1,19 @@
 import { normalizePickedSpecs, normalizePickedSize, selectionKey, lineReference, identifyLine, findSelectionLine, resolveSelection, selectedProduct, snapshotSelection } from "./productSelection.js";
+import { isCustomizeLabel, isCustomizeSizeLabel, isPlainCustomizeLabel, specOptionSearchText } from "./specSearch.js";
 import { collectAttachmentUrls, collectProductImageUrls, fitWhatsappFileLinks, fitWhatsappUrls, publishCustomLineMedia, uploadGuestOrderFiles, uploadRfqPdf } from "./rfqBlob.js";
 import { buildQuotePdf, canSharePdfFile, downloadBlob, sharePdfFile } from "./quotePdf.js";
 import { attachmentSummary, guestOrderError, guestOrderPayload, guestUploadFiles, memberOrderSeed, releaseGuestUploadFiles } from "./guestOrder.js";
 import { fetchQuoteSnapshot, fetchRemoteKv, fetchRemoteRfqs, fetchRfqStamp, fetchSessionState, getRemoteDataReady, isSupabaseConfigured, persistCatalogTables, persistKv, persistKvNow, probeRemoteData, shouldUseLocalSharedStore, subscribeRemoteData } from "./supabasePersist.js";
 import { commitCatalog, getCatalog, getCatalogLive, getHostCatalog, getSharedStore, postAuth, postEmail, postSharedStore, registerRfq, createPurchaseOrderRemote, decideRfqOnServer, assignRfqOnServer, submitQuoteOnServer, freezeWhatsappQuoteOnServer, markWhatsappSentOnServer, syncRfqsFromServer, pushBuyerContent, saveQuoteDraft, saveBuyerPhone, saveGuestFileUrls, createPoFromQuote, verifyProductSelections } from "./remote.js";
 import { adminOrigin, marketplaceOrigin } from "./origins.js";
-import { SHOW_TMS_LINK } from "./flags.js";
+import { SHOW_CONTACT_VERIFY, SHOW_TMS_LINK } from "./flags.js";
 import { activeOfferPrice } from "./offer.js";
 import { normalizeProfileProjects, snapshotRfqRequest, rfqRequestVersionList, activityDedupeKey, applyDecision, applyDeliveredQuoteVersion, buildDeliveredQuoteVersion, freezeQuoteLines, nextQuoteVersionNo, planLoadQuoteVersion, planQuoteSubmit, quoteDraftIsDirty, quoteEffectiveVersionNo, quoteVersionLines, quoteVersionList, snapshotLineImage, canBuyerRequestCancel, canBuyerReverse, getQuoteVersion, inboxStatus, planAssign, planCancelReverse, planDecision, mergeOwned, draftPricesOf, deliveredLinePrices, salesLine, planPoFromQuote, rfqBuyerKind, pushRfqActivity, rfqNeedsSalesReverse } from "./rfqRules.js";
 import { adoptGuestSpecMatch } from "./specMatchSession.js";
 import { foldHan } from "./han.js";
-import { buyerSpecSourceLines, displaySku, isLeadSpec, isTailorMade, localizeLeadTime, orderMinimum, productImageUrl, sellingAmount, specParts } from "./productFields.js";
+import { CATEGORY_LIST_PAUSED } from "./categoryPause.js";
+import { SHOP_CATEGORY_TREE, shopCategoryById, shopCategoryByName, shopCategoryRows } from "./categoryTree.js";
+import { buyerListPrice, buyerSpecSourceLines, displaySku, isLeadSpec, isTailorMade, localizeLeadTime, orderMinimum, productImageUrl, sellingAmount, specParts } from "./productFields.js";
 import { staffCertText } from "./editedProductText.js";
 import { shopTitle, splitSizeChoices } from "./catalogGroup.js";
 import { contactFormFromAccount, normalizeRoles } from "./phone.js";
@@ -52,7 +55,7 @@ const CATEGORY_DEFS = [
   { id: "gypsum-board", name: "石膏板, Gypsum Board", nameEn: "Gypsum Board", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/prod-gypsum-board-yTE7cdxJEiUZTd4YcXl4fWw2HKEGnW.webp", imageFallback: "/assets/prod-gypsum-board.webp", count: 4, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: fire-resistant gypsum board", "Size: 1220×2440", "Thickness: 9.5–15 mm"] },
   { id: "oxygen-chamber", name: "氧氣艙, Oxygen Chamber", nameEn: "Oxygen Chamber", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/type-oxygen-E7iMN59XsJ4tbqMhHuhCwsKDl9jXuq.webp", imageFallback: "/assets/type-oxygen.webp?v=20260929i", count: 9, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: oxygen chamber", "Use: medical / site"] },
   { id: "dowel-bar", name: "傳力桿, Dowel Bar", nameEn: "Dowel Bar", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/type-dowel-adGXPhrAEOjta4wrRko1lxq5WqIOdK.webp", imageFallback: "/assets/type-dowel.webp?v=20260929s", count: 27, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: dowel bar", "Material: mild / stainless steel"] },
-  { id: "paint", name: "油漆, Paint", nameEn: "Paint", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/type-paint-zC2uiIhnAGFI88qOt6YqOCaDnRBBR7.webp", imageFallback: "/assets/type-paint.webp?v=20260929b", count: 30, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: interior / exterior paint"] },
+  { id: "paint", name: "建築飾面, Architectural Finishes", nameEn: "Architectural Finishes", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/type-paint-zC2uiIhnAGFI88qOt6YqOCaDnRBBR7.webp", imageFallback: "/assets/type-paint.webp?v=20260929b", count: 30, unit: "lot", base: 100, supplier: "Mattex", specs: ["Type: interior / exterior paint"] },
   { id: "raised-access-floors", name: "架空地板, Raised Access Floors", nameEn: "Raised Access Floors", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/type-floor-fmker3ir6yXcawi9Z3ZJIJbmlbTdwn.webp", imageFallback: "/assets/type-floor.webp?v=20260929h", count: 17, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: raised access floor"] },
   { id: "aluminum-cladding", name: "鋁板飾面, Aluminum Cladding", nameEn: "Aluminum Cladding", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/type-aluminium-Ka8SsyyIiZlOnAvLvqEoGMocsShYsh.webp", imageFallback: "/assets/type-aluminium.webp?v=20260929b", count: 13, unit: "m²", base: 100, supplier: "Mattex", specs: ["Type: aluminum cladding"] },
   { id: "cable", name: "電線電纜, Cable", nameEn: "Cable", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/type-cable-OY7L8TUjFGRUc4SWXuc2UkJhdH6BAY.webp", imageFallback: "/assets/type-cable.webp?v=20260929b", count: 5, unit: "m", base: 100, supplier: "Mattex", specs: ["Type: power cable"] },
@@ -60,7 +63,65 @@ const CATEGORY_DEFS = [
   { id: "service", name: "Service", nameEn: "Service", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/sensor-WfIUjghJSZFqaEGqeRO4hDGsbexpa9.webp", imageFallback: "/assets/sensor.webp", count: 3, unit: "lot", base: 1800, supplier: "SiteServe Contracting", specs: ["Type: survey / install / inspect", "Scope: labour + report", "Lead: scheduled", "Use: site support"] },
   { id: "computer", name: "Computer", nameEn: "Computer", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/plc-uxgP8fOa1CQepMcKd7VjgY5LGj8CS6.webp", imageFallback: "/assets/plc.webp", count: 3, unit: "pc", base: 920, supplier: "BuildIT Workstations", specs: ["Type: desktop / rugged laptop", "OS: Windows", "Use: site office / BIM", "Warranty: 3 year"] },
   { id: "hardware", name: "Hardware", nameEn: "Hardware", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/gearbox-d0FpzaaMV30SedU8Y4ckkZTOAPCKve.webp", imageFallback: "/assets/gearbox.webp", count: 4, unit: "pack", base: 48, supplier: "FixRight Hardware Co.", specs: ["Type: fixings / tools", "Grade: commercial", "Finish: zinc / stainless", "Use: install"] },
-  { id: "software", name: "Software", nameEn: "Software", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/vfd-bxFvwiHoRWPgXGHCKyDtWyEoTv9lpZ.webp", imageFallback: "/assets/vfd.webp", count: 14, unit: "license", base: 240, supplier: "Mattex", specs: ["Type: construction software / platform", "Term: project / annual", "Use: site management / safety / BIM"] },
+  { id: "software", name: "Software", nameEn: "Software", image: "https://xwwyrgq1kyv6thim.public.blob.vercel-storage.com/catalog/vfd-bxFvwiHoRWPgXGHCKyDtWyEoTv9lpZ.webp", imageFallback: "/assets/vfd.webp", count: 6, unit: "license", base: 240, supplier: "Mattex", specs: ["Type: construction software / platform", "Term: project / annual", "Use: site management / safety / BIM"] },
+  ...[
+    ["shop-artificial", "人工製品, Artificial"],
+    ["shop-bearing", "軸承, Bearing"],
+    ["shop-bollard", "護柱, Bollard"],
+    ["shop-bolt", "螺栓、螺母和墊圈, Bolt, Nut & Washer"],
+    ["shop-ceiling", "天花板, Ceiling"],
+    ["shop-cladding", "面層, Cladding"],
+    ["shop-concrete", "混凝土, Concrete"],
+    ["shop-corner-guard", "護角及護欄, Corner Guard & Bump Rail"],
+    ["shop-cement-sand", "混凝土、水泥及砂, Cement & Sand"],
+    ["shop-door", "門, Door"],
+    ["shop-equipment", "設備, Equipment"],
+    ["shop-expansion-joint", "伸縮縫, Expansion Joint"],
+    ["shop-fender", "擋泥板, Fender"],
+    ["shop-fencing", "圍欄, Fencing"],
+    ["shop-fiberglass", "玻璃纖維/玻璃增強塑料產品, Fiberglass / GRP Products"],
+    ["shop-fire-protection", "防火產品, Fire Protection Products"],
+    ["shop-gabion", "石籠網, Gabion"],
+    ["shop-galvanizing", "熱浸鍍鋅, Hot-Dip Galvanizing"],
+    ["shop-gas", "天然氣, Gas-Industrial"],
+    ["shop-gate", "閘口/閘機/門閘, Gate & Turnstile & Shutters"],
+    ["shop-hardware", "小五金、五金, General Hardware & Ironmongery"],
+    ["shop-geotextile", "土工布, Geotextile / Geosynthetics"],
+    ["shop-glass", "玻璃, Glass & Glazier"],
+    ["shop-laminate", "層壓板, Laminate"],
+    ["shop-manhole-cover", "渠蓋、沙井蓋及格柵, Manhole Cover, Access Hatch Cover & Grating"],
+    ["shop-matting", "防撞墊, Matting"],
+    ["shop-noise-barrier", "隔聲屏障, Noise Barrier"],
+    ["shop-paint", "油漆, Paint"],
+    ["shop-pebbles", "鵝卵石和碎石, Pebbles & Stone Chips"],
+    ["shop-penstock", "閘門, Penstock & Stoplog"],
+    ["shop-plastic", "塑膠製品, Plastic and Rubber Products"],
+    ["shop-polyfoam", "發泡膠, Polyfoam"],
+    ["shop-rock-bolt", "岩釘和土釘, Rock Bolt & Soil Nail"],
+    ["shop-rock-fall", "防落石網, Rock Fall Netting"],
+    ["shop-safety", "安全用品, Safety Products"],
+    ["shop-sanitary", "潔具, Sanitary Fittings"],
+    ["shop-scaffolding", "搭架, Scaffolding"],
+    ["shop-soundproof", "隔音材料, Soundproof Materials"],
+    ["shop-stainless", "不銹鋼製品, Stainless Steel Products"],
+    ["shop-stone", "石材, Stone"],
+    ["shop-mild-steel", "低碳鋼產品, Mild Steel Product"],
+    ["shop-valve", "閥門, Valve"],
+    ["shop-vehicular-parapet", "車輛護欄, Vehicular Parapet"],
+    ["shop-wall-covering", "牆飾面, Wall Covering"],
+    ["shop-petro", "石油, Petro"],
+  ].map(([id, name]) => ({
+    id,
+    name,
+    nameEn: name.split(", ").slice(1).join(", ") || name,
+    image: `/assets/categories/${id}.webp`,
+    imageFallback: `/assets/categories/${id}.webp`,
+    count: 0,
+    unit: "lot",
+    base: 100,
+    supplier: "Mattex",
+    specs: [],
+  })),
 ];
 
 const ALT_SUPPLIERS = {
@@ -245,7 +306,7 @@ function isOrderable(product) {
 }
 
 function readableCertLine(raw) {
-  const line = String(raw || "").replace(/^[\s\-–—]+/, "").replace(/(\S)\(/g, "$1 (").trim();
+  const line = String(raw || "").replace(/^[\s\-–—/]+/, "").replace(/[\s/]+$/, "").replace(/(\S)\(/g, "$1 (").trim();
   if (!line || line === "-") return "";
   if (!/\?{2,}/.test(line)) return line;
   const cleaned = line
@@ -257,16 +318,24 @@ function readableCertLine(raw) {
   return cleaned;
 }
 
-function certificationLines(product) {
+/** Each standard on its own line. "BS EN …" stays together; the next BS, ISO, EN, or slash-separated standard starts a new line. */
+function certStandardLines(value) {
   const seen = new Set();
   const lines = [];
-  for (const raw of String(product?.certifications || "").split(/\n+/)) {
-    const line = readableCertLine(raw);
-    if (!line || seen.has(line)) continue;
-    seen.add(line);
-    lines.push(line);
+  const breakBefore = /(?:\s*\/\s*|[\s\-–—]+)(?=BS\b|(?<!EN )ISO\b|(?<!BS )(?<!DIN )EN\b|ASTM\b|DIN\b|AWS\b|AS\b)/;
+  for (const raw of String(value || "").split(/\n+/)) {
+    for (const bit of String(raw).split(breakBefore)) {
+      const line = readableCertLine(bit);
+      if (!line || seen.has(line)) continue;
+      seen.add(line);
+      lines.push(line);
+    }
   }
   return lines;
+}
+
+function certificationLines(product) {
+  return certStandardLines(product?.certifications);
 }
 
 function specBody(value) {
@@ -288,11 +357,7 @@ function specificationRows(product) {
     seen.add(body);
     if (/^Cert:\s*/i.test(text)) {
       const fromField = certificationLines(product);
-      const fromSpec = text
-        .replace(/^Cert:\s*/i, "")
-        .split(/\n+/)
-        .map((line) => readableCertLine(line))
-        .filter(Boolean);
+      const fromSpec = certStandardLines(text.replace(/^Cert:\s*/i, ""));
       const lines = fromField.length ? fromField : fromSpec;
       if (lines.length) {
         rows.push({ kind: "cert", lines });
@@ -444,7 +509,7 @@ function isQuoteActive(quote) {
 
 function getEffectivePrice(product) {
   if (!product) return { displayPrice: null, status: "none", quote: null };
-  const amount = sellingAmount(product);
+  const amount = buyerListPrice(sellingAmount(product));
   if (amount == null || amount <= 0) return { displayPrice: null, status: "none", quote: null };
   return { displayPrice: amount, status: "list", quote: null };
 }
@@ -477,6 +542,8 @@ function formatQuoteDateShort(iso, lang) {
 
 const CUSTOM_CATEGORIES_KEY = "subbie_custom_categories";
 const CATEGORY_ADMIN_KEY = "subbie_admin_categories";
+let categoryRankCache = new Map();
+let categoryCacheGen = 0;
 
 function getCategoryAdminMeta() {
   const raw = readJson(CATEGORY_ADMIN_KEY, {});
@@ -525,9 +592,6 @@ function categoryAliases(def) {
   if (def?.id === "balustrades") {
     names.push("Metal Access", "金屬通道", "金屬通道, Metal Access", "Guardrails & Balustrades");
   }
-  if (def?.id === "oxygen-chamber") {
-    names.push("Site Facilities", "工地設施", "工地設施, Site Facilities", "Site Equipment & Storage", "工地設備及儲存");
-  }
   if (def?.id === "dowel-bar") {
     names.push("Steel", "鋼材", "鋼材, Steel");
   }
@@ -538,7 +602,19 @@ function categoryAliases(def) {
     names.push("MEP & Utilities", "機電及公用設施", "機電及公用設施, MEP & Utilities", "Electrical & Cabling", "電氣及電纜");
   }
   if (def?.id === "aggregate" || String(def?.name || "").startsWith("石料")) {
-    names.push("Raw Materials", "原材料", "原材料, Raw Materials", "Aggregates", "石料");
+    names.push("Raw Materials", "原材料", "原材料, Raw Materials", "Aggregates", "石料", "石料, Aggregates", "Aggregate 石料", "石料, Aggregate");
+  }
+  if (def?.id === "reinforcement-mesh") {
+    names.push("網", "網, Mesh", "Mesh");
+  }
+  if (def?.id === "tiles") {
+    names.push("磚", "磚, Tile", "Tile");
+  }
+  if (def?.id === "precasted-concrete") {
+    names.push("預製混凝土製品", "預製混凝土製品, Precast Concrete Products", "Precast Concrete Products");
+  }
+  if (def?.id === "software") {
+    names.push("數位與科技服務", "數位與科技服務, Digital & Technology Services", "Digital & Technology Services");
   }
   return [...new Set(names.map((n) => String(n || "").trim()).filter(Boolean))];
 }
@@ -641,64 +717,106 @@ function shopCategoryRank(category) {
   return 800;
 }
 
+function categoryRank(category) {
+  const key = typeof category === "string" ? `s:${category}` : `${category?.id || ""}|${category?.name || ""}`;
+  const cached = categoryRankCache.get(key);
+  if (cached != null) return cached;
+  const rank = shopCategoryRank(category);
+  categoryRankCache.set(key, rank);
+  return rank;
+}
+
 function compareShopCategories(a, b) {
-  return shopCategoryRank(a) - shopCategoryRank(b) || String(a?.name || a || "").localeCompare(String(b?.name || b || ""), "zh");
+  return categoryRank(a) - categoryRank(b) || String(a?.name || a || "").localeCompare(String(b?.name || b || ""), "zh");
+}
+
+function generatedCategoryImage(id, name) {
+  const key = String(id || "");
+  if (key.startsWith("shop-")) return `/assets/categories/${key}.webp`;
+  const slug = slugifyCategory(name);
+  if (slug === "aluminium-product" || /鋁製品/.test(String(name || ""))) return "/assets/categories/aluminium.webp";
+  if (key === "plastering" || slug === "plastering" || /批盪/.test(String(name || ""))) return "/assets/categories/plastering.webp";
+  return "";
+}
+
+const NO_CATEGORIES = [];
+
+function retiredCategoryNameKeys() {
+  return new Set(CATEGORY_DEFS.map((def) => categoryKey(def.name)));
+}
+
+/** Old /catalog/:id links search this display name. Tiles stays「瓷磚, Tiles」. */
+function retiredCategoryQuery(slug) {
+  const want = String(slug || "").trim().toLowerCase();
+  if (!want) return "";
+  const found = CATEGORY_DEFS.find((def) => {
+    const id = String(def.id || "").toLowerCase();
+    return id === want || categorySlug(def.name) === want || categorySlug(def.nameEn || "") === want;
+  });
+  return found?.name || "";
+}
+
+function retiredCategoryPieces(query) {
+  const raw = String(query || "").trim();
+  if (!raw || !retiredCategoryNameKeys().has(categoryKey(raw))) return null;
+  const parts = raw
+    .split(",")
+    .map((part) => foldHan(part).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, " ").replace(/\s+/g, " ").trim())
+    .filter((part) => part.length >= 2);
+  return parts.length ? parts : null;
+}
+
+function nameSpecBlob(product) {
+  const specs = Array.isArray(product?.specs) ? product.specs.join(" ") : "";
+  return foldHan(
+    [
+      product?.name,
+      product?.description,
+      product?.sizeDesc,
+      product?.primarySpec,
+      product?.standard,
+      product?.certifications,
+      specs,
+      specOptionSearchText(product),
+    ]
+      .filter(Boolean)
+      .join(" ")
+  ).toLowerCase();
+}
+
+function shopCategoryTally() {
+  const tally = new Map();
+  for (const product of activeCatalog(PRODUCTS)) {
+    const id = String(product?.shopCategoryId || "");
+    if (!id) continue;
+    tally.set(id, (tally.get(id) || 0) + 1);
+  }
+  return tally;
+}
+
+function countedShopTree() {
+  const tally = shopCategoryTally();
+  return SHOP_CATEGORY_TREE.map((parent) => {
+    const children = (parent.children || []).map((child) => ({ ...child, count: tally.get(child.id) || 0 }));
+    const own = tally.get(parent.id) || 0;
+    return { ...parent, children, count: own + children.reduce((sum, child) => sum + child.count, 0) };
+  });
+}
+
+function countedShopCategory(idOrName) {
+  const key = String(idOrName || "").trim();
+  if (!key) return null;
+  for (const parent of countedShopTree()) {
+    if (parent.id === key || parent.name === key) return parent;
+    for (const child of parent.children || []) {
+      if (child.id === key || child.name === key) return child;
+    }
+  }
+  return null;
 }
 
 function getCategoryDefs() {
-  const defs = visibleCategoryDefs();
-  const aliasToId = new Map();
-  for (const def of defs) {
-    for (const alias of categoryAliases(def)) {
-      const key = categoryKey(alias);
-      if (key && !aliasToId.has(key)) aliasToId.set(key, def.id);
-    }
-  }
-  const counts = Object.create(null);
-  const covers = Object.create(null);
-  for (const def of defs) counts[def.id] = 0;
-  for (const product of activeCatalog(PRODUCTS)) {
-    for (const piece of categoryPieces(product?.category)) {
-      const id = aliasToId.get(categoryKey(piece));
-      if (id == null) continue;
-      counts[id] += 1;
-      if (!covers[id]) {
-        const image = String(product.image || product.imageUrl || "").trim();
-        if (image) covers[id] = { image, imageFallback: String(product.imageFallback || "") };
-      }
-      break;
-    }
-  }
-  const rows = defs.filter((c) => isPortalSurface() || c.id !== "vinyl").map((c) => {
-    const generic = !c.image || (c.custom && isGenericCategoryImage(c.image));
-    const cover = generic ? covers[c.id] : null;
-    return {
-      id: c.id,
-      name:
-        !isPortalSurface() && c.id === "xps-foam-board"
-          ? "建築外牆、保溫及防水, Building Envelope, Insulation & Waterproofing"
-          : !isPortalSurface() && c.id === "balustrades"
-            ? "金屬通道, Metal Access"
-            : !isPortalSurface() && c.id === "oxygen-chamber"
-              ? "工地設施, Site Facilities"
-              : !isPortalSurface() && c.id === "dowel-bar"
-                ? "鋼材, Steel"
-                : !isPortalSurface() && c.id === "paint"
-                  ? "建築飾面, Architectural Finishes"
-                  : !isPortalSurface() && c.id === "cable"
-                    ? "機電及公用設施, MEP & Utilities"
-                    : !isPortalSurface() && (c.id === "aggregate" || String(c.name || "").startsWith("石料"))
-                      ? "原材料, Raw Materials"
-                      : c.name,
-      image: cover?.image || c.image || "/assets/prod-mesh.webp",
-      imageFallback: cover?.imageFallback || c.imageFallback || "",
-      count: counts[c.id] || 0,
-      custom: Boolean(c.custom),
-    };
-  });
-  rows.sort(compareShopCategories);
-  if (!activeCatalog(PRODUCTS).length) return rows;
-  return rows.filter((category) => category.count > 0);
+  return countedShopTree();
 }
 
 function isGenericCategoryImage(url) {
@@ -707,6 +825,7 @@ function isGenericCategoryImage(url) {
 }
 
 function getCategories() {
+  if (CATEGORY_LIST_PAUSED) return NO_CATEGORIES;
   return visibleCategoryDefs().slice().sort(compareShopCategories).map((c) => c.name);
 }
 
@@ -731,6 +850,7 @@ function slugifyCategory(name) {
 }
 
 function addAdminCategory(name) {
+  if (CATEGORY_LIST_PAUSED) return { ok: false, error: "paused" };
   const gate = requireStaff();
   if (!gate.ok) return gate;
   const nextName = String(name || "").trim();
@@ -751,46 +871,18 @@ function adminProductsInCategory(name) {
   return PRODUCTS.filter((p) => productInNamedCategory(p, name));
 }
 
-let adminCategoryCache = { key: "", list: null };
-
 function listAdminCategories() {
-  const defs = visibleCategoryDefs();
-  const key = `${catalogEpoch}\n${defs.map((def) => `${def.id}\t${def.name}\t${def.image || ""}\t${def.custom ? 1 : 0}`).join("\n")}`;
-  if (adminCategoryCache.key === key && adminCategoryCache.list) return adminCategoryCache.list;
-  const resolved = defs.map((def) => {
-    const found = findCategoryDef(def.name);
-    return found
-      ? { def, keys: categoryAliases(found).map(categoryKey), raw: "" }
-      : { def, keys: null, raw: categoryKey(def.name) };
+  const tally = shopCategoryTally();
+  return shopCategoryRows().map((row) => {
+    if (row.depth) return { ...row, count: tally.get(row.id) || 0 };
+    const node = shopCategoryById(row.id);
+    const childCount = (node?.children || []).reduce((sum, child) => sum + (tally.get(child.id) || 0), 0);
+    return { ...row, count: (tally.get(row.id) || 0) + childCount };
   });
-  const buckets = new Map(defs.map((def) => [def.id, []]));
-  for (const product of PRODUCTS) {
-    const pieces = new Set(categoryPieces(product?.category).map(categoryKey));
-    for (const row of resolved) {
-      const hit = row.keys ? row.keys.some((alias) => pieces.has(alias)) : pieces.has(row.raw);
-      if (hit) buckets.get(row.def.id).push(product);
-    }
-  }
-  const list = defs.map((def) => {
-    const products = buckets.get(def.id) || [];
-    const productImage = products.map((product) => String(product.image || product.imageUrl || "").trim()).find(Boolean);
-    return {
-      id: def.id,
-      name: def.name,
-      image: (!def.image || (def.custom && isGenericCategoryImage(def.image)))
-        ? (productImage || def.image || "/assets/prod-mesh.webp")
-        : def.image,
-      custom: Boolean(def.custom),
-      count: products.length,
-      deletedCount: products.filter((product) => product.deleted).length,
-    };
-  });
-  list.sort(compareShopCategories);
-  adminCategoryCache = { key, list };
-  return list;
 }
 
 function renameAdminCategory(id, name) {
+  if (CATEGORY_LIST_PAUSED) return { ok: false, error: "paused" };
   const gate = requireStaff();
   if (!gate.ok) return gate;
   const nextName = String(name || "").trim();
@@ -823,6 +915,7 @@ function renameAdminCategory(id, name) {
 }
 
 function deleteAdminCategory(id) {
+  if (CATEGORY_LIST_PAUSED) return { ok: false, error: "paused" };
   const gate = requireStaff();
   if (!gate.ok) return gate;
   const current = visibleCategoryDefs().find((c) => c.id === id);
@@ -848,6 +941,7 @@ function deleteAdminCategory(id) {
 }
 
 function assignAdminProductsCategory(ids, categoryName) {
+  if (CATEGORY_LIST_PAUSED) return { ok: false, error: "paused" };
   const gate = requireStaff();
   if (!gate.ok) return gate;
   const category = matchAdminCategory(categoryName);
@@ -888,6 +982,9 @@ function categoryNameFromProducts(slug) {
 }
 
 function getCategoryBySlug(slug) {
+  const tree = countedShopCategory(slug) || shopCategoryById(slug);
+  if (tree) return tree;
+  if (CATEGORY_LIST_PAUSED) return null;
   const id = String(slug || "").trim();
   if (!id || HIDDEN_CATEGORY_IDS.has(id)) return null;
   const found = getCategoryDefs().find((c) => c.id === id);
@@ -905,12 +1002,25 @@ function getCategoryBySlug(slug) {
 }
 
 function getCategoryByName(name) {
+  const tree = countedShopCategory(name) || shopCategoryByName(name);
+  if (tree) return tree;
+  if (CATEGORY_LIST_PAUSED) return null;
   const found = findCategoryDef(name);
   if (!found) return null;
   return getCategoryDefs().find((c) => c.id === found.id) || null;
 }
 
+function shopCategoryTrail(product) {
+  const child = shopCategoryById(product?.shopCategoryId);
+  if (!child) return [];
+  const parent = child.parentId ? shopCategoryById(child.parentId) : null;
+  return parent ? [parent, child] : [child];
+}
+
 function catalogPathForCategory(nameOrSlug) {
+  const tree = shopCategoryById(nameOrSlug) || shopCategoryByName(nameOrSlug);
+  if (tree) return `/catalog/${tree.id}`;
+  if (CATEGORY_LIST_PAUSED) return "/";
   const found = getCategoryBySlug(nameOrSlug) || getCategoryByName(nameOrSlug);
   if (found) return `/catalog/${found.id}`;
   const slug = categorySlug(nameOrSlug);
@@ -953,6 +1063,16 @@ function getProductsByCategory(category) {
       : [category];
   const source = activeCatalog(PRODUCTS);
   if (!names.length) return source.slice();
+  if (names.every((name) => shopCategoryByName(name) || shopCategoryById(name))) {
+    const ids = new Set();
+    for (const name of names) {
+      const node = shopCategoryByName(name) || shopCategoryById(name);
+      if (!node) continue;
+      ids.add(node.id);
+      for (const child of node.children || []) ids.add(child.id);
+    }
+    return source.filter((product) => ids.has(String(product.shopCategoryId || "")));
+  }
   const defs = names.map((n) => findCategoryDef(n)).filter(Boolean);
   if (!defs.length) {
     const set = new Set(names.map(categoryKey));
@@ -985,8 +1105,9 @@ const CATEGORY_SEARCH_TERMS = {
   "Aluminum Cladding": ["aluminum cladding", "aluminium cladding", "鋁板", "幕牆", "wall board", "牆板", "architectural finishes", "建築飾面"],
   "Cable": ["cable", "power cable", "電線", "電纜", "mep", "機電", "electrical", "電氣"],
   "Shoe Washing Machines": ["shoe washing", "洗鞋機", "site facilities", "工地設施", "工地設備"],
-  "石料, Aggregate": ["aggregate", "石料", "raw materials", "原材料", "coarse aggregate", "粗骨料", "rockfill", "填石", "sub-base", "底基層"],
-  "原材料, Raw Materials": ["aggregate", "石料", "raw materials", "原材料", "coarse aggregate", "粗骨料", "rockfill", "填石"],
+  "石料, Aggregate": ["aggregate", "石料", "raw materials", "原材料", "coarse aggregate", "粗骨料", "rockfill", "填石", "sub-base", "底基層", "granular fill", "砂石料", "gravel", "砂礫", "recycle", "重用石料", "堆料"],
+  "原材料, Raw Materials": ["aggregate", "石料", "raw materials", "原材料", "coarse aggregate", "粗骨料", "rockfill", "填石", "granular fill", "砂石料", "gravel", "砂礫", "recycle", "重用石料", "堆料"],
+  "Aggregate 石料": ["aggregate", "石料", "raw materials", "原材料", "coarse aggregate", "粗骨料", "rockfill", "填石", "sub-base", "底基層", "granular fill", "砂石料", "gravel", "砂礫", "recycle", "重用石料", "堆料"],
   "基建（排水、污水、食水、海水）, Infrastructure (Drainage, Sewerage, Potable, Seawater)": ["pipe", "fitting", "喉管", "配件", "infrastructure", "基建", "排水", "污水", "食水", "海水", "cast iron", "copper", "hdpe"],
   "Software": ["license", "BIM", "軟件授權"],
 };
@@ -1027,7 +1148,7 @@ function productSearchBlob(product) {
     product.productNo,
     product.provisionalSku,
     product.name,
-    product.category,
+    CATEGORY_LIST_PAUSED ? "" : product.category,
     product.supplier,
     product.description,
     product.sizeDesc,
@@ -1038,6 +1159,8 @@ function productSearchBlob(product) {
     specs,
     getProductRemarks(product).join(" "),
     (product.purposes || []).join(" "),
+    specOptionSearchText(product),
+    Array.isArray(product.searchAliases) ? product.searchAliases.join(" ") : "",
     "price upon request quote",
     product.green ? "green eco sustainable low-carbon fsc recycled" : "",
   ]
@@ -1058,10 +1181,10 @@ function productSearchText(product, fields) {
   const specs = Array.isArray(product.specs) ? product.specs.join(" ") : "";
   const parts = [];
   if (selected.includes("name")) parts.push(product.name);
-  if (selected.includes("category")) parts.push(product.category);
+  if (selected.includes("category") && !CATEGORY_LIST_PAUSED) parts.push(product.category);
   if (selected.includes("sku")) parts.push(product.productNo, product.provisionalSku, product.id);
   if (selected.includes("spec")) {
-    parts.push(specs, product.standard, product.description, product.sizeDesc, product.primarySpec, product.certifications);
+    parts.push(specs, product.standard, product.description, product.sizeDesc, product.primarySpec, product.certifications, specOptionSearchText(product));
   }
   if (selected.includes("supplier")) parts.push(product.supplier);
   if (selected.includes("remarks")) parts.push(getProductRemarks(product).join(" "), (product.purposes || []).join(" "));
@@ -1072,6 +1195,13 @@ function searchProducts(query, category, options = {}) {
   const base = getProductsByCategory(category);
   const q = foldHan(String(query || "").trim()).toLowerCase();
   if (!q) return base;
+  const retired = CATEGORY_LIST_PAUSED ? retiredCategoryPieces(query) : null;
+  if (retired) {
+    return base.filter((product) => {
+      const blob = nameSpecBlob(product);
+      return retired.some((piece) => blob.includes(piece));
+    });
+  }
   const tokens = q.split(/\s+/).filter(Boolean);
   return base.filter((p) => {
     const blob = productSearchText(p, options.fields);
@@ -1093,7 +1223,7 @@ function recommendProducts(query, category, limit = 8) {
     for (const token of tokens) {
       const nameHit = name.includes(token);
       const skuHit = sku.includes(token);
-      const catHit = cat.includes(token);
+      const catHit = !CATEGORY_LIST_PAUSED && cat.includes(token);
       if (!nameHit && !skuHit && !catHit) {
         matched = false;
         break;
@@ -1144,7 +1274,7 @@ function suggestCatalogMatch(item) {
       name,
       product.productNo,
       product.id,
-      product.category,
+      CATEGORY_LIST_PAUSED ? "" : product.category,
       product.description,
       Array.isArray(product.specs) ? product.specs.join(" ") : "",
     ]
@@ -1423,6 +1553,7 @@ function writeLocalOnly(key, value) {
   } catch {
     /* ignore quota */
   }
+  if (key === CUSTOM_CATEGORIES_KEY || key === CATEGORY_ADMIN_KEY) categoryCacheGen += 1;
 }
 
 function isPortalSurface() {
@@ -1765,7 +1896,7 @@ function getSuppliers() {
     }
     const entry = map.get(slug);
     entry.count += 1;
-    entry.categories.add(p.category);
+    if (!CATEGORY_LIST_PAUSED && p.category) entry.categories.add(p.category);
     if (!entry.image && p.image) entry.image = p.image;
   });
   return Array.from(map.values())
@@ -1830,6 +1961,7 @@ let buyersReady = false;
 
 function bumpCatalog() {
   catalogEpoch += 1;
+  categoryCacheGen += 1;
 }
 
 let storeSnapshot = {
@@ -1983,6 +2115,7 @@ function writeJson(key, value) {
   } catch {
     /* ignore quota */
   }
+  if (key === CUSTOM_CATEGORIES_KEY || key === CATEGORY_ADMIN_KEY) categoryCacheGen += 1;
   if (key === RFQS_KEY) {
     persistRfqsRemote(value);
     return;
@@ -2381,7 +2514,12 @@ function replaceDraftSelection(reference, productId, options) {
   return { ok: true };
 }
 
-function addToCart(productId, { intent, qty, silentInvite = false, pickedSpecs = null, pickedSize = "" } = {}) {
+function lineRemark(value) {
+  if (value == null) return null;
+  return String(value).trim().slice(0, 400);
+}
+
+function addToCart(productId, { intent, qty, silentInvite = false, pickedSpecs = null, pickedSize = "", remark = null } = {}) {
   const product = getProduct(productId);
   if (!product || isDiscontinued(product) || !isOrderable(product) || isProductOrderBlocked(productId)) return getCart();
   const guest = !isLoggedIn();
@@ -2392,12 +2530,14 @@ function addToCart(productId, { intent, qty, silentInvite = false, pickedSpecs =
   const picks = normalizePickedSpecs(pickedSpecs);
   const size = normalizePickedSize(pickedSize);
   const choice = { productId, pickedSpecs: picks, pickedSize: size };
+  const note = lineRemark(remark);
   const existing = draft.lines.find((l) => !l.custom && selectionKey(l) === selectionKey(choice));
   if (existing) {
     if (existing.intent !== nextIntent) existing.intent = nextIntent;
     else existing.qty = (existing.qty || 0) + addQty;
     if (picks) existing.pickedSpecs = picks;
     if (size) existing.pickedSize = size;
+    if (note != null) existing.remark = note;
   } else {
     draft.lines.push({
       productId,
@@ -2407,6 +2547,7 @@ function addToCart(productId, { intent, qty, silentInvite = false, pickedSpecs =
       intent: nextIntent,
       ...(picks ? { pickedSpecs: picks } : {}),
       ...(size ? { pickedSize: size } : {}),
+      ...(note ? { remark: note } : {}),
     });
   }
   setDraft(draft);
@@ -2927,7 +3068,7 @@ function setDraftAcceptSubstitutes(value) {
 function inferCanonicalCategory(lines) {
   const counts = {};
   for (const line of lines || []) {
-    const name = line.category || (line.custom ? "" : getProduct(line.productId)?.category) || "";
+    const name = line.category || (line.custom || CATEGORY_LIST_PAUSED ? "" : getProduct(line.productId)?.category) || "";
     if (!name) continue;
     counts[name] = (counts[name] || 0) + 1;
   }
@@ -2972,6 +3113,7 @@ function draftTotals(draft, productIds) {
         descriptionBaseline: line.descriptionBaseline || "",
         pickedSpecs: normalizePickedSpecs(line.pickedSpecs),
         pickedSize: normalizePickedSize(line.pickedSize),
+        remark: String(line.remark || ""),
       };
     }
     const product = selectedProduct(getProduct(line.productId), line);
@@ -3000,10 +3142,11 @@ function draftTotals(draft, productIds) {
       moq: product ? product.moq : 1,
       unit: product ? product.unit : "",
       productNo: product ? product.productNo : "",
-      category: product ? product.category : "",
+      category: CATEGORY_LIST_PAUSED ? "" : (product ? product.category : ""),
       green: Boolean(product?.green),
       pickedSpecs: normalizePickedSpecs(line.pickedSpecs),
       pickedSize: normalizePickedSize(line.pickedSize),
+      remark: String(line.remark || ""),
     };
   });
   return {
@@ -3167,20 +3310,6 @@ async function submitRfq(productIds, options = {}) {
     const missing = guestOrderError((guest || memberOrder) || {});
     if (missing) return { ok: false, error: missing };
   }
-  {
-    const contact = guest || memberOrder || user || {};
-    const verifyEmail = normalizeEmail(contact.email || user?.email || "");
-    const verifyPhone = String(contact.phone || user?.phone || "").trim();
-    if (verifyEmail && verifyPhone) {
-      const verified = await ensureContactVerified({
-        email: verifyEmail,
-        phone: verifyPhone,
-        name: contact.name || user?.name || "",
-      });
-      if (!verified?.ok) return { ok: false, error: "contact_verify" };
-    }
-  }
-  const email = accountKey();
   let draft = options.draft || getDraft();
   if (!draft.lines.length) return { ok: false, error: "empty" };
   const skipLogistics = Boolean(options.skipLogistics);
@@ -3210,13 +3339,29 @@ async function submitRfq(productIds, options = {}) {
       ? productIds.map(String)
       : draft.lines.map(lineReference);
   const selectedSet = new Set(selectedIds);
-  const selectedLines = draft.lines.filter((l) => selectedSet.has(lineReference(l)));
+  const selectedLines = draft.lines.filter(
+    (l) => selectedSet.has(lineReference(l)) || selectedSet.has(String(l.productId || ""))
+  );
   if (!selectedLines.length) return { ok: false, error: "none_selected" };
   const blocked = selectedLines.filter((l) => !l.custom && (isProductOrderBlocked(l.productId) || !isOrderable(getProduct(l.productId))));
   if (blocked.length) return { ok: false, error: "discontinued" };
 
   const verified = await verifyProductSelections(selectedLines);
   if (!verified.ok) return verified;
+  {
+    const contact = guest || memberOrder || user || {};
+    const verifyEmail = normalizeEmail(contact.email || user?.email || "");
+    const verifyPhone = String(contact.phone || user?.phone || "").trim();
+    if (verifyEmail) {
+      const contactVerified = await ensureContactVerified({
+        email: verifyEmail,
+        phone: verifyPhone,
+        name: contact.name || user?.name || "",
+      });
+      if (!contactVerified?.ok) return { ok: false, error: "contact_verify" };
+    }
+  }
+  const email = accountKey();
   const verifiedById = new Map(verified.lines.map((line) => [lineReference(line), line]));
   const totals = draftTotals({ ...draft, lines: selectedLines.map((line) => verifiedById.get(lineReference(line)) || line) });
   const channel =
@@ -3511,7 +3656,7 @@ function reorderRfq(id) {
           pickedSize: normalizePickedSize(l.pickedSize),
         };
       }
-      return identifyLine({ productId: l.productId, qty: l.qty, intent: l.intent || "quote", pickedSpecs: normalizePickedSpecs(l.pickedSpecs), pickedSize: normalizePickedSize(l.pickedSize), selectionSnapshot: l.selectionSnapshot });
+      return identifyLine({ productId: l.productId, qty: l.qty, intent: l.intent || "quote", pickedSpecs: normalizePickedSpecs(l.pickedSpecs), pickedSize: normalizePickedSize(l.pickedSize), selectionSnapshot: l.selectionSnapshot, remark: String(l.remark || "") });
     }),
   });
   return { ok: true };
@@ -4036,10 +4181,12 @@ function setPendingCart(productId, intent, qty, options = null) {
   if (!productId) return;
   let picks = null;
   let size = "";
+  let remark = null;
   if (options && typeof options === "object") {
-    if ("pickedSpecs" in options || "pickedSize" in options) {
+    if ("pickedSpecs" in options || "pickedSize" in options || "remark" in options) {
       picks = normalizePickedSpecs(options.pickedSpecs);
       size = normalizePickedSize(options.pickedSize);
+      remark = lineRemark(options.remark);
     } else {
       picks = normalizePickedSpecs(options);
     }
@@ -4052,6 +4199,7 @@ function setPendingCart(productId, intent, qty, options = null) {
       qty: qty || null,
       ...(picks ? { pickedSpecs: picks } : {}),
       ...(size ? { pickedSize: size } : {}),
+      ...(remark ? { remark } : {}),
     })
   );
 }
@@ -4193,9 +4341,10 @@ function noteContactVerified(trustDays) {
 }
 
 function openContactVerifyModal({ email, phone, name = "", link = false } = {}) {
+  if (!SHOW_CONTACT_VERIFY) return Promise.resolve({ ok: true, verified: true });
   const nextEmail = normalizeEmail(email);
   const nextPhone = String(phone || "").trim();
-  if (!link && (!nextEmail || !nextPhone)) return Promise.resolve({ ok: false, error: "invalid" });
+  if (!link && !nextEmail) return Promise.resolve({ ok: false, error: "invalid" });
   if (contactVerifyWaiter) {
     const pending = contactVerifyWaiter;
     contactVerifyWaiter = null;
@@ -4227,6 +4376,7 @@ function closeContactVerifyModal(result = { ok: false }) {
 }
 
 async function ensureContactVerified({ email, phone, name } = {}) {
+  if (!SHOW_CONTACT_VERIFY) return { ok: true, verified: true };
   const { contactVerifyStatus } = await import("./contactVerify.js");
   const status = await contactVerifyStatus({ email, phone });
   if (status.ok && status.verified) return { ok: true, verified: true };
@@ -4257,14 +4407,15 @@ function requireBuyerAuth(pending = {}) {
 function addFromStorefront(productId, intent = "quote", qty, _lang, options = {}) {
   const pickedSpecs = normalizePickedSpecs(options?.pickedSpecs);
   const pickedSize = normalizePickedSize(options?.pickedSize);
+  const remark = options?.remark;
   const check = resolveSelection(getProduct(productId), { productId, qty, pickedSpecs, pickedSize });
   if (!check.ok) return check;
   if (intent === "quote-now" || intent === "buy-now") {
-    setPendingCart(productId, intent, qty, { pickedSpecs, pickedSize });
+    setPendingCart(productId, intent, qty, { pickedSpecs, pickedSize, remark });
     openAuthModal("invite");
     return { ok: false, error: "auth_invite" };
   }
-  addToCart(productId, { intent, qty, pickedSpecs, pickedSize });
+  addToCart(productId, { intent, qty, pickedSpecs, pickedSize, remark });
   return { ok: true };
 }
 
@@ -4307,6 +4458,7 @@ async function consumePendingInviteContinue(contact) {
   let qty;
   let pickedSpecs = null;
   let pickedSize = "";
+  let remark = null;
   try {
     const parsed = JSON.parse(pendingCart);
     productId = parsed?.productId || "";
@@ -4314,6 +4466,7 @@ async function consumePendingInviteContinue(contact) {
     qty = parsed?.qty;
     pickedSpecs = normalizePickedSpecs(parsed?.pickedSpecs);
     pickedSize = normalizePickedSize(parsed?.pickedSize);
+    remark = parsed?.remark;
   } catch {
     sessionStorage.removeItem(PENDING_CART_KEY);
     return { ok: false, error: "missing" };
@@ -4327,6 +4480,7 @@ async function consumePendingInviteContinue(contact) {
       guest,
       pickedSpecs,
       pickedSize,
+      remark,
     });
     if (result?.ok) sessionStorage.removeItem(PENDING_CART_KEY);
     return result?.ok ? result : { ok: false, error: result?.error || "server" };
@@ -4359,6 +4513,7 @@ function consumePendingAfterAuth() {
     let qty;
     let pickedSpecs = null;
     let pickedSize = "";
+    let remark = null;
     try {
       const parsed = JSON.parse(pendingCart);
       if (parsed && parsed.productId) {
@@ -4367,16 +4522,17 @@ function consumePendingAfterAuth() {
         qty = parsed.qty;
         pickedSpecs = normalizePickedSpecs(parsed.pickedSpecs);
         pickedSize = normalizePickedSize(parsed.pickedSize);
+        remark = parsed.remark;
       }
     } catch {
       productId = pendingCart;
     }
     if (intent === "quote-now" || intent === "buy-now") {
-      setPendingCart(productId, intent, qty, { pickedSpecs, pickedSize });
+      setPendingCart(productId, intent, qty, { pickedSpecs, pickedSize, remark });
       openAuthModal("invite");
       stayPut = true;
     } else {
-      addToCart(productId, { intent, qty, silentInvite: true, pickedSpecs, pickedSize });
+      addToCart(productId, { intent, qty, silentInvite: true, pickedSpecs, pickedSize, remark });
     }
   }
   if (pendingWa) {
@@ -4441,7 +4597,7 @@ function enrichCartLine(line) {
     supplier: line.supplier || product?.supplier || "",
     image: line.image || product?.image || "",
     attachments: Array.isArray(line.attachments) ? line.attachments : [],
-    category: line.category || product?.category || "",
+    category: line.category || (CATEGORY_LIST_PAUSED ? "" : product?.category || ""),
     pickedSpecs: normalizePickedSpecs(line.pickedSpecs),
     pickedSize: normalizePickedSize(line.pickedSize),
   };
@@ -4944,9 +5100,21 @@ function firstImageAttachmentUrl(files) {
   return found?.url || "";
 }
 
+function pdfCustomPhrase(value) {
+  const raw = String(value || "").trim();
+  if (isCustomizeSizeLabel(raw)) return "自訂尺寸";
+  if (isPlainCustomizeLabel(raw)) return "自訂規格";
+  return "";
+}
+
+function pdfLineCustomPhrase(line) {
+  const phrases = [line?.pickedSize, ...Object.values(line?.pickedSpecs || {})].map(pdfCustomPhrase).filter(Boolean);
+  return phrases.find((phrase) => phrase === "自訂尺寸") || phrases[0] || "自訂規格";
+}
+
 function pdfSpecOptionLabel(option) {
-  if (option && typeof option === "object") return String(option.label || option.key || "").trim();
-  return String(option || "").trim();
+  const raw = option && typeof option === "object" ? String(option.label || option.key || "").trim() : String(option || "").trim();
+  return pdfCustomPhrase(raw) || raw;
 }
 
 function pdfSpecOptionKey(option) {
@@ -4976,6 +5144,8 @@ function pdfSpecGroupLabel(group, index) {
     "tile-series": "系列",
     "cover-series": "系列",
     "tile-rating": "防滑等級",
+    "tile-slip": "防滑等級",
+    "tile-surface": "表面",
     "slip-rating": "防滑等級",
     "vinyl-type": "類型",
     "floor-type": "類型",
@@ -5016,14 +5186,11 @@ function pdfIsMetaSpec(text) {
 function pdfSizeDisplay(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (/^(customize|customization|customize size|customize drawing upload)$/i.test(raw)) {
-    return "自訂規格 · 圖則";
-  }
-  return raw;
+  return pdfCustomPhrase(raw) || raw;
 }
 
 function isCustomizeSizeValue(value) {
-  return /^(customize|customization|customize size|customize drawing upload)$/i.test(String(value || "").trim());
+  return isCustomizeLabel(value);
 }
 
 function pdfModelLabel(product) {
@@ -5037,7 +5204,7 @@ function pdfModelLabel(product) {
 
 /**
  * Q8-C: prefill 規格／備註 as multiline — name/SKU headline + 型號／尺寸 (+ SpecGroup picks).
- * Used when buyer taps 自訂規格 · 圖則.
+ * Used when buyer taps 自訂規格 or 自訂尺寸.
  */
 function buildTailorPrefillDescription(product, { pickedSize = "", pickedSpecs = null } = {}) {
   if (!product) return "";
@@ -5053,7 +5220,7 @@ function buildTailorPrefillDescription(product, { pickedSize = "", pickedSpecs =
   if (model) lines.push(`型號：${model}`);
   const sizeRaw = normalizePickedSize(pickedSize);
   const sizeLabel = isCustomizeSizeValue(sizeRaw) || !sizeRaw
-    ? "自訂規格 · 圖則"
+    ? pdfLineCustomPhrase({ pickedSize: sizeRaw, pickedSpecs })
     : pdfSizeDisplay(sizeRaw) || pdfSizeDisplay(pdfSizeFromProduct(product));
   if (sizeLabel) lines.push(`尺寸：${sizeLabel}`);
   for (const row of pdfPickedSpecRows(product, pickedSpecs)) {
@@ -5144,10 +5311,9 @@ function pdfProductInfoRows(line, product) {
   const isTailorCustom = Boolean(line?.custom && line?.tailorMade);
 
   if (isTailorCustom) {
-    // Q1-C / Q2-A: always show 尺寸 as 自訂規格 · 圖則; model from base when known
     const model = product ? pdfModelLabel(product) : "";
     if (model) rows.push({ label: "型號", value: model });
-    rows.push({ label: "尺寸", value: "自訂規格 · 圖則" });
+    rows.push({ label: "尺寸", value: pdfLineCustomPhrase(line) });
     // Prefill uses shopTitle; compare against that so unchanged names do not show 原產品
     const initialName = String((product ? shopTitle(product) : "") || product?.name || "").trim();
     const lineName = String(line?.name || "").trim();
@@ -5539,7 +5705,7 @@ async function placeBuyNowPo(product, qty, line, guest) {
     remark: String(contact?.remark || "").trim(),
     attachments: contact?.attachments || [],
   };
-  if (buyer.email && buyer.phone) {
+  if (buyer.email) {
     const verified = await ensureContactVerified({ email: buyer.email, phone: buyer.phone, name: buyer.name });
     if (!verified?.ok) return { ok: false, error: "contact_verify" };
   }
@@ -5588,7 +5754,7 @@ async function placeBuyNowPo(product, qty, line, guest) {
   };
 }
 
-async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false, guest, pickedSpecs = null, pickedSize = "" } = {}) {
+async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false, guest, pickedSpecs = null, pickedSize = "", remark = null } = {}) {
   const product = getProduct(productId);
   if (!product || isDiscontinued(product) || !isOrderable(product) || isProductOrderBlocked(productId)) return { ok: false, error: "discontinued" };
   const intent = kind === "buy" ? "buy" : "quote";
@@ -5596,12 +5762,14 @@ async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false
   const addQty = Math.floor(Number(qty)) || minQty;
   const picks = normalizePickedSpecs(pickedSpecs);
   const size = normalizePickedSize(pickedSize);
+  const note = lineRemark(remark);
   const line = {
     productId,
     qty: addQty,
     intent,
     ...(picks ? { pickedSpecs: picks } : {}),
     ...(size ? { pickedSize: size } : {}),
+    ...(note ? { remark: note } : {}),
   };
   if (intent === "buy" && canDirectBuy(product)) {
     const placed = await placeBuyNowPo(product, addQty, line, guest);
@@ -5609,22 +5777,23 @@ async function whatsappNow(productId, { qty, kind, lang = "zh", skipCart = false
     // The server has no PO store here (production for now): keep the old behaviour below.
   }
   const snapshot = skipCart ? getDraft() : null;
-  if (skipCart) {
-    const others = snapshot.lines.filter((row) => String(row.productId) !== String(productId) || row.custom);
-    setDraft({ ...snapshot, lines: [...others, line] });
-  } else {
-    addToCart(productId, { intent, qty: addQty, pickedSpecs: picks, pickedSize: size });
+  const draftForSubmit = skipCart
+    ? {
+        ...snapshot,
+        lines: [...snapshot.lines.filter((row) => String(row.productId) !== String(productId) || row.custom), line],
+      }
+    : null;
+  if (!skipCart) {
+    addToCart(productId, { intent, qty: addQty, pickedSpecs: picks, pickedSize: size, remark: note });
   }
-  // submitRfq reads the draft before its first await, so the cart can be put back straight away.
-  const pending = submitRfq([productId], {
+  const submitted = await submitRfq([lineReference(line)], {
     kind: intent,
     skipLogistics: true,
     channel: "whatsapp",
     allowGuest: !isLoggedIn(),
     guest,
+    ...(draftForSubmit ? { draft: draftForSubmit } : {}),
   });
-  if (skipCart) setDraft(snapshot);
-  const submitted = await pending;
   if (!submitted.ok && submitted.error !== "not_logged_in") return submitted;
   const rfq = submitted.ok ? submitted.rfq : null;
   return {
@@ -7905,8 +8074,8 @@ async function createAdminProductNow(fields) {
   const gate = requireStaff();
   if (!gate.ok) return gate;
   if (!String(fields.name || "").trim()) return { ok: false, error: "name" };
-  const category = matchAdminCategory(fields.category);
-  if (!category) return { ok: false, error: "category" };
+  const category = CATEGORY_LIST_PAUSED ? "" : matchAdminCategory(fields.category);
+  if (!CATEGORY_LIST_PAUSED && !category) return { ok: false, error: "category" };
   const tmp = nextTmpSku();
   const product = normalizeProductRecord({
     id: `p-new-${tmp.toLowerCase()}`,
@@ -7968,10 +8137,10 @@ async function updateAdminProductNow(id, fields) {
   if (!gate.ok) return gate;
   const product = PRODUCTS.find((p) => p.id === id);
   if (!product || product.deleted) return { ok: false, error: "missing" };
-  if (fields.category && !matchAdminCategory(fields.category)) return { ok: false, error: "category" };
+  if (!CATEGORY_LIST_PAUSED && fields.category && !matchAdminCategory(fields.category)) return { ok: false, error: "category" };
   Object.assign(product, {
     ...fields,
-    category: fields.category ? matchAdminCategory(fields.category) : product.category,
+    category: CATEGORY_LIST_PAUSED ? product.category : (fields.category ? matchAdminCategory(fields.category) : product.category),
     purposes: fields.purposes == null
       ? product.purposes
       : Array.isArray(fields.purposes)
@@ -8242,7 +8411,7 @@ async function importAdminCsv(csv) {
         purposes,
         remark: row.remark,
         green: /green|綠/.test(tags),
-        hit: /hit|熱/.test(tags),
+        hit: /hit|hot|熱/.test(tags),
         tailorMade: /tailor|訂製|定制/.test(tags),
         image: imgIsGen ? "" : imgRaw,
       });
@@ -8276,7 +8445,7 @@ async function importAdminCsv(csv) {
     if (row.remark != null) p.remark = row.remark;
     if (String(row.tags || "").trim()) {
       p.green = /green|綠/.test(tags);
-      p.hit = /hit|熱/.test(tags);
+      p.hit = /hit|hot|熱/.test(tags);
       p.tailorMade = /tailor|訂製|定制/.test(tags);
     }
     const officialImg = p.imageSource === "upload" || p.imageSource === "chain";
@@ -8313,6 +8482,7 @@ function parseAdminCsv(text) {
     "remark": "remark",
     "tag (green / hit)": "tags",
     "tag (green / hit / tailor made)": "tags",
+    "tag (green / hot / tailor made)": "tags",
   };
   const lines = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim());
   if (!lines.length) return { rows: [] };
@@ -8362,7 +8532,7 @@ function adminCsvTemplate() {
     "Lead Time",
     "Purposes (Indicator for Searching)",
     "Remark",
-    "Tag (Green / Hit / Tailor Made)",
+    "Tag (Green / Hot / Tailor Made)",
   ].join(",") + "\n";
 }
 
@@ -9160,9 +9330,12 @@ export {
   CATEGORY_DEFS,
   getCategoryDefs,
   getCategories,
+  CATEGORY_LIST_PAUSED,
+  retiredCategoryQuery,
   getCategoryBySlug,
   getCategoryByName,
   catalogPathForCategory,
+  shopCategoryTrail,
   getTopProducts,
   getGreenProducts,
   getSalesProducts,
@@ -9435,6 +9608,7 @@ export {
   productCatalogStatus,
   productSkuId,
   certificationLines,
+  certStandardLines,
   specificationRows,
   productDescriptionText,
   unitsPerPallet,
@@ -9465,6 +9639,7 @@ if (typeof window !== "undefined") {
       event.key === CUSTOM_CATEGORIES_KEY ||
       event.key === CATEGORY_ADMIN_KEY
     ) {
+      if (event.key === CUSTOM_CATEGORIES_KEY || event.key === CATEGORY_ADMIN_KEY) categoryCacheGen += 1;
       emitStoreChange();
     }
   });

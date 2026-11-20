@@ -9,6 +9,7 @@ import SupplierLogo from "../../components/SupplierLogo";
 import SiteFooter from "../../components/SiteFooter";
 import CategoryMultiSelect, { SelectedCategoryChips } from "../../components/CategoryMultiSelect";
 import { getGreenProducts, supplierPath } from "../../lib/store";
+import { selectSearchOnFocus } from "../../components/SearchSuggestions";
 
 export const HOME_PROTOTYPE_VARIANTS = [
   { key: "A", name: "Editorial story" },
@@ -46,6 +47,7 @@ export function HomeVariantB({
               type="search"
               value={searchQuery}
               onChange={(e) => {
+              onFocus={selectSearchOnFocus}
                 const v = e.target.value;
                 setSearchQuery(v);
                 setGreenOnly(/\bgreen\b/i.test(v));
@@ -224,6 +226,7 @@ export function HomeVariantC({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Filter sample…"
+            onFocus={selectSearchOnFocus}
             className="field-input max-w-xs"
           />
         </div>

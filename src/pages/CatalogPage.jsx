@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import CategorySideNav from "../components/CategorySideNav";
+import ListFilters from "../components/ListFilters";
 import CopyLinkButton from "../components/CopyLinkButton";
 import ProductCard, { ProductCardSkeleton, ProductListRow } from "../components/ProductCard";
 import CatalogViewToggle from "../components/CatalogViewToggle";
@@ -13,13 +14,15 @@ import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { catalogGroupIndex, collapseCatalog, useCatalogGroups } from "../lib/catalogGroups";
 import { jumpToId } from "../lib/jumpTo";
-import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
+import { allProductsTo, freshCatalogLocation, productDetailsLocation, siteOrigin, withLocale } from "../lib/locale";
 import { categoryOgPath } from "../lib/ogImage";
 import { seoCopy } from "../lib/seoCopy";
 import {
   getCategoryByName,
   getCategoryBySlug,
   getCategoryDefs,
+  CATEGORY_LIST_PAUSED,
+  retiredCategoryQuery,
   productShowsPrice,
   getProductsByCategory,
   isHitProduct,
@@ -27,6 +30,16 @@ import {
   addFromStorefront,
 } from "../lib/store";
 import { ProductSearchBox } from "../components/SearchSuggestions";
+import {
+  applyListFilter,
+  clearTileSearchParams,
+  isVinylFloor,
+  readTileQuery,
+  tileProductNote,
+  tileSearchParams,
+  VINYL_CATEGORY_ID,
+  vinylFacetsActive,
+} from "../lib/tileBrowse.js";
 
 const CATALOG_BATCH = 24;
 const CATALOG_VIEW_KEY = "subbie_catalog_view";
@@ -44,7 +57,7 @@ export default function CatalogPage() {
   const { catalogEpoch, catalogLoading } = useStore();
   const groupEpoch = useCatalogGroups();
   const { slug } = useParams();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState(() => params.get("q") || "");
   const [searchFields, setSearchFields] = useState([]);
   const [priceFilter, setPriceFilter] = useState("all");
@@ -75,48 +88,87 @@ export default function CatalogPage() {
 
   const products = useMemo(() => {
     if (!category) return [];
-    let list = searchProducts(searchQuery, category.name, { fields: searchFields });
+    const vinylOn = category.id === VINYL_CATEGORY_ID;
+    let list = vinylOn
+      ? getProductsByCategory().filter(isVinylFloor)
+      : searchProducts(searchQuery, category.name, { fields: searchFields });
+    if (vinylOn && String(searchQuery || "").trim()) {
+      const matched = new Set(searchProducts(searchQuery, [], { fields: searchFields }).map((product) => product.id));
+      list = list.filter((product) => matched.has(product.id));
+    }
     if (greenOnly) list = list.filter((p) => p.green);
     if (priceFilter === "priced") list = list.filter((p) => productShowsPrice(p));
     if (priceFilter === "unpriced") list = list.filter((p) => !productShowsPrice(p));
     if (priceFilter === "hot") list = list.filter((p) => isHitProduct(p));
-    return collapseCatalog(list, catalogGroupIndex());
+    return list;
   }, [searchQuery, category, searchFields, priceFilter, greenOnly, catalogEpoch, groupEpoch]);
+
+  const tileState = readTileQuery(params, { optional: true });
+  const vinylCategory = category?.id === VINYL_CATEGORY_ID;
+  const listActive = vinylCategory && vinylFacetsActive(tileState);
+  const shownEntries = useMemo(() => {
+    if (listActive) return applyListFilter(products, { ...tileState, kind: "vinyl" }) || [];
+    return collapseCatalog(products, catalogGroupIndex()).map((entry) => ({
+      ...entry,
+      key: entry.product.id,
+      hideSpecGroups: [],
+    }));
+  }, [listActive, products, tileState, groupEpoch]);
 
   useEffect(() => {
     setCatalogShown(CATALOG_BATCH);
-  }, [searchQuery, category?.id, searchFields, priceFilter, greenOnly]);
+  }, [searchQuery, category?.id, searchFields, priceFilter, greenOnly, tileState]);
 
   const handleAdd = useCallback((productId, intent = "quote", qty, options) => {
-    const result = addFromStorefront(productId, intent, qty, lang, options || {});
+    const note = listActive ? tileProductNote(options?.tileNote, lang, tileState) : "";
+    const result = addFromStorefront(productId, intent, qty, lang, {
+      ...(options || {}),
+      ...(note ? { remark: note } : {}),
+    });
     if (!result?.ok || intent === "quote-now" || intent === "buy-now") return;
     setToast({
       message: t(intent === "buy" ? "addedBuyToRfq" : "addedQuoteToRfq"),
       href: withLocale(lang, "/rfq"),
     });
-  }, [lang, t]);
+  }, [lang, t, listActive, tileState]);
 
-  if (!slug && catFromQuery) {
+  if (slug === "oxygen-chamber" && !CATEGORY_LIST_PAUSED) {
+    return <Navigate to={withLocale(lang, "/catalog/shop-equipment")} replace />;
+  }
+  if (!slug && catFromQuery && !CATEGORY_LIST_PAUSED) {
     return <Navigate to={withLocale(lang, `/catalog/${catFromQuery.id}`)} replace />;
   }
   if (!slug || !category) {
-    if (catalogLoading) return null;
-    return <Navigate to={allProductsTo(lang)} replace />;
+    const retired = retiredCategoryQuery(slug);
+    if (catalogLoading && !retired) return null;
+    const dest = allProductsTo(lang);
+    return (
+      <Navigate
+        to={retired ? { ...dest, search: `?q=${encodeURIComponent(retired)}` } : dest}
+        replace
+      />
+    );
   }
 
   const path = withLocale(lang, `/catalog/${category.id}`);
+  const sharePath = `${path}${listActive ? `?${tileSearchParams(tileState, params).toString()}` : ""}`;
   const crumbs = [
     { name: "Mattex Marketplace", path: withLocale(lang, "/") },
     { name: category.name, path },
   ];
   const hasFilters =
-    Boolean(searchQuery.trim()) || priceFilter !== "all" || greenOnly || searchFields.length > 0;
+    Boolean(searchQuery.trim()) || priceFilter !== "all" || greenOnly || searchFields.length > 0 || listActive;
+
+  function writeSearch(value) {
+    navigate(freshCatalogLocation(lang, value));
+  }
 
   function clearFilters() {
-    setSearchQuery("");
     setSearchFields([]);
     setPriceFilter("all");
     setGreenOnly(false);
+    setParams(clearTileSearchParams(params), { replace: true, preventScrollReset: true, state: { keepScroll: true } });
+    if (searchQuery.trim()) writeSearch("");
   }
 
   function setCatalogViewMode(next) {
@@ -131,11 +183,9 @@ export default function CatalogPage() {
   function openCategory(name) {
     const next = getCategoryByName(name);
     if (!next) return;
-    if (next.id === category.id) {
-      jumpToId("catalog-results");
-      return;
-    }
-    navigate(withLocale(lang, `/catalog/${next.id}`));
+    setSearchQuery("");
+    if (next.id === category.id) return;
+    navigate(withLocale(lang, `/catalog/${next.id}`), { preventScrollReset: true, state: { keepScroll: true } });
   }
 
   if (!category) {
@@ -159,10 +209,10 @@ export default function CatalogPage() {
       />
       <SiteHeader
         searchValue={searchQuery}
-        onSearchChange={setSearchQuery}
+        onSearchChange={writeSearch}
         onSearchSubmit={(event, value) => {
           event?.preventDefault();
-          setSearchQuery(value ?? "");
+          writeSearch(value ?? "");
           jumpToId("catalog-results");
         }}
         onSearchCategory={openCategory}
@@ -172,19 +222,35 @@ export default function CatalogPage() {
       <main className="mx-auto min-w-0 max-w-7xl px-4 py-10 sm:py-12">
         <div className="flex min-w-0 flex-col gap-8 lg:flex-row">
           <aside className="w-full min-w-0 max-w-full lg:w-56 lg:shrink-0 xl:w-60">
-            <CategorySideNav activeSlug={category.id} offsetTop={88} />
+            <CategorySideNav
+              activeSlug={category.id}
+              offsetTop={88}
+              filterMode
+              onSelectCategory={(next) => {
+                if (!next?.id || next.id === category.id) return;
+                navigate(withLocale(lang, `/catalog/${next.id}`), { preventScrollReset: true, state: { keepScroll: true } });
+              }}
+            />
           </aside>
           <div className="min-w-0 flex-1">
             <p id="catalog-top" className="text-xs font-semibold uppercase tracking-[0.14em] text-mute mb-2">
               <Link to={allProductsTo(lang)} className="hover:text-brand-600">
                 {t("allProductsTitle")}
               </Link>
+              {category.parentId ? (
+                <>
+                  <span className="mx-2 text-line">/</span>
+                  <Link to={withLocale(lang, `/catalog/${category.parentId}`)} className="hover:text-brand-600">
+                    {category.parentName}
+                  </Link>
+                </>
+              ) : null}
               <span className="mx-2 text-line">/</span>
               <span>{category.name}</span>
             </p>
             <div className="mb-4 flex items-center gap-3">
               <h1 className="min-w-0 font-display text-2xl sm:text-3xl font-semibold text-brand-800">{category.name}</h1>
-              <CopyLinkButton path={path} />
+              <CopyLinkButton path={sharePath} />
             </div>
 
             <div className="bg-white border border-line rounded-xl p-3 sm:p-3.5 mb-6">
@@ -193,13 +259,14 @@ export default function CatalogPage() {
                   <ProductSearchBox
                     id="catalog-search"
                     value={searchQuery}
-                    onValue={setSearchQuery}
+                    onValue={writeSearch}
                     onTerm={(term) => {
-                      setSearchQuery(term);
+                      writeSearch(term);
                       jumpToId("catalog-results");
                     }}
                     onProduct={openProduct}
                     onCategory={openCategory}
+                    includeShopTree
                     products={suggestionsPool}
                     browseCategories={browseCategories}
                     placeholder={t("searchPlaceholder")}
@@ -268,14 +335,23 @@ export default function CatalogPage() {
               </div>
             </div>
 
+            {vinylCategory ? (
+              <ListFilters
+                lang={lang}
+                products={products}
+                state={tileState}
+                onChange={(next) => setParams(tileSearchParams(next, params), { replace: true, preventScrollReset: true, state: { keepScroll: true } })}
+              />
+            ) : null}
+
             <div id="catalog-results" className="mb-4 flex items-end justify-between gap-3">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <h2 className="font-display text-2xl font-semibold text-brand-800">
-                  {catalogLoading && !products.length
+                  {catalogLoading && !shownEntries.length
                     ? t("loadingCatalog")
-                    : products.length === 1
+                    : shownEntries.length === 1
                       ? t("productLabelOne")
-                      : t("productsLabel", { n: products.length })}
+                      : t("productsLabel", { n: shownEntries.length })}
                 </h2>
                 {hasFilters ? (
                   <button
@@ -288,7 +364,7 @@ export default function CatalogPage() {
                 ) : null}
               </div>
             </div>
-            {catalogLoading && !products.length ? (
+            {catalogLoading && !shownEntries.length ? (
               <div
                 className={catalogView === "list" ? "min-w-0 space-y-4" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}
                 aria-busy="true"
@@ -296,33 +372,37 @@ export default function CatalogPage() {
               >
                 <ProductCardSkeleton count={6} />
               </div>
-            ) : products.length ? (
+            ) : shownEntries.length ? (
               <>
                 <div className={catalogView === "list" ? "min-w-0 space-y-4" : "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"}>
-                  {products.slice(0, catalogShown).map((entry) =>
+                  {shownEntries.slice(0, catalogShown).map((entry) =>
                     catalogView === "list" ? (
                       <ProductListRow
-                        key={entry.product.id}
+                        key={entry.key}
                         product={entry.product}
                         grouped={entry.grouped}
                         title={entry.groupName}
+                        hideSpecGroups={entry.hideSpecGroups}
+                        tileCustom={listActive ? { size: tileState.sizeCustom, slip: tileState.slipCustom } : null}
                         onAdd={handleAdd}
                       />
                     ) : (
                       <ProductCard
-                        key={entry.product.id}
+                        key={entry.key}
                         product={entry.product}
                         grouped={entry.grouped}
                         title={entry.groupName}
+                        hideSpecGroups={entry.hideSpecGroups}
+                        tileCustom={listActive ? { size: tileState.sizeCustom, slip: tileState.slipCustom } : null}
                         onAdd={handleAdd}
                       />
                     )
                   )}
                 </div>
-                {catalogShown < products.length ? (
+                {catalogShown < shownEntries.length ? (
                   <div className="mt-6 flex justify-center">
                     <button type="button" onClick={() => setCatalogShown((n) => n + CATALOG_BATCH)} className="btn-soft !px-5 !py-2.5">
-                      {t("showMore")} ({products.length - catalogShown})
+                      {t("showMore")} ({shownEntries.length - catalogShown})
                     </button>
                   </div>
                 ) : null}

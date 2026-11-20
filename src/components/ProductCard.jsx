@@ -1,11 +1,13 @@
-import { findPickedSpecOption } from "../lib/productFields.js";
-import { preparedSpecGroups, initialSpecPicks, resolveSelection, selectedProduct, selectionMessage } from "../lib/productSelection.js";
+import { findPickedSpecOption, specGroupApplies } from "../lib/productFields.js";
+import { preparedSpecGroups, initialSpecPicks, openingSpecPicks, resolveSelection, selectedProduct, selectionMessage } from "../lib/productSelection.js";
 import { memo, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { displayLeadTime, getProduct, isBuyerVisible, isHitProduct, productSkuId, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, buildTailorPrefillDescription, requireBuyerAuth, catalogPathForCategory, canDirectBuy } from "../lib/store";
+import { displayLeadTime, getProduct, isBuyerVisible, isHitProduct, productSkuId, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, buildTailorPrefillDescription, requireBuyerAuth, catalogPathForCategory, shopCategoryTrail, canDirectBuy, CATEGORY_LIST_PAUSED } from "../lib/store";
+import { customizeButtonText, isCustomizeLabel, isCustomizeSizeLabel, isPlainCustomizeLabel } from "../lib/specSearch";
 import { displayUnit, lowerDeliveryQty, orderMinimum, productImageUrl } from "../lib/productFields";
 import { groupOf, useCatalogGroups } from "../lib/catalogGroups";
 import { formatSpecDisplay, groupSizeChoices, localizeSpecText, optionLabels, sharedOptionPrefix, shopTitle, stripOptionPrefix } from "../lib/catalogGroup";
+import { homogenousColorName } from "../lib/homogenousColors";
 import { usePromo } from "../lib/promo";
 import { useCartLine } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
@@ -185,26 +187,20 @@ export function ProductTagPills({ product, className = "" }) {
   );
 }
 
-const META_CHIP = "inline-flex items-center whitespace-nowrap bg-paper text-[10px] px-1.5 py-0.5";
+const META_CHIP = "inline-flex min-w-0 max-w-full items-center whitespace-normal text-left leading-snug bg-paper text-[10px] px-1.5 py-0.5";
 
 export function ProductMetaChips({ product, className = "", showTags = false }) {
-  const { t, lang } = useLanguage();
+  const { t } = useLanguage();
   const stockKey = stockStatusKey(product.stockStatus);
   const inStock = product.stockStatus === "in_stock";
   return (
-    <div className={`flex flex-wrap items-center gap-1 ${className}`}>
+    <div className={`flex w-full min-w-0 flex-wrap items-center gap-1 ${className}`}>
       <span
         className={`${META_CHIP} font-semibold ${
           inStock ? "bg-brand-50 text-brand-800" : "text-ink"
         }`}
       >
         {t(stockKey)}
-      </span>
-      <span className={`${META_CHIP} font-medium text-mute`}>
-        {t("moq")} {product.moq} {displayUnit(product.unit, lang)}
-      </span>
-      <span className={`${META_CHIP} font-medium text-mute`}>
-        {shopLeadTime(product, lang)}
       </span>
       {showTags ? <ProductTagPills product={product} /> : null}
     </div>
@@ -380,8 +376,6 @@ export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card",
         <p className={`mt-1 text-amber-800 ${compact ? "text-[10px] leading-snug" : "text-[11px]"}`} role="alert">
           {t("qtyUnderMin", { n: `${min} ${shownUnit}`.trim() })}
         </p>
-      ) : size === "detail" ? (
-        <p className="mt-1 text-[11px] text-mute">{t("qtyMinMoq", { n: `${min} ${shownUnit}`.trim() })}</p>
       ) : null}
       {deliveryQty ? (
         <p className={`text-mute ${compact ? "mt-1 text-[10px] leading-snug" : "mt-1 text-[11px]"}`}>
@@ -393,7 +387,8 @@ export function QtyStepper({ value, min = 1, unit = "", onChange, size = "card",
 }
 
 function tailorInitialFromProduct(product, qty, { pickedSize = "", pickedSpecs = null, dimensions = false } = {}) {
-  const sizeForPrefill = pickedSize || "Customize";
+  const pickedCustom = Object.values(pickedSpecs || {}).map((value) => String(value || "").trim());
+  const sizeForPrefill = pickedSize || pickedCustom.find((value) => isCustomizeSizeLabel(value)) || pickedCustom.find((value) => isPlainCustomizeLabel(value)) || "Customize";
   return {
     name: shopTitle(product) || product.name || "",
     description: buildTailorPrefillDescription(product, {
@@ -402,14 +397,31 @@ function tailorInitialFromProduct(product, qty, { pickedSize = "", pickedSpecs =
     }),
     qty: Math.max(1, Number(qty) || Number(orderMinimum(product)) || 1),
     image: productImageUrl(product),
-    category: product.category || "",
+    category: CATEGORY_LIST_PAUSED ? "" : (product.category || ""),
     attachments: [],
     dimensions: Boolean(dimensions || product.tailorSize),
     prefillKey: `${product.id}|${sizeForPrefill}|${JSON.stringify(pickedSpecs || {})}`,
   };
 }
 
-export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, onQtyChange, hideQty = false, autoOpenTailor = false, tailorNonce = 0, tailorDimensions = false, disabled = false, pickedSpecs = null, pickedSize = "" }) {
+export function ShopCategoryLinks({ product, lang, className }) {
+  const trail = shopCategoryTrail(product);
+  if (!trail.length) return null;
+  return (
+    <p className={className}>
+      {trail.map((node, index) => (
+        <span key={node.id}>
+          {index > 0 ? <span className="mx-1 font-normal normal-case tracking-normal text-line">/</span> : null}
+          <Link to={`${withLocale(lang, `/catalog/${node.id}`)}#catalog-top`} className="hover:text-brand-800 hover:underline">
+            {node.name}
+          </Link>
+        </span>
+      ))}
+    </p>
+  );
+}
+
+export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, onQtyChange, hideQty = false, autoOpenTailor = false, tailorNonce = 0, tailorDimensions = false, disabled = false, pickedSpecs = null, pickedSize = "", tileNote = null }) {
   const { t, lang } = useLanguage();
   usePromo();
   const line = useCartLine(product.id, { pickedSpecs, pickedSize });
@@ -474,9 +486,11 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
     if (disabled || qty < minQty) return;
     const guestCartOk = intent === "quote-now" || intent === "buy-now" || intent === "quote" || intent === "buy";
     if (!guestCartOk && !requireBuyerAuth({ productId: product.id, intent, qty })) return;
+    const orderPicks = selectionIssue.ok ? selectionIssue.line?.pickedSpecs || pickedSpecs : pickedSpecs;
     onAdd?.(product.id, intent, qty, {
-      pickedSpecs: pickedSpecs || undefined,
+      pickedSpecs: orderPicks || undefined,
       pickedSize: pickedSize || undefined,
+      tileNote: tileNote || undefined,
     });
   }
 
@@ -607,10 +621,19 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
       </div>
     ) : null;
 
+  const selectionAlert = !selectionIssue.ok ? (
+    <p role="alert" className="text-xs text-amber-800">
+      {selectionMessage(selectionIssue.error, lang, minQty, selectionIssue.invalidGroups)}
+      {selectionIssue.error === "custom_required" ? (
+        <> <button type="button" className="underline" onClick={openTailor}>{lang === "en" ? "Add specification" : "填寫規格"}</button></>
+      ) : null}
+    </p>
+  ) : null;
+
   const buttons = (
     <div data-tour={size === "detail" ? undefined : "buy"} className={size === "detail" ? "space-y-2" : "space-y-1.5"}>
       {actionColumns}
-      {!selectionIssue.ok ? <p role="alert" className="text-xs text-amber-800">{selectionMessage(selectionIssue.error, lang, minQty)} <Link className="underline" to={withLocale(lang, `/details/${product.id}`)}>{lang === "en" ? "Review options" : "檢視規格"}</Link></p> : null}
+      {selectionAlert}
       {size !== "detail" && size !== "bar" ? tailorBtn : null}
       {size === "bar" && tailorBtn ? <div className="grid grid-cols-1">{tailorBtn}</div> : null}
       {tailorNote ? <p className="text-[11px] font-medium text-brand-700">{tailorNote}</p> : null}
@@ -632,7 +655,7 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
       <div className="space-y-2">
         {stepper}
         {actionColumns}
-        {!selectionIssue.ok ? <p role="alert" className="text-xs text-amber-800">{selectionMessage(selectionIssue.error, lang, minQty)}</p> : null}
+        {selectionAlert}
         {tailorBtn}
         {tailorNote ? <p className="text-[11px] font-medium text-brand-700">{tailorNote}</p> : null}
         {modal}
@@ -681,6 +704,7 @@ export function specSectionTitle(index, total, lang, optionLabel) {
 
 const SPEC_ID_NAMES = {
   colour: ["顏色", "Colour"],
+  "tile-color": ["顏色", "Colour"],
   "paving-colour": ["顏色", "Colour"],
   "mesh-size": ["尺寸", "Size"],
   "marble-size": ["尺寸", "Size"],
@@ -707,6 +731,8 @@ const SPEC_ID_NAMES = {
   "cabin-model": ["型號", "Model"],
   "shoe-model": ["型號", "Model"],
   "tile-rating": ["防滑等級", "Slip rating"],
+  "tile-slip": ["防滑等級", "Slip rating"],
+  "tile-surface": ["表面", "Surface"],
   "slip-rating": ["防滑等級", "Slip rating"],
   rating: ["防火等級", "Fire rating"],
   "cement-rating": ["防火等級", "Fire rating"],
@@ -733,7 +759,7 @@ const SPEC_ID_NAMES = {
 };
 
 function plainOptionLabels(options) {
-  return (options || []).map(specOptionLabel).map((label) => String(label || "").trim()).filter((label) => label && !isCustomizeChoice(label));
+  return (options || []).map(specOptionLabel).map((label) => String(label || "").trim()).filter((label) => label && !isCustomizeLabel(label));
 }
 
 function isSizeLabel(label) {
@@ -751,14 +777,14 @@ function inferSpecName(group, lang) {
   return "";
 }
 
-function groupHeading(group, index, total, lang, optionLabel) {
+export function groupHeading(group, index, total, lang, optionLabel) {
   const raw = specGroupTitle(group, lang);
   if (raw && !isGenericCategoryTitle(raw)) return localizeSpecText(raw, lang);
   return inferSpecName(group, lang) || specSectionTitle(index, total, lang, optionLabel);
 }
 
 export function sectionNameFromLabels(labels, { index = 0, total = 1, lang, optionLabel, allowSize = true } = {}) {
-  const plain = (labels || []).map((label) => String(label || "").trim()).filter((label) => label && !isCustomizeChoice(label));
+  const plain = (labels || []).map((label) => String(label || "").trim()).filter((label) => label && !isCustomizeLabel(label));
   if (allowSize && plain.length && plain.every(isSizeLabel)) return lang === "zh" ? "尺寸" : "Size";
   if (plain.length && plain.every((label) => /^[A-Z]{1,4}\d{2,4}$/i.test(label))) return lang === "zh" ? "型號" : "Model";
   if (plain.some((label) => /MKT-/i.test(label))) return lang === "zh" ? "型號" : "Model";
@@ -772,7 +798,7 @@ export function sectionNameFromLabels(labels, { index = 0, total = 1, lang, opti
 function countVisibleSpecGroups(groups) {
   const shown = preparedSpecGroups(groups);
   return shown.filter((group) => {
-    if (group.field === "length") return true;
+    if (group.field) return !group.dependsOn;
     return displayGroupOptions(group).length > 0;
   }).length;
 }
@@ -954,6 +980,10 @@ const SPEC_OPTION_ZH = {
   "Vinyl Roll": "卷材",
   "Homogenous Vinyl": "同質膠地板",
   "Heterogeneous Vinyl": "異質膠地板",
+  "Homogeneous Non-Directional (F2)": "同質無方向 (F2)",
+  "Homogeneous Electico (F2a)": "同質導電 (F2a)",
+  "Homogeneous Directional (F2d)": "同質有方向 (F2d)",
+  "Homogeneous Acoustic Vinyl (F2b)": "同質隔音 (F2b)",
   "<5 cm": "小於 5 cm",
 };
 
@@ -972,19 +1002,21 @@ function specOptionImage(option) {
   return "";
 }
 
-function specOptionText(option, lang) {
+function specOptionSwatch(option) {
+  if (option && typeof option === "object") return String(option.swatch || "");
+  return "";
+}
+
+export function specOptionText(option, lang) {
   const label = specOptionLabel(option);
-  if (isCustomizeChoice(label)) return lang === "zh" ? "自訂規格" : "Custom spec";
+  const custom = customizeButtonText(label, lang);
+  if (custom) return custom;
   if (lang === "zh" && SPEC_OPTION_ZH[label]) return formatSpecDisplay(SPEC_OPTION_ZH[label]);
   return formatSpecDisplay(label);
 }
 
 function customizeHint(lang) {
   return lang === "zh" ? "如有需要，可上載圖則" : "Upload a drawing if needed";
-}
-
-function CustomizeChipLabel({ lang }) {
-  return lang === "zh" ? "自訂規格 · 圖則" : "Custom spec · Drawing";
 }
 
 function sortLengthOptions(options) {
@@ -996,7 +1028,7 @@ function sortLengthOptions(options) {
   const custom = [];
   const rest = [];
   for (const option of options || []) {
-    if (isCustomizeChoice(specOptionLabel(option))) custom.push(option);
+    if (isCustomizeLabel(specOptionLabel(option))) custom.push(option);
     else if (rank(option) != null) sized.push(option);
     else rest.push(option);
   }
@@ -1004,21 +1036,54 @@ function sortLengthOptions(options) {
   return [...sized, ...rest, ...custom];
 }
 
-/** Ascending: numbers from 1, letters from A; Customize stays last. */
+export function compareSpecText(a, b) {
+  const la = String(a || "").trim();
+  const lb = String(b || "").trim();
+  const ca = isCustomizeLabel(la) ? 1 : 0;
+  const cb = isCustomizeLabel(lb) ? 1 : 0;
+  if (ca !== cb) return ca - cb;
+  const ta = la.match(/\d+(?:\.\d+)?|\D+/g) || [la];
+  const tb = lb.match(/\d+(?:\.\d+)?|\D+/g) || [lb];
+  const len = Math.min(ta.length, tb.length);
+  for (let i = 0; i < len; i += 1) {
+    const pa = ta[i];
+    const pb = tb[i];
+    const na = /^\d/.test(pa) ? Number(pa) : NaN;
+    const nb = /^\d/.test(pb) ? Number(pb) : NaN;
+    if (!Number.isNaN(na) && !Number.isNaN(nb)) {
+      if (na !== nb) return na - nb;
+      continue;
+    }
+    const cmp = pa.trim().localeCompare(pb.trim(), undefined, { sensitivity: "base" });
+    if (cmp !== 0) return cmp;
+  }
+  return ta.length - tb.length;
+}
+
+export function sortMembersAscending(members) {
+  if (!Array.isArray(members) || members.length < 2) return members || [];
+  const labels = optionLabels(members);
+  const prefix = sharedOptionPrefix(labels);
+  const stripped = labels.map((label) => stripOptionPrefix(label, prefix));
+  if (!stripped.some((label) => /\d/.test(label))) return members;
+  return members
+    .map((member, index) => ({ member, label: stripped[index] }))
+    .sort((a, b) => compareSpecText(a.label, b.label))
+    .map((entry) => entry.member);
+}
+
+/** Ascending: numbers (including decimals) from 1, letters from A; Customize stays last. */
 function sortSpecOptionsAscending(options) {
   const list = [...(options || [])];
   list.sort((a, b) => {
     const la = String(specOptionLabel(a) || specOptionKey(a) || "").trim();
     const lb = String(specOptionLabel(b) || specOptionKey(b) || "").trim();
-    const ca = isCustomizeChoice(la) ? 1 : 0;
-    const cb = isCustomizeChoice(lb) ? 1 : 0;
-    if (ca !== cb) return ca - cb;
-    return la.localeCompare(lb, undefined, { numeric: true, sensitivity: "base" });
+    return compareSpecText(la, lb);
   });
   return list;
 }
 
-/** All options for a group (deduped by label, sorted small→large). Unmatched stay visible but disabled. */
+/** All options for a group (deduped by label, sorted small→large unless keepOrder). Unmatched stay visible but disabled. */
 function displayGroupOptions(group) {
   const raw = group?.options || [];
   const list = group?.id === "kerb-length" ? sortLengthOptions(raw) : raw;
@@ -1030,7 +1095,7 @@ function displayGroupOptions(group) {
     seen.add(label);
     out.push(option);
   }
-  return sortSpecOptionsAscending(out);
+  return group?.keepOrder ? out : sortSpecOptionsAscending(out);
 }
 
 function optionMatchesParent(option, parent) {
@@ -1045,14 +1110,13 @@ function resolveGroupOption(group, labelOrKey, picked) {
 }
 
 function isGroupOptionEnabled(group, option, picked) {
-  if (!group?.dependsOn) return true;
-  const parent = picked?.[group.dependsOn];
-  if (!parent) return true;
   const label = specOptionLabel(option) || specOptionKey(option);
-  return (group.options || []).some((row) => {
-    const rowLabel = specOptionLabel(row) || specOptionKey(row);
-    return rowLabel === label && optionMatchesParent(row, parent);
-  });
+  const same = (group.options || []).filter((row) => (specOptionLabel(row) || specOptionKey(row)) === label);
+  const rows = same.length ? same : [option];
+  if (!group?.dependsOn) return rows.some((row) => !row?.with || row.with === picked?.[row.withGroup]);
+  const parent = picked?.[group.dependsOn];
+  if (!parent) return rows.some((row) => !row?.with || row.with === picked?.[row.withGroup]);
+  return rows.some((row) => optionMatchesParent(row, parent) && (!row?.with || row.with === picked?.[row.withGroup]));
 }
 
 function specGroupsSignature(groups) {
@@ -1065,7 +1129,7 @@ function specGroupsSignature(groups) {
             : `${option?.key || ""}:${option?.label || ""}:${option?.parent || ""}`
         )
         .join(",");
-      return `${group.id}|${group.dependsOn || ""}|${group.field || ""}|${options}`;
+      return `${group.id}|${group.dependsOn || ""}|${(group.when || []).join(",")}|${group.field || ""}|${options}`;
     })
     .join("||");
 }
@@ -1076,15 +1140,69 @@ function syncDependentPicks(groups, current) {
 }
 
 const COMPACT_SPEC_PREVIEW = 3;
+function customDimensionsOpen(group, picked) {
+  if (!group?.dependsOn) return true;
+  const parent = String(picked?.[group.dependsOn] || "");
+  return isCustomizeLabel(parent);
+}
 
-export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, onPick, compact = false, moreHref = "", extraSections = 0, onVisibleCount, value }) {
+function reconcileSpecPicks(groups, current) {
+  const next = {};
+  for (const group of groups || []) {
+    if (!specGroupApplies(group, next)) continue;
+    const parent = group.dependsOn ? next[group.dependsOn] : "";
+    if (group.field) {
+      if (customDimensionsOpen(group, next)) next[group.id] = String(current?.[group.id] ?? "");
+      continue;
+    }
+    const options = group.options || [];
+    const rawWanted = String(current?.[group.id] || "");
+    const wantedOption = options.find((item) => specOptionKey(item) === rawWanted || specOptionLabel(item) === rawWanted);
+    const wantedLabel = wantedOption ? specOptionLabel(wantedOption) : rawWanted;
+    const usable = (item) => (!item?.parent || item.parent === parent) && (!item?.with || item.with === next[item.withGroup]);
+    const named = (item) => {
+      const key = specOptionKey(item);
+      const label = specOptionLabel(item);
+      return (key === rawWanted || label === rawWanted || (wantedLabel && label === wantedLabel)) && usable(item);
+    };
+    const standard = (item) => !isCustomizeLabel(specOptionLabel(item));
+    const chosen = (rawWanted && options.find(named))
+      || options.find((item) => usable(item) && standard(item));
+    if (chosen) next[group.id] = specOptionKey(chosen);
+  }
+  return next;
+}
+
+function listedGroupOptions(group, picked) {
+  if (!specGroupApplies(group, picked)) return [];
+  return displayGroupOptions(group);
+}
+
+function optionIsSelectable(group, option, picked) {
+  const label = specOptionLabel(option);
+  return isCustomizeLabel(label) || isGroupOptionEnabled(group, option, picked);
+}
+
+/** Cards keep the catalog order and show the first three. Clicking one does not move it. */
+function cardPreviewOptions(listed, selectable) {
+  const pool = selectable.length ? selectable : listed;
+  return pool.slice(0, COMPACT_SPEC_PREVIEW);
+}
+
+
+export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, onPick, compact = false, moreHref = "", extraSections = 0, onVisibleCount, value, hiddenIds = [], seed = null }) {
   const { lang, t } = useLanguage();
   const shown = preparedSpecGroups(groups);
   const shownKey = specGroupsSignature(shown);
-  const [localPicks, setLocalPicks] = useState(() => initialSpecPicks(shown));
+  const [localPicks, setLocalPicks] = useState(() => reconcileSpecPicks(shown, initialSpecPicks(shown, seed)));
   const picked = value == null ? localPicks : value;
+  useEffect(() => {
+    if (!shown.length || value != null) return;
+    setLocalPicks((current) => reconcileSpecPicks(shown, current));
+  }, [shownKey, value]);
   function setPicked(update) {
-    const next = typeof update === "function" ? update(picked) : update;
+    const raw = typeof update === "function" ? update(picked) : update;
+    const next = reconcileSpecPicks(shown, raw);
     setLocalPicks(next);
     onPick?.(next);
   }
@@ -1100,10 +1218,13 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
         return;
       }
     }
+    onImage?.("");
   }, [shownKey, onImage, picked]);
   const visible = (shown || []).filter((group) => {
-    if (group.field === "length") return true;
-    return displayGroupOptions(group).length > 0;
+    if (hiddenIds.includes(group.id)) return false;
+    if (!specGroupApplies(group, picked)) return false;
+    if (group.field) return customDimensionsOpen(group, picked);
+    return listedGroupOptions(group, picked).some((option) => optionIsSelectable(group, option, picked));
   });
   const obsolete = Object.keys(picked).filter((id) => !shown.some((group) => group.id === id));
   if (!visible.length && !obsolete.length) return null;
@@ -1127,70 +1248,164 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
         </button>
       </div> : null}
       {visible.map((group, index) => {
-        const options = group.field === "length" ? [] : displayGroupOptions(group);
+        const next = visible[index + 1];
+        const after = visible[index + 2];
+        const triple = group.field === "thickness" && next?.field === "width" && after?.field === "length";
+        if (group.field === "width" && visible[index - 1]?.field === "thickness" && visible[index + 1]?.field === "length") return null;
+        if (group.field === "length" && visible[index - 1]?.field === "width" && visible[index - 2]?.field === "thickness") return null;
+        if (group.field === "length" && visible[index - 1]?.field === "width") return null;
+        const paired = group.field === "width" && next?.field === "length";
+        const options = group.field ? [] : listedGroupOptions(group, picked).filter((option) => optionIsSelectable(group, option, picked));
         const named = groupHeading(group, index, total, lang, t("variantOption"));
+        const writeField = (id, nextValue) =>
+          setPicked((current) => syncDependentPicks(shown, { ...current, [id]: nextValue }));
+        const box = `field-input shrink-0 text-center ${compact ? "!w-12 !px-1.5 !py-1 !text-xs" : "!w-14 !px-2 !py-1.5 !text-sm"}`;
+        if (triple) {
+          const fields = [group, next, after];
+          return (
+            <div key={`${group.id}:${next.id}:${after.id}`} className="flex flex-wrap items-end gap-2">
+              {fields.map((field, fieldIndex) => {
+                const fieldName = groupHeading(field, index + fieldIndex, total, lang, t("variantOption"));
+                const title = field.unit ? `${fieldName} (${field.unit})` : fieldName;
+                return (
+                  <label key={field.id} className="flex flex-col gap-1">
+                    <span className={`font-semibold text-ink ${compact ? "text-xs" : "text-sm"}`}>{title}</span>
+                    <span className="flex items-center gap-2">
+                      {fieldIndex > 0 ? <span className={`text-mute ${compact ? "text-xs" : "text-sm"}`}>x</span> : null}
+                      <input
+                        type="number"
+                        min="0"
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={picked[field.id] || ""}
+                        onChange={(event) => writeField(field.id, event.target.value)}
+                        className={box}
+                        aria-label={title}
+                      />
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          );
+        }
+        if (paired) {
+          const lengthName = groupHeading(next, index + 1, total, lang, t("variantOption"));
+          const box = `field-input shrink-0 text-center ${compact ? "!w-12 !px-1.5 !py-1 !text-xs" : "!w-14 !px-2 !py-1.5 !text-sm"}`;
+          return (
+            <div key={`${group.id}:${next.id}`} className="flex items-center gap-2">
+              <input
+                type="number"
+                min="0"
+                inputMode="decimal"
+                placeholder="0"
+                value={picked[group.id] || ""}
+                onChange={(event) => writeField(group.id, event.target.value)}
+                className={box}
+                aria-label={named}
+              />
+              <span className={`text-mute ${compact ? "text-xs" : "text-sm"}`}>x</span>
+              <input
+                type="number"
+                min="0"
+                inputMode="decimal"
+                placeholder="0"
+                value={picked[next.id] || ""}
+                onChange={(event) => writeField(next.id, event.target.value)}
+                className={box}
+                aria-label={lengthName}
+              />
+              <span className={`text-ink ${compact ? "text-xs" : "text-sm"}`}>{group.unit || next.unit || "m"}</span>
+            </div>
+          );
+        }
         return (
         <div key={group.id}>
           <p className={`font-semibold text-ink ${compact ? "text-xs" : "text-sm"}`}>{named}</p>
-          {group.field === "length" ? (
+          {group.field ? (
             <label className="mt-2 flex items-center gap-2">
               <input
                 type="number"
                 min="0"
                 inputMode="decimal"
+                placeholder="0"
                 value={picked[group.id] || ""}
-                onChange={(event) =>
-                  setPicked((current) =>
-                    syncDependentPicks(shown, { ...current, [group.id]: event.target.value })
-                  )
-                }
-                className={`field-input ${compact ? "w-20 px-2 py-1 text-xs" : "w-24"}`}
+                onChange={(event) => writeField(group.id, event.target.value)}
+                className={`field-input shrink-0 text-center ${compact ? "!w-12 !px-1.5 !py-1 !text-xs" : "!w-14 !px-2 !py-1.5 !text-sm"}`}
                 aria-label={named}
               />
               <span className={`text-ink ${compact ? "text-xs" : "text-sm"}`}>{group.unit || "m"}</span>
             </label>
           ) : (
-          <div className={`mt-2 items-start ${compact ? "flex flex-col gap-1.5" : "flex flex-wrap gap-2"}`}>
+          <div className={`mt-2 items-start ${options.some((option) => specOptionSwatch(option) || specOptionImage(option)) ? `grid grid-cols-5 gap-1.5 ${!compact && group.id === "tile-color" ? "xl:grid-cols-6" : ""}` : compact ? "flex flex-col gap-1.5" : "flex flex-wrap gap-2"}`}>
             {(() => {
               const pickedKey = String(picked[group.id] || "");
               const active = resolveGroupOption(group, pickedKey, picked);
               const activeLabel = specOptionLabel(active) || specOptionKey(active);
               // Compact cards: preview a few chips, then jump to details for the rest.
-              const canCollapse = compact && moreHref && options.length > COMPACT_SPEC_PREVIEW;
-              const preview = canCollapse ? options.slice(0, COMPACT_SPEC_PREVIEW) : options;
+              const preview = compact ? cardPreviewOptions(options, options) : options;
               const hiddenCount = options.length - preview.length;
+              const canCollapse = compact && moreHref && hiddenCount > 0;
               return (
                 <>
                   {preview.map((option) => {
                     const label = specOptionLabel(option);
                     const displayKey = label || specOptionKey(option);
-                    const customize = isCustomizeChoice(label);
+                    const customize = isCustomizeLabel(label);
                     const enabled = customize || isGroupOptionEnabled(group, option, picked);
                     const on = Boolean(activeLabel) && activeLabel === displayKey;
+                    const swatch = specOptionSwatch(option);
+                    const photo = specOptionImage(option);
+                    const choose = () => {
+                      if (!enabled) return;
+                      const resolved = resolveGroupOption(group, displayKey, picked) || option;
+                      const nextKey = specOptionKey(resolved);
+                      setPicked((current) =>
+                        syncDependentPicks(shown, { ...current, [group.id]: nextKey })
+                      );
+                      if (!customize) return;
+                      if (isCustomizeSizeLabel(label) && group.id !== "slab-size") return;
+                      onCustomize?.(group.id === "slab-size" ? { dimensions: true } : undefined);
+                    };
+                    if (swatch || photo) {
+                      const colorName = homogenousColorName(option, lang) || specOptionText(option, lang);
+                      return (
+                        <button
+                          key={`${group.id}:${displayKey}`}
+                          type="button"
+                          aria-pressed={on}
+                          aria-label={colorName}
+                          title={colorName}
+                          disabled={!enabled}
+                          onClick={choose}
+                          className={`overflow-hidden border bg-white text-left ${
+                            !enabled
+                              ? "cursor-not-allowed border-line/70 opacity-40"
+                              : on
+                                ? "border-brand-700 ring-1 ring-brand-700"
+                                : "border-line hover:border-brand-400"
+                          }`}
+                        >
+                          {photo ? (
+                            <img src={photo} alt="" loading="lazy" decoding="async" className="block aspect-square w-full object-cover" />
+                          ) : (
+                            <span className="block aspect-square" style={{ backgroundColor: swatch }} />
+                          )}
+                          <span className="block truncate px-1 py-0.5 text-right text-[10px] leading-tight text-ink">{colorName}</span>
+                        </button>
+                      );
+                    }
                     return (
                       <button
                         key={`${group.id}:${displayKey}`}
                         type="button"
                         aria-pressed={on}
                         disabled={!enabled}
-                        title={customize ? customizeHint(lang) : undefined}
-                        onClick={() => {
-                          if (!enabled) return;
-                          const resolved = resolveGroupOption(group, displayKey, picked) || option;
-                          const nextKey = specOptionKey(resolved);
-                          setPicked((current) =>
-                            syncDependentPicks(shown, { ...current, [group.id]: nextKey })
-                          );
-                          if (!customize) return;
-                          onCustomize?.(group.id === "slab-size" ? { dimensions: true } : undefined);
-                        }}
+                        title={isPlainCustomizeLabel(label) ? customizeHint(lang) : undefined}
+                        onClick={choose}
                         className={chipClass(on, !enabled)}
                       >
-                        {customize ? (
-                          <CustomizeChipLabel lang={lang} compact={compact} on={on} />
-                        ) : (
-                          specOptionText(option, lang)
-                        )}
+                        {specOptionText(option, lang)}
                       </button>
                     );
                   })}
@@ -1204,6 +1419,7 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
             })()}
           </div>
           )}
+          {group.note ? <p className={`mt-1 text-mute ${compact ? "text-[11px]" : "text-xs"}`}>{group.note}</p> : null}
         </div>
         );
       })}
@@ -1212,13 +1428,14 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
 }
 
 function isCustomizeChoice(label) {
-  return /^(customize|customization|customize size|customize drawing upload)$/i.test(String(label || "").trim());
+  return isCustomizeLabel(label);
 }
 
 export function SizeChoicePicker({ choices, className = "", onCustomize, onPick, compact = false, title = "" }) {
   const { lang } = useLanguage();
-  const key = (choices || []).join("\n");
-  const [picked, setPicked] = useState(() => (choices || [])[0] || "");
+  const sortedChoices = [...(choices || [])].sort(compareSpecText);
+  const key = sortedChoices.join("\n");
+  const [picked, setPicked] = useState(() => sortedChoices.find((choice) => !isCustomizeChoice(choice)) || "");
   useEffect(() => {
     onPick?.(picked);
   }, [onPick, picked]);
@@ -1243,18 +1460,14 @@ export function SizeChoicePicker({ choices, className = "", onCustomize, onPick,
               key={choice}
               type="button"
               aria-pressed={on}
-              title={isCustomizeChoice(choice) ? customizeHint(lang) : undefined}
+              title={isPlainCustomizeLabel(choice) ? customizeHint(lang) : undefined}
               onClick={() => {
                 setPicked(choice);
                 if (isCustomizeChoice(choice)) onCustomize?.();
               }}
               className={chipClass(on)}
             >
-              {isCustomizeChoice(choice) ? (
-                <CustomizeChipLabel lang={lang} compact={compact} on={on} />
-              ) : (
-                specOptionText(choice, lang)
-              )}
+              {specOptionText(choice, lang)}
             </button>
           );
         })}
@@ -1263,8 +1476,9 @@ export function SizeChoicePicker({ choices, className = "", onCustomize, onPick,
   );
 }
 
-function ModelAndSizeSpecs({ members, selectedId, onSelect, moreHref, moreLabel, onCustomize, onSizePick, compact = false, sectionOffset = 0, sectionTotal = 0 }) {
+function ModelAndSizeSpecs({ members: rawMembers, selectedId, onSelect, moreHref, moreLabel, onCustomize, onSizePick, compact = false, sectionOffset = 0, sectionTotal = 0 }) {
   const { lang, t } = useLanguage();
+  const members = sortMembersAscending(rawMembers);
   const sizes = groupSizeChoices(members);
   const showVariants = members.length >= 2;
   const showSizes = sizes.length >= 2;
@@ -1335,7 +1549,57 @@ function VariantChips({ members, selectedId, onSelect, moreHref, moreLabel, pref
   );
 }
 
-export const ProductListRow = memo(function ProductListRow({ product, onAdd, grouped = false }) {
+function productDetailsHref(lang, product) {
+  const path = withLocale(lang, `/details/${product?.id || ""}`);
+  const pick = String(product?.matchLabel || "").trim();
+  return pick ? `${path}?pick=${encodeURIComponent(pick)}` : path;
+}
+
+function TileCustomBox({ tileCustom, note, onNote }) {
+  const { lang } = useLanguage();
+  const [open, setOpen] = useState(false);
+  if (!tileCustom?.size && !tileCustom?.slip) return null;
+  const zh = lang !== "en";
+  const value = note || { size: "", slip: "" };
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        className="btn-soft !px-3 !py-1.5 !text-xs"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        Customized
+      </button>
+      {open ? (
+        <div className="mt-2 space-y-2">
+          {tileCustom.size ? (
+            <label className="block text-xs font-semibold text-ink">
+              {zh ? "自訂尺寸" : "Customize Size"}
+              <input
+                value={value.size}
+                onChange={(event) => onNote?.({ ...value, size: event.target.value.slice(0, 200) })}
+                className="field-input mt-1 w-full text-sm font-normal"
+              />
+            </label>
+          ) : null}
+          {tileCustom.slip ? (
+            <label className="block text-xs font-semibold text-ink">
+              {zh ? "自訂防滑" : "Customize"}
+              <input
+                value={value.slip}
+                onChange={(event) => onNote?.({ ...value, slip: event.target.value.slice(0, 200) })}
+                className="field-input mt-1 w-full text-sm font-normal"
+              />
+            </label>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export const ProductListRow = memo(function ProductListRow({ product, onAdd, grouped = false, hideSpecGroups = [], tileCustom = null }) {
   const { t, lang } = useLanguage();
   const { selected, members, selectedId, setSelectedId } = useSelectedVariant(product, grouped);
   const [tailorNonce, setTailorNonce] = useState(0);
@@ -1345,8 +1609,9 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
     setTailorNonce((n) => n + 1);
   }
   const [specImage, setSpecImage] = useState("");
-  const [pickedSpecs, setPickedSpecs] = useState(null);
+  const [pickedSpecs, setPickedSpecs] = useState(() => openingSpecPicks(selected));
   const [pickedSize, setPickedSize] = useState("");
+  const [tileNote, setTileNote] = useState({ size: "", slip: "" });
   const label = shopTitle(selected, lang);
   const sections = sectionPlan(selected, members);
 
@@ -1354,7 +1619,7 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
     <article className="catalog-row relative flex min-w-0 max-w-full flex-col gap-4 border border-line bg-white p-4 sm:flex-row sm:items-start sm:gap-6">
       <div className="flex min-w-0 gap-4 sm:contents">
         <Link
-          to={withLocale(lang, `/details/${selected.id}`)}
+          to={productDetailsHref(lang, selected)}
           className="relative block h-24 w-24 shrink-0 overflow-hidden bg-brand-50 sm:h-32 sm:w-32"
         >
           <ProductImage
@@ -1367,6 +1632,9 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
           />
         </Link>
         <div className="min-w-0 flex-1">
+          {shopCategoryTrail(selected).length ? (
+            <ShopCategoryLinks product={selected} lang={lang} className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600" />
+          ) : CATEGORY_LIST_PAUSED ? null : (
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">
             <Link
               to={withLocale(lang, catalogPathForCategory(selected.category))}
@@ -1375,26 +1643,28 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
               {selected.category}
             </Link>
           </p>
+          )}
           <h3 className="mt-1 break-words text-sm font-semibold leading-snug text-ink sm:text-base">
-            <Link to={withLocale(lang, `/details/${selected.id}`)} className="hover:text-brand-600">
+            <Link to={productDetailsHref(lang, selected)} className="hover:text-brand-600">
               {label}
             </Link>
           </h3>
-          <p className="mt-1 truncate text-xs text-mute">
-            {t("productNo")} {productSkuId(selected) || selected.id}
-            {selected.supplier ? ` · ${t("by")} ${supplierDisplayName(selected.supplier)}` : ""}
-          </p>
+          {selected.supplier ? (
+            <p className="mt-1 truncate text-xs text-mute">
+              {t("by")} {supplierDisplayName(selected.supplier)}
+            </p>
+          ) : null}
           <div className="mt-1 sm:hidden">
             <ProductPrice product={selectedProduct(selected, { pickedSpecs, pickedSize })} className="!mt-0" />
           </div>
           {selected.specGroups?.length || Object.keys(pickedSpecs || {}).length ? (
-            <SpecGroupPicker key={selected.id} groups={selected.specGroups} className="mt-3" compact moreHref={withLocale(lang, `/details/${selected.id}`)} onImage={setSpecImage} onPick={setPickedSpecs} onCustomize={openTailor} extraSections={sections.extra} />
+            <SpecGroupPicker key={selected.id} groups={selected.specGroups} seed={selected.specChoices?.[0]?.picks} hiddenIds={hideSpecGroups} className="mt-3" compact moreHref={productDetailsHref(lang, selected)} onImage={setSpecImage} onPick={setPickedSpecs} onCustomize={openTailor} extraSections={sections.extra} />
           ) : null}
           <ModelAndSizeSpecs
             members={members}
             selectedId={selectedId}
             onSelect={setSelectedId}
-            moreHref={withLocale(lang, `/details/${selected.id}`)}
+            moreHref={productDetailsHref(lang, selected)}
             moreLabel={t("moreOptions", { n: Math.max(members.length - 2, 0) })}
             onCustomize={openTailor}
             onSizePick={setPickedSize}
@@ -1409,14 +1679,15 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
         <ProductPrice product={selectedProduct(selected, { pickedSpecs, pickedSize })} className="!mt-0" />
       </div>
       <div className="min-w-0 self-start sm:w-60 sm:shrink-0">
+        <TileCustomBox tileCustom={tileCustom} note={tileNote} onNote={setTileNote} />
         <ProductActions product={selected} onAdd={onAdd} size="row" tailorNonce={tailorNonce}
-            tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} />
+            tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} tileNote={tileNote} />
       </div>
     </article>
   );
 });
 
-function ProductCard({ product, onAdd, rank = null, compact = false, grouped = false, showOfferEnded = false }) {
+function ProductCard({ product, onAdd, rank = null, compact = false, grouped = false, showOfferEnded = false, hideSpecGroups = [], tileCustom = null }) {
   const { t, lang } = useLanguage();
   const { selected, members, selectedId, setSelectedId } = useSelectedVariant(product, grouped);
   const [tailorNonce, setTailorNonce] = useState(0);
@@ -1426,8 +1697,9 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
     setTailorNonce((n) => n + 1);
   }
   const [specImage, setSpecImage] = useState("");
-  const [pickedSpecs, setPickedSpecs] = useState(null);
+  const [pickedSpecs, setPickedSpecs] = useState(() => openingSpecPicks(selected));
   const [pickedSize, setPickedSize] = useState("");
+  const [tileNote, setTileNote] = useState({ size: "", slip: "" });
   const supplierName = supplierDisplayName(selected.supplier);
   const label = shopTitle(selected, lang);
   const sections = sectionPlan(selected, members);
@@ -1436,7 +1708,7 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
     <article className="product-tile relative flex h-full min-w-0 max-w-full flex-col overflow-visible">
       <ProductBadges product={selected} rank={selected.id === product.id ? rank : null} />
       <Link
-        to={withLocale(lang, `/details/${selected.id}`)}
+        to={productDetailsHref(lang, selected)}
         className="block h-28 overflow-hidden bg-brand-50 min-[752px]:h-40 lg:aspect-[3/2] lg:h-auto"
       >
         <ProductImage
@@ -1448,6 +1720,9 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
         />
       </Link>
       <div className={`flex flex-1 flex-col ${compact ? "p-2.5 min-[752px]:p-3" : "p-3 min-[752px]:p-3.5"}`}>
+        {shopCategoryTrail(selected).length ? (
+          <ShopCategoryLinks product={selected} lang={lang} className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600" />
+        ) : CATEGORY_LIST_PAUSED ? null : (
         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">
           <Link
             to={withLocale(lang, catalogPathForCategory(selected.category))}
@@ -1456,8 +1731,9 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
             {selected.category}
           </Link>
         </p>
+        )}
         <h3 className={`mt-1 font-semibold text-ink leading-snug line-clamp-3 ${compact ? "text-sm" : "text-base"}`}>
-          <Link to={withLocale(lang, `/details/${selected.id}`)} className="hover:text-brand-600 transition-colors">
+          <Link to={productDetailsHref(lang, selected)} className="hover:text-brand-600 transition-colors">
             {label}
           </Link>
         </h3>
@@ -1473,13 +1749,13 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
         </p>
         <ProductRating product={selected} className="mt-1" />
         {selected.specGroups?.length || Object.keys(pickedSpecs || {}).length ? (
-          <SpecGroupPicker key={selected.id} groups={selected.specGroups} className="mt-3" compact moreHref={withLocale(lang, `/details/${selected.id}`)} onImage={setSpecImage} onPick={setPickedSpecs} onCustomize={openTailor} extraSections={sections.extra} />
+          <SpecGroupPicker key={selected.id} groups={selected.specGroups} seed={selected.specChoices?.[0]?.picks} hiddenIds={hideSpecGroups} className="mt-3" compact moreHref={productDetailsHref(lang, selected)} onImage={setSpecImage} onPick={setPickedSpecs} onCustomize={openTailor} extraSections={sections.extra} />
         ) : null}
         <ModelAndSizeSpecs
           members={members}
           selectedId={selectedId}
           onSelect={setSelectedId}
-          moreHref={withLocale(lang, `/details/${selected.id}`)}
+          moreHref={productDetailsHref(lang, selected)}
           moreLabel={t("moreOptions", { n: Math.max(members.length - 2, 0) })}
           onCustomize={openTailor}
           onSizePick={setPickedSize}
@@ -1490,9 +1766,10 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
         <ProductMetaChips product={selected} className="mt-2.5" />
         <div className="mt-auto pt-3 min-[752px]:pt-4">
           <ProductPrice product={selectedProduct(selected, { pickedSpecs, pickedSize })} className="!mt-0" showOfferEnded={showOfferEnded} />
+          <TileCustomBox tileCustom={tileCustom} note={tileNote} onNote={setTileNote} />
           <div className="mt-2.5 min-[752px]:mt-3">
             <ProductActions product={selected} onAdd={onAdd} size="card" tailorNonce={tailorNonce}
-            tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} />
+            tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} tileNote={tileNote} />
           </div>
         </div>
       </div>

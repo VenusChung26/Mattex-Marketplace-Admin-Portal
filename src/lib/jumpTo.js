@@ -80,6 +80,14 @@ export function scrollToTopNow() {
   });
 }
 
+export function sectionAlreadyInView(id) {
+  const el = document.getElementById(id);
+  if (!el) return false;
+  const nav = document.getElementById("siteNav");
+  const cover = nav ? Math.round(nav.getBoundingClientRect().height) : 0;
+  return el.getBoundingClientRect().top <= cover + 8;
+}
+
 /** `animate: true` is for header links and in-page jumps; everything else keeps the instant jump. */
 export function jumpToId(id, { animate = false, gap = 8 } = {}) {
   if (animate && !reducedMotion()) {

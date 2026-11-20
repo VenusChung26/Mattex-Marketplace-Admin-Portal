@@ -84,6 +84,29 @@ export function absAsset(origin, src) {
   return absUrl(origin, value.startsWith("/") ? value : `/${value}`);
 }
 
+export function freshCatalogLocation(lang, value) {
+  const q = String(value ?? "").trim();
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  const search = params.toString();
+  return {
+    pathname: withLocale(lang, "/"),
+    search: search ? `?${search}` : "",
+    hash: q ? "" : "products",
+  };
+}
+
+export function productDetailsLocation(lang, product) {
+  const pick = String(product?.matchLabel || "").trim();
+  const params = new URLSearchParams();
+  if (pick) params.set("pick", pick);
+  const search = params.toString();
+  return {
+    pathname: withLocale(lang, `/details/${product?.id || ""}`),
+    search: search ? `?${search}` : "",
+  };
+}
+
 export const LEGACY_REDIRECTS = [
   "/green",
   "/sales",

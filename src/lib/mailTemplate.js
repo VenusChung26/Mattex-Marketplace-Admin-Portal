@@ -130,6 +130,44 @@ function footerTextLinks(links) {
   return `<p style="margin:16px 0 0;${FACE}font-size:13px;line-height:1.5;">${html}</p>`;
 }
 
+/** Large OTP / one-shot code block for email (select to copy — email clients block JS clipboard). */
+export function mailOtpCodeBlock(code, { label = "Verification code", hint = "Select the code to copy" } = {}) {
+  const value = String(code || "").trim();
+  if (!value) return "";
+  // Nested boxes approximate a clipboard icon without relying on images or emoji.
+  const copyIcon = `
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="display:inline-table;vertical-align:middle;margin-right:8px;">
+                    <tr>
+                      <td>
+                        <table role="presentation" cellpadding="0" cellspacing="0">
+                          <tr>
+                            <td style="width:12px;height:14px;border:1.5px solid ${MUTE};border-radius:2px;background:#ffffff;"></td>
+                          </tr>
+                        </table>
+                      </td>
+                      <td style="width:0;font-size:0;line-height:0;">
+                        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:-10px 0 0 -8px;">
+                          <tr>
+                            <td style="width:12px;height:14px;border:1.5px solid ${MUTE};border-radius:2px;background:#f3f7f5;"></td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>`;
+  return `
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 22px;">
+              <tr>
+                <td align="center" style="background:#f3f7f5;border:1px solid ${LINE};border-radius:12px;padding:26px 18px 22px;">
+                  <p style="margin:0 0 12px;${FACE}font-size:12px;line-height:1.4;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:${MUTE};">${escapeHtml(label)}</p>
+                  <p style="margin:0;${FACE}font-size:48px;line-height:1.1;font-weight:700;letter-spacing:0.32em;color:${BRAND};font-variant-numeric:tabular-nums;-webkit-user-select:all;user-select:all;">${escapeHtml(value)}</p>
+                  <p style="margin:16px 0 0;${FACE}font-size:13px;line-height:1.4;color:${MUTE};">
+                    ${copyIcon}<span style="vertical-align:middle;">${escapeHtml(hint)}</span>
+                  </p>
+                </td>
+              </tr>
+            </table>`;
+}
+
 export function renderMattexEmail({
   logoUrl,
   brandName = "Mattex Marketplace",
@@ -144,6 +182,8 @@ export function renderMattexEmail({
   buttonHref,
   footnote,
   footerLinks = [],
+  heroHtml = "",
+  orderTerms = false,
 }) {
   const body = (paragraphs || [])
     .filter(Boolean)
@@ -181,6 +221,7 @@ export function renderMattexEmail({
             <h1 style="margin:0 0 16px;${TITLE}font-size:28px;line-height:1.25;color:${INK};text-align:left;">${escapeHtml(title)}</h1>
             ${greeting ? `<p style="margin:0 0 12px;${FACE}font-size:15px;line-height:1.6;color:${INK};">${escapeHtml(greeting)}</p>` : ""}
             ${body}
+            ${heroHtml || ""}
           </td>
         </tr>
         ${
@@ -217,6 +258,11 @@ export function renderMattexEmail({
       <p style="margin:0;${FACE}font-size:15px;line-height:1.4;font-weight:700;color:${INK};">Questions?</p>
       <p style="margin:8px 0 0;max-width:460px;${FACE}font-size:14px;line-height:1.6;color:${MUTE};">${contact}</p>
       <p style="margin:16px 0 0;${FACE}font-size:12px;line-height:1.5;color:${MUTE};">Mattex Marketplace · Hong Kong</p>
+      ${
+        orderTerms
+          ? `<p style="margin:12px 0 0;max-width:520px;${FACE}font-size:11px;line-height:1.6;color:${MUTE};">This order is subject to Mattex Asia Development Limited’s Terms and Conditions of Sale (<a href="https://marketplace.mattex.com.hk/" target="_blank" style="${FACE}color:${BRAND};text-decoration:underline;">https://marketplace.mattex.com.hk/</a>). Mattex Asia Development Limited reserves the final right of decision on all orders.<br />本訂單受 Mattex Asia Development Limited 之《銷售條款及細則》（<a href="https://marketplace.mattex.com.hk/" target="_blank" style="${FACE}color:${BRAND};text-decoration:underline;">https://marketplace.mattex.com.hk/</a>）約束。Mattex Asia Development Limited 對所有訂單保留最終決定權。</p>`
+          : ""
+      }
     </td>
   </tr>
 </table>`;
@@ -270,7 +316,7 @@ export function accountCreatedEmailHtml({ logoUrl, salesEmail, name, email, comp
     title: "Your Mattex Marketplace account is ready",
     greeting: `Hi ${name},`,
     paragraphs: [
-      "Your account was created. Please verify your email in Marketplace before requesting quotes or placing orders.",
+      "Your account was created. You can request quotes and place orders in Marketplace.",
     ],
     detailsTitle: "Here's your account:",
     details: [
@@ -430,6 +476,7 @@ export function poReceivedEmailHtml({ logoUrl, salesEmail, name, poId, lines, to
     details: poLineDetails(lines, total),
     buttonLabel: "View your order",
     buttonHref: posHref || rfqsHref,
+    orderTerms: true,
     footerLinks: [
       { label: "My purchase orders", href: posHref || rfqsHref },
       { label: "Marketplace", href: shopHref },
@@ -796,6 +843,23 @@ export function listPrototypeEmails({ marketplaceOrigin, adminOrigin, salesEmail
         rfqId: "RFQ-1209",
         project: "Kai Tak Tower",
         rfqsHref: `${shop}/zh/rfqs`,
+        shopHref: `${shop}/zh`,
+        toEmail: "venus@mattex.com.hk",
+      }),
+    },
+    {
+      id: "po-received",
+      label: "Buyer — order confirmation",
+      to: "venus@mattex.com.hk",
+      subject: "We received your order PO-26000001",
+      innerHtml: poReceivedEmailHtml({
+        logoUrl,
+        salesEmail,
+        name: "Venus Chung",
+        poId: "PO-26000001",
+        lines: [{ sku: "MKT-SHEET-023", name: "White faced Plywood", qty: 10, unit: "sheet", unitPrice: 62 }],
+        total: 620,
+        posHref: `${shop}/zh/pos`,
         shopHref: `${shop}/zh`,
         toEmail: "venus@mattex.com.hk",
       }),

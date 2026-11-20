@@ -13,7 +13,7 @@ import { catalogGroupIndex, collapseCatalog, useCatalogGroups } from "../lib/cat
 import { useStore } from "../hooks/useStore";
 import { jumpToId } from "../lib/jumpTo";
 import { categoriesInCatalog } from "../lib/searchOptions";
-import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
+import { allProductsTo, freshCatalogLocation, productDetailsLocation, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
 import { SHOW_RFQ } from "../lib/flags";
 import {
@@ -115,7 +115,11 @@ export default function SupplierPage() {
 
   function openProduct(product) {
     if (!product?.id) return;
-    navigate(withLocale(lang, `/details/${product.id}`));
+    navigate(productDetailsLocation(lang, product));
+  }
+
+  function searchFromHere(value) {
+    navigate(freshCatalogLocation(lang, value));
   }
 
   function scrollToSupplierResults() {
@@ -203,11 +207,10 @@ export default function SupplierPage() {
       />
       <SiteHeader
         searchValue={searchQuery}
-        onSearchChange={setSearchQuery}
+        onSearchChange={searchFromHere}
         onSearchSubmit={(event, value) => {
           event?.preventDefault();
-          setSearchQuery(value ?? "");
-          jumpToId("supplier-products");
+          searchFromHere(value ?? "");
         }}
         onSearchCategory={pickCategory}
         browseCategories={browseCategories}
@@ -310,11 +313,8 @@ export default function SupplierPage() {
                     <ProductSearchBox
                       id="supplier-search"
                       value={searchQuery}
-                      onValue={setSearchQuery}
-                      onTerm={(term) => {
-                        setSearchQuery(term);
-                        jumpToId("supplier-products");
-                      }}
+                      onValue={searchFromHere}
+                      onTerm={searchFromHere}
                       onProduct={openProduct}
                       onCategory={pickCategory}
                       products={catalog}

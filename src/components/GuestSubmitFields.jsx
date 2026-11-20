@@ -3,7 +3,7 @@ import { RequiredMark } from "./AccountForm";
 import { BuyerPhoneFields } from "./BuyerContactFields";
 import { useLanguage } from "../i18n";
 import { forgetGuestFile, rememberGuestFile } from "../lib/guestOrder";
-import DateField from "./DateField";
+import DateField, { todayIso } from "./DateField";
 
 const inputClass = "field-input w-full";
 
@@ -123,6 +123,7 @@ export default function GuestSubmitFields({ value, onChange, errorField = "", in
       <Field label={t("requestDeliveryDate")} error={errorField === "delivery_date" ? t("deliveryDateRequired") : ""}>
         <DateField
           value={row.deliveryDate && row.deliveryDate !== "N/A" ? row.deliveryDate : ""}
+          min={todayIso()}
           invalid={errorField === "delivery_date"}
           onChange={(next) => patch({ deliveryDate: next, deliveryNa: false })}
         />

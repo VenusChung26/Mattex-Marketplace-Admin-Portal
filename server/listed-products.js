@@ -213,9 +213,18 @@ function mentioned(product, bit) {
   return Boolean(measure && text.includes(measure[0].replace(/\s+/g, "")));
 }
 
+function isPalletCount(row) {
+  return row.category === "Plastering" && /^\d+$/.test(clean(row.grade));
+}
+
+function rowExtras(row) {
+  const parts = isPalletCount(row) ? [row.size, row.packing] : [row.size, row.packing, row.grade];
+  return parts.map(clean).filter(Boolean);
+}
+
 function displayName(row) {
   const product = englishProduct(row);
-  const extra = [row.size, row.packing, row.grade].map(clean).filter((bit) => bit && !mentioned(product, bit));
+  const extra = rowExtras(row).filter((bit) => !mentioned(product, bit));
   const phrase = splitPhrase(product);
   const code = /^\(\d+\)$/.test(product) || /^[A-Z]{1,3}\d+$/.test(product) || /^JL\d+/.test(product);
   if (code) {
@@ -287,15 +296,26 @@ function fill(product, row) {
   if (category) product.category = category;
   if (row.market === "PRC" && row.subcategory && BIG_CATEGORY[row.category]) product.categoryParent = BIG_CATEGORY[row.category];
   else delete product.categoryParent;
-  const size = [row.size, row.packing, row.grade].map(clean).filter(Boolean).join(" · ");
+  const size = rowExtras(row).join(" · ");
   if (size) product.sizeDesc = size;
-  if (clean(row.unit)) product.unit = clean(row.unit);
+  if (isPalletCount(row)) product.lowerDeliveryQty = Number(clean(row.grade));
+  if (clean(row.unit)) {
+    product.unit = clean(row.unit);
+    product.salesUnit = clean(row.unit);
+  }
   if (clean(row.lead)) {
     product.leadTime = clean(row.lead);
     product.leadTimeLabel = clean(row.lead);
   }
   if (clean(row.spec)) product.primarySpec = clean(row.spec);
-  if (clean(row.cert)) product.certifications = clean(row.cert);
+  if (clean(row.cert)) {
+    product.certifications = clean(row.cert);
+    const nextCert = `Cert: ${clean(row.cert)}`;
+    if (Array.isArray(product.specs)) {
+      product.specs = product.specs.map((line) => (/^Cert:\s*/i.test(String(line)) && /BS\s*65/i.test(String(line)) ? nextCert : line));
+    }
+    if (/BS EN 295\s*:\s*1991/.test(String(product.standard || ""))) product.standard = clean(row.cert);
+  }
   if (clean(row.purposes)) product.purposes = clean(row.purposes);
   const moq = Number(String(row.moq || "").replace(/,/g, ""));
   if (Number.isFinite(moq) && moq > 0 && String(row.moq).trim() === String(moq)) product.moq = moq;
@@ -328,7 +348,8 @@ function addProduct(products, row) {
     priceUponRequest: !(row.price > 0),
     leadTime: clean(row.lead),
     leadTimeLabel: clean(row.lead),
-    sizeDesc: [row.size, row.packing, row.grade].map(clean).filter(Boolean).join(" · "),
+    sizeDesc: rowExtras(row).join(" · "),
+    lowerDeliveryQty: isPalletCount(row) ? Number(clean(row.grade)) : null,
     primarySpec: clean(row.spec),
     certifications: clean(row.cert),
     purposes: clean(row.purposes),

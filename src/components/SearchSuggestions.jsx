@@ -4,6 +4,7 @@ import { useLanguage } from "../i18n";
 import { foldHan } from "../lib/han";
 import { shopTitle } from "../lib/catalogGroup";
 import { categoriesInCatalog, flattenSuggestOptions, productSku, searchSuggestOptions } from "../lib/searchOptions";
+import { CATEGORY_LIST_PAUSED } from "../lib/categoryPause";
 import { scrollNodeIntoView } from "../lib/scrollInto";
 
 function highlightMatch(text, query) {
@@ -150,7 +151,7 @@ function SuggestMenu({ anchorRef, query, options, activeIndex, onPick, labels })
         <span className="min-w-0">
           <span className="block leading-snug">{highlightMatch(shopTitle(product), query)}</span>
           <span className="mt-0.5 block truncate text-[11px] text-mute">
-            {highlightMatch([product.category, productSku(product)].filter(Boolean).join(" · "), query)}
+            {highlightMatch(product.matchLabel || [CATEGORY_LIST_PAUSED ? "" : product.category, productSku(product)].filter(Boolean).join(" · "), query)}
           </span>
         </span>
       )));
@@ -170,6 +171,19 @@ function SuggestMenu({ anchorRef, query, options, activeIndex, onPick, labels })
   );
 }
 
+/** First interaction selects the whole query so the next keystroke replaces the previous search. */
+export function selectSearchOnFocus(event) {
+  const input = event.currentTarget;
+  if (!(input instanceof HTMLInputElement)) return;
+  if (event.type === "mousedown" && document.activeElement !== input) {
+    event.preventDefault();
+    input.focus();
+  }
+  requestAnimationFrame(() => {
+    if (document.activeElement === input) input.select();
+  });
+}
+
 export function ProductSearchBox({
   id,
   value,
@@ -179,6 +193,7 @@ export function ProductSearchBox({
   onCategory,
   onSubmit,
   keepOpenOnTerm = false,
+  includeShopTree = false,
   products,
   browseCategories,
   excludeIds = [],
@@ -201,8 +216,12 @@ export function ProductSearchBox({
       const categories = browseCategories?.length ? browseCategories : categoriesInCatalog(products);
       return { words: [], categories, products: [] };
     }
-    return searchSuggestOptions(products, value, { excludeIds: excludeKey ? excludeKey.split("\0") : [] });
-  }, [admin, browsing, browseCategories, products, value, excludeKey]);
+    return searchSuggestOptions(products, value, {
+      excludeIds: excludeKey ? excludeKey.split("\0") : [],
+      includeShopTree,
+      categoryLimit: includeShopTree ? 12 : 6,
+    });
+  }, [admin, browsing, browseCategories, products, value, excludeKey, includeShopTree]);
   const items = useMemo(() => flattenSuggestOptions(options), [options]);
   const labels = admin
     ? { words: "Suggestions", categories: "Categories", products: "Products", empty: "No products match." }
@@ -210,6 +229,18 @@ export function ProductSearchBox({
   const show = open && (admin ? Boolean(query.trim()) : !browsing || options.categories.length > 0);
 
   function pick(item) {
+    setActiveIndex(-1);
+    if (!item) return;
+    if (item.type === "product") {
+      setOpen(false);
+      onProduct?.(item.product);
+      return;
+    }
+    if (item.type === "category" && onCategory) {
+      setOpen(false);
+      onCategory(item.label);
+      return;
+    }
     setActiveIndex(-1);
     if (!item) return;
     if (item.type === "product") {
@@ -236,6 +267,7 @@ export function ProductSearchBox({
         placeholder={placeholder}
         autoComplete="off"
         aria-label={ariaLabel}
+        onMouseDown={selectSearchOnFocus}
         role="combobox"
         aria-expanded={show}
         aria-autocomplete="list"
@@ -245,7 +277,8 @@ export function ProductSearchBox({
           setOpen(admin ? Boolean(event.target.value.trim()) : true);
           setActiveIndex(-1);
         }}
-        onFocus={() => {
+        onFocus={(event) => {
+          selectSearchOnFocus(event);
           window.clearTimeout(blurTimer.current);
           setOpen(admin ? Boolean(query.trim()) : true);
         }}

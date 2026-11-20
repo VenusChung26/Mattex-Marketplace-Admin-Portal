@@ -1,4 +1,8 @@
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const NO_OFFER_IDS = new Set([
+  "mkt-loc-tw2ccpyp-001",
+  ...Array.from({ length: 49 }, (_, i) => `mkt-sheet-${String(i + 1).padStart(3, "0")}`),
+]);
 
 let promoCache = null;
 

@@ -1,5 +1,6 @@
 import { lineReference } from "../../lib/productSelection.js";
 import { AdminSearchBar, FilterTabs } from "./AdminControls";
+import { selectSearchOnFocus } from "../../components/SearchSuggestions";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
@@ -53,6 +54,7 @@ import {
   fixProductReport,
   getAdminCategories,
   listAdminCategories,
+  CATEGORY_LIST_PAUSED,
   renameAdminCategory,
   deleteAdminCategory,
   assignAdminProductsCategory,
@@ -246,7 +248,7 @@ const PRODUCT_TABLE_HEADS = [
   { key: "size", label: "Size / Description" },
   { key: "certs", label: "Certifications / Relevant Reports" },
   { key: "spec", label: "Primary Spec Description" },
-  { key: "tag", label: "Tag (Green / Hit / Tailor Made)" },
+  { key: "tag", label: "Tag (Green / Hot / Tailor Made)" },
   { key: "unit", label: "Sales Unit" },
   { key: "moq", label: "MOQ" },
   { key: "lead", label: "Lead Time" },
@@ -307,7 +309,7 @@ function ProductThumb({ product }) {
 function ProductTagChips({ product }) {
   const tags = [
     product.green ? { id: "green", label: "Green", className: "bg-emerald-100 text-emerald-800" } : null,
-    product.hit ? { id: "hit", label: "Hit", className: "bg-orange-100 text-orange-900" } : null,
+    product.hit ? { id: "hit", label: "Hot", className: "bg-orange-100 text-orange-900" } : null,
     product.tailorMade ? { id: "tailor", label: "Tailor Made", className: "bg-brand-100 text-brand-800" } : null,
   ].filter(Boolean);
   if (!tags.length) return "—";
@@ -401,7 +403,7 @@ function productSearchHay(p) {
     p.productNo,
     p.provisionalSku,
     p.id,
-    p.category,
+    CATEGORY_LIST_PAUSED ? "" : p.category,
     p.sizeDesc,
     p.remark,
     p.certifications,
@@ -1368,7 +1370,7 @@ function CategoryPanel({ products, note, onOpenProduct, onEditProduct, onCreateP
         id: row.product.id,
         kind: "product",
         label: row.product.name || sku || row.product.id,
-        hint: [sku, row.category].filter(Boolean).join(" · "),
+        hint: [sku, CATEGORY_LIST_PAUSED ? "" : row.category].filter(Boolean).join(" · "),
         text: row.text,
         pick: sku || row.product.name || "",
         categoryId: byName.get(row.category) || "",
@@ -1450,6 +1452,7 @@ function CategoryPanel({ products, note, onOpenProduct, onEditProduct, onCreateP
   }
 
   function deleteTip(cat) {
+    if (CATEGORY_LIST_PAUSED) return pt("Categories are loaded. No products are assigned yet.");
     if (categories.length <= 1) return pt("Cannot delete the last category.");
     if (cat.count > 0) return pt("Move or restore products out of this category first.");
     return pt("Delete");
@@ -1522,7 +1525,7 @@ function CategoryPanel({ products, note, onOpenProduct, onEditProduct, onCreateP
     <div>
       <div className="mb-4">
         <h1 className="font-display text-2xl text-brand-900">{pt("Product Category")}</h1>
-        <p className="text-sm text-mute">{pt("Add, rename, or delete empty categories. Hover Delete to see why a category cannot be removed.")}</p>
+        <p className="text-sm text-mute">{pt("Categories are loaded. No products are assigned yet.")}</p>
       </div>
       <AdminSearchBar
         value={query}
@@ -1540,8 +1543,9 @@ function CategoryPanel({ products, note, onOpenProduct, onEditProduct, onCreateP
             <span className="text-sm font-medium text-ink">{pt("Category name")}</span>
             <div className="mt-1 flex gap-2">
               <input
-                className="min-w-0 flex-1 rounded-lg border border-line bg-white px-3 py-2 text-sm"
+                className="min-w-0 flex-1 rounded-lg border border-line bg-white px-3 py-2 text-sm disabled:bg-paper"
                 value={addName}
+                disabled={CATEGORY_LIST_PAUSED}
                 onChange={(e) => setAddName(e.target.value)}
                 placeholder={pt("New category name")}
                 onKeyDown={(e) => {
@@ -1551,7 +1555,7 @@ function CategoryPanel({ products, note, onOpenProduct, onEditProduct, onCreateP
                   }
                 }}
               />
-              <button type="button" className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white" onClick={addCategory}>{pt("Add")}</button>
+              <button type="button" className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={CATEGORY_LIST_PAUSED} onClick={addCategory}>{pt("Add")}</button>
             </div>
           </div>
           <div className="overflow-auto max-h-[calc(100vh-22rem)]">
@@ -1568,7 +1572,7 @@ function CategoryPanel({ products, note, onOpenProduct, onEditProduct, onCreateP
                 return (
                   <tr key={cat.id} className={`border-t border-line/80 ${selectedCat ? "bg-brand-50" : "hover:bg-brand-50/60"}`}>
                     <td className="px-3 py-2">
-                      <button type="button" className="block w-full whitespace-normal break-words text-left font-medium text-ink" onClick={() => selectCategory(cat.id)}>
+                      <button type="button" className={`block w-full whitespace-normal break-words text-left ${cat.depth ? "pl-4 font-normal" : "font-medium"} text-ink`} onClick={() => selectCategory(cat.id)}>
                         {cat.name}
                       </button>
                     </td>
@@ -1635,6 +1639,7 @@ function CategoryPanel({ products, note, onOpenProduct, onEditProduct, onCreateP
                         type="button"
                         className="inline-flex h-8 w-8 items-center justify-center rounded border border-line text-brand-800 hover:bg-brand-50"
                         aria-label={pt("Rename category")}
+                        disabled={CATEGORY_LIST_PAUSED}
                         onClick={startRename}
                       >
                         <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
@@ -1647,7 +1652,7 @@ function CategoryPanel({ products, note, onOpenProduct, onEditProduct, onCreateP
                         type="button"
                         className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-40"
                         aria-label={pt("Delete")}
-                        disabled={categories.length <= 1 || viewCategory.count > 0}
+                        disabled={CATEGORY_LIST_PAUSED || categories.length <= 1 || viewCategory.count > 0}
                         onClick={() => removeCategory(viewCategory)}
                       >
                         <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
@@ -1659,16 +1664,18 @@ function CategoryPanel({ products, note, onOpenProduct, onEditProduct, onCreateP
                   )}
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
-                  <button
+                    <button
                     type="button"
-                    className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white"
+                    className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+                    disabled={CATEGORY_LIST_PAUSED}
                     onClick={() => onCreateProduct?.(viewCategory.name)}
                   >
                     {pt("Add Product")}
                   </button>
                   <button
                     type="button"
-                    className="rounded-lg border border-brand-600 bg-white px-3 py-1.5 text-sm font-semibold text-brand-800"
+                    className="rounded-lg border border-brand-600 bg-white px-3 py-1.5 text-sm font-semibold text-brand-800 disabled:opacity-50"
+                    disabled={CATEGORY_LIST_PAUSED}
                     onClick={() => {
                       setAddOpen(true);
                       setAddQuery("");
@@ -1868,7 +1875,7 @@ function CategoryPanel({ products, note, onOpenProduct, onEditProduct, onCreateP
                       />
                       <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setDetailId(p.id)}>
                         <span className="block break-words text-sm text-ink">{cellText(p.name)}</span>
-                        <span className="mt-0.5 block break-words text-[11px] text-mute">{cellText(productSkuId(p))} · {cellText(p.category)}</span>
+                        <span className="mt-0.5 block break-words text-[11px] text-mute">{cellText(productSkuId(p))}{CATEGORY_LIST_PAUSED ? "" : ` · ${cellText(p.category)}`}</span>
                       </button>
                     </li>
                   ))}
@@ -1959,7 +1966,7 @@ function ChainProductsPanel() {
         <table className="min-w-[90rem] w-full text-left text-[12px]">
           <thead className="sticky top-0 bg-brand-50 text-[10px] font-semibold uppercase tracking-wide text-mute">
             <tr>
-              {PRODUCT_TABLE_HEADS.map((h) => (
+              {(CATEGORY_LIST_PAUSED ? PRODUCT_TABLE_HEADS.filter((h) => h.key !== "category") : PRODUCT_TABLE_HEADS).map((h) => (
                 <th key={h.key} className="px-3 py-2" title={pt(h.label)}>
                   {pt(h.label)}
                 </th>
@@ -1968,7 +1975,7 @@ function ChainProductsPanel() {
           </thead>
           <tbody>
             <tr>
-              <td colSpan={PRODUCT_TABLE_HEADS.length} className="px-3 py-16 text-center text-sm text-mute">
+              <td colSpan={(CATEGORY_LIST_PAUSED ? PRODUCT_TABLE_HEADS.filter((h) => h.key !== "category") : PRODUCT_TABLE_HEADS).length} className="px-3 py-16 text-center text-sm text-mute">
                 {pt("No Mattex Chain products yet. When this catalog is connected, selected SKUs can be published to Marketplace from here.")}
               </td>
             </tr>
@@ -2002,6 +2009,7 @@ function ProductCategoryField({ value, onChange, note }) {
     else setError(result.error || pt("Unable to add category."));
   }
 
+  if (CATEGORY_LIST_PAUSED) return null;
   return (
     <div className="text-sm font-medium text-ink">
       <span>{pt("Category")}<RequiredMark /></span>
@@ -2686,7 +2694,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
                   onChange={toggleAllVisible}
                 />
               </th>
-              {PRODUCT_TABLE_HEADS.map((h) => (
+              {(CATEGORY_LIST_PAUSED ? PRODUCT_TABLE_HEADS.filter((h) => h.key !== "category") : PRODUCT_TABLE_HEADS).map((h) => (
                 <th key={h.key} className="px-3 py-2" title={pt(h.label)}>
                   {pt(h.label)}
                 </th>
@@ -2708,7 +2716,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
                       <input type="checkbox" aria-label={`Select ${productRowLabel(p)}`} checked={checked} onChange={() => toggleSelected(p.id)} />
                     </td>
                     <td className="px-3 py-2 font-mono text-[11px]">{cellText(productSkuId(p))}</td>
-                    <td className="px-3 py-2">{cellText(p.category)}</td>
+                    {CATEGORY_LIST_PAUSED ? null : <td className="px-3 py-2">{cellText(p.category)}</td>}
                     <td className="px-3 py-2">
                       <div className="flex min-w-[16rem] max-w-[22rem] items-start gap-2">
                         <ProductThumb product={p} />
@@ -2954,7 +2962,7 @@ function ProductsPanel({ products, product, editing, setEditing, note, reports =
               <div className="flex flex-wrap items-center gap-2">
                 <p className="mr-auto text-sm font-medium text-ink">{pt("Tags")}</p>
                 <div className="flex flex-wrap justify-end gap-2">
-                  {[["green", "Green"], ["hit", "Hit"], ["tailorMade", "Tailor Made Product"]].map(([key, label]) => (
+                  {[["green", "Green"], ["hit", "Hot"], ["tailorMade", "Tailor Made Product"]].map(([key, label]) => (
                     <label key={key} className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm leading-none ${draft[key] ? "border-brand-600 bg-brand-50 text-brand-800" : "border-line bg-white text-ink"}`}>
                       <input type="checkbox" className="h-3.5 w-3.5 shrink-0" checked={Boolean(draft[key])} onChange={(e) => field(key, e.target.checked)} />
                       {pt(label)}
@@ -3723,7 +3731,10 @@ function MemberAssignSearch({ rfqId, note, compact }) {
           value={query}
           placeholder={pt("Search name, email, company…")}
           className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-xs text-ink"
-          onFocus={() => setOpen(true)}
+          onFocus={(event) => {
+            selectSearchOnFocus(event);
+            setOpen(true);
+          }}
           onChange={(e) => {
             setQuery(e.target.value);
             setOpen(true);

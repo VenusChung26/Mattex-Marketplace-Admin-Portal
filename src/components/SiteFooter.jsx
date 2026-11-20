@@ -106,9 +106,30 @@ export default function SiteFooter({ className = "" }) {
         </div>
       </div>
       <div className="border-t border-white/10">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs text-white/40">
-          <p>© 2026 Mattex Marketplace</p>
-          <p>React · Supabase catalog &amp; cart</p>
+        <div className="max-w-7xl mx-auto px-4 pr-20 py-4 space-y-2 text-xs text-white/40">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <p>© 2026 Mattex Marketplace</p>
+            <p>Mattex Asia Development Limited</p>
+          </div>
+          <p className="leading-relaxed text-white/55">
+            {lang === "en" ? (
+              <>
+                This order is subject to Mattex Asia Development Limited’s Terms and Conditions of Sale (
+                <a href="https://marketplace.mattex.com.hk/" className="underline hover:text-white">
+                  https://marketplace.mattex.com.hk/
+                </a>
+                ). Mattex Asia Development Limited reserves the final right of decision on all orders.
+              </>
+            ) : (
+              <>
+                本訂單受 Mattex Asia Development Limited 之《銷售條款及細則》（
+                <a href="https://marketplace.mattex.com.hk/" className="underline hover:text-white">
+                  https://marketplace.mattex.com.hk/
+                </a>
+                ）約束。Mattex Asia Development Limited 對所有訂單保留最終決定權。
+              </>
+            )}
+          </p>
         </div>
       </div>
     </footer>

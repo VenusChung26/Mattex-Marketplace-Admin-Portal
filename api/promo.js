@@ -51,7 +51,6 @@ const SEED = {
         { productId: "mkt-db-0001", price: 18, endsOn: "2026-12-31" },
         { productId: "mkt-dense-mesh-flame-retardant-safety-net-fr-safety-net-4x9m", price: 88, endsOn: "2026-12-31" },
         { productId: "mkt-xps-foam-board-jl150-xps-50-mm", price: 32, endsOn: "2026-12-31" },
-        { productId: "mkt-loc-tw2ccpyp-001", price: 48, endsOn: "2026-12-31" },
       ],
     },
     {
@@ -65,6 +64,11 @@ const SEED = {
 
 let chain = Promise.resolve();
 
+const NO_OFFER_IDS = new Set([
+  "mkt-loc-tw2ccpyp-001",
+  ...Array.from({ length: 49 }, (_, i) => `mkt-sheet-${String(i + 1).padStart(3, "0")}`),
+]);
+
 function cleanProducts(list) {
   const seen = new Set();
   const products = [];
@@ -72,7 +76,7 @@ function cleanProducts(list) {
     const productId = String(row?.productId || "").trim();
     const price = Math.round(Number(row?.price) * 100) / 100;
     const endsOn = String(row?.endsOn || "").trim();
-    if (!productId || seen.has(productId)) continue;
+    if (!productId || seen.has(productId) || NO_OFFER_IDS.has(productId)) continue;
     if (!Number.isFinite(price) || price <= 0 || !DATE_RE.test(endsOn)) continue;
     seen.add(productId);
     products.push({ productId, price, endsOn });

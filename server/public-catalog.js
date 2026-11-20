@@ -1,3 +1,5 @@
+import { homogenousColorGroup } from "../src/lib/homogenousColors.js";
+
 /**
  * Public-safe catalog output.
  *
@@ -9,6 +11,11 @@ export const INTERNAL_PRODUCT_FIELDS = ["refPrice", "deliveryFee", "sourceUrl", 
 
 const INTERNAL_NOTE_LINE =
   /(local website material|provisional sku|requires confirmation|split basis|copied from|confirm for|does not publish|prc row)/i;
+
+const FACTORY_PICKUP_LEAD_OLD =
+  "Self-pickup within the factory, loading assistance, excluding unloading (excluding freight); Delivery at the project site, including unloading (including freight)";
+const FACTORY_PICKUP_LEAD =
+  "Factory pickup: loading included, freight extra. Site delivery includes freight and unloading.";
 
 export function splitRemark(remark) {
   const pub = [];
@@ -35,6 +42,13 @@ export function toPublicProduct(product) {
     next.unit_price = null;
     next.priceUponRequest = true;
   }
+  const rawLead = String(product.leadTimeLabel || product.lead_time || "").trim();
+  const pickupLead = rawLead === FACTORY_PICKUP_LEAD || rawLead === FACTORY_PICKUP_LEAD_OLD
+    ? FACTORY_PICKUP_LEAD
+    : "From 4 days.";
+  next.leadTimeLabel = pickupLead;
+  next.lead_time = pickupLead;
+  next.leadTime = pickupLead === "From 4 days." ? { min: 4, max: 4 } : product.leadTime || null;
   return next;
 }
 
@@ -63,7 +77,7 @@ const XPS_SPEC_GROUPS = [
       "1250x600x50",
       "1250x600x75",
       "1250x600x100",
-      "Customize Size",
+      "Customize",
     ],
   },
 ];
@@ -193,7 +207,7 @@ export function foldXpsFoamBoard(products) {
 const MESH_CATEGORY = "密目防燃安全網, Dense Mesh Flame Retardant Safety Net";
 
 const MESH_SPEC_GROUPS = [
-  { id: "colour", label: "顏色", labelEn: "Colour", options: ["Orange", "Green", "Customization"] },
+  { id: "colour", label: "顏色", labelEn: "Colour", options: ["Orange", "Green", "Customize"] },
   {
     id: "mesh-size",
     label: "分類 2",
@@ -274,7 +288,7 @@ const PRECAST_FOLDS = [
           "3600x600x150",
           "3900x600x150",
           "4200x600x150",
-          "Customize",
+          "Customize Size",
         ],
       },
     ],
@@ -377,7 +391,8 @@ export function foldBalustrades(products) {
 }
 
 const OXYGEN_CATEGORY = "氧氣艙, Oxygen Chamber";
-const SITE_FACILITIES_CATEGORY = "工地設施, Site Facilities";
+const OXYGEN_SHOP_HIDDEN = true;
+const EQUIPMENT_CATEGORY = "設備, Equipment";
 const SITE_EQUIPMENT_SUBGROUP = "工地設備及儲存, Site Equipment & Storage";
 
 const OXYGEN_SPEC_GROUPS = [
@@ -417,12 +432,12 @@ export function foldOxygenChamber(products) {
     if (insertAt < 0) insertAt = rest.length;
     rows.push(product);
   }
-  if (!rows.length) return products || [];
+  if (!rows.length || OXYGEN_SHOP_HIDDEN) return rest;
   const source = rows.find((product) => product.productNo === "MKT-OC-0004") || rows[0];
   const base = { ...source };
   base.name = "氧氣艙, Oxygen Chamber";
-  base.category = SITE_FACILITIES_CATEGORY;
-  base.shopSubgroup = SITE_EQUIPMENT_SUBGROUP;
+  base.category = EQUIPMENT_CATEGORY;
+  delete base.shopSubgroup;
   base.sizeDesc = "";
   base.parentProduct = "";
   base.variant = "";
@@ -678,7 +693,7 @@ const CLADDING_SPEC_GROUPS = [
     id: "clad-size",
     label: "分類 3",
     labelEn: "Category 3",
-    options: ["Customize Size"],
+    options: ["Customize"],
   },
 ];
 
@@ -809,7 +824,7 @@ export function foldShoeWashing(products) {
   const source = rows.find((product) => product.productNo === "MKT-SWM-0001") || rows[0];
   const base = { ...source };
   base.name = SITE_EQUIPMENT_SUBGROUP;
-  base.category = SITE_FACILITIES_CATEGORY;
+  base.category = EQUIPMENT_CATEGORY;
   base.sizeDesc = "";
   base.description = "";
   base.primarySpec = "";
@@ -904,43 +919,62 @@ export function foldFinishBoards(products) {
 }
 
 const AGGREGATE_CATEGORY = "石料, Aggregate";
-const RAW_MATERIALS_CATEGORY = "原材料, Raw Materials";
+const AGGREGATE_SHOP_CATEGORY = "石料, Aggregate";
+const AGGREGATE_SIZES = ["5 mm", "10 mm", "20 mm", "40 mm"];
 
-const AGGREGATE_SPEC_GROUPS = [
-  {
-    id: "aggregate-kind",
-    label: "分類 1",
-    labelEn: "Category 1",
-    options: ["Aggregates"],
-  },
-  {
-    id: "aggregate-type",
-    label: "分類 2",
-    labelEn: "Category 2",
-    options: [
-      "Coarse Aggregate 5 mm",
-      "Coarse Aggregate 10 mm",
-      "Coarse Aggregate 20 mm",
-      "Coarse Aggregate 40 mm",
-      "Sub-base Type 1 — 5 mm",
-      "Sub-base Type 1 — 10 mm",
-      "Sub-base Type 1 — 20 mm",
-      "Sub-base Type 1 — 40 mm",
-      "Granular Fill — Type A",
-      "Granular Fill — Type B",
-      "Rockfill Grade 75",
-      "Rockfill Grade 200",
-      "Rockfill Grade 400",
-      "Rockfill Grade 700",
-    ],
-  },
-  {
-    id: "aggregate-unit",
-    label: "分類 3",
-    labelEn: "Category 3",
-    options: ["Ton", "Lot", "Sample (Proctor)"],
-  },
-];
+function aggregateParent(product) {
+  return String(product?.parentProduct || "");
+}
+
+function aggregateChoices(rows, groups) {
+  const choices = [];
+  for (const row of rows || []) {
+    const picks = {};
+    for (const group of groups || []) {
+      const hits = [];
+      for (const option of group.options || []) {
+        const parent = option && typeof option === "object" ? String(option.parent || "") : "";
+        if (parent && looseKey(row?.parentProduct) !== looseKey(parent)) continue;
+        const label = optionText(option);
+        const match = option && typeof option === "object" && option.match ? String(option.match) : label;
+        const pick = option && typeof option === "object" ? String(option.key || option.label || "").trim() : label;
+        if (rowMatchesLabel(row, match)) hits.push(pick);
+      }
+      if (hits.length === 1) picks[group.id] = hits[0];
+    }
+    if (!Object.keys(picks).length) continue;
+    choices.push({ picks, ...orderFacts(row) });
+  }
+  return choices;
+}
+
+function aggregateProduct(source, name, groups, rows) {
+  const base = { ...source };
+  base.name = name;
+  base.category = AGGREGATE_SHOP_CATEGORY;
+  base.sizeDesc = "";
+  base.description = "";
+  base.primarySpec = "";
+  base.parentProduct = "";
+  base.variant = "";
+  base.specGroups = groups;
+  const choices = aggregateChoices(rows, groups);
+  if (choices.length) base.specChoices = choices;
+  else delete base.specChoices;
+  return base;
+}
+
+function aggregateShell(source, id, sku, name) {
+  const base = aggregateProduct(source, name, [], []);
+  base.id = id;
+  base.productNo = sku;
+  base.provisionalSku = sku;
+  base.unit_price = null;
+  base.price = null;
+  base.priceUponRequest = true;
+  base.quote = null;
+  return base;
+}
 
 export function foldAggregate(products) {
   const rows = [];
@@ -955,19 +989,81 @@ export function foldAggregate(products) {
     rows.push(product);
   }
   if (!rows.length) return products || [];
-  const source = rows.find((product) => product.productNo === "MKT-LOC-MN0AS1TM-001") || rows[0];
-  const base = { ...source };
-  base.name = "石料, Aggregates";
-  base.category = RAW_MATERIALS_CATEGORY;
-  base.sizeDesc = "";
-  base.description = "";
-  base.primarySpec = "";
-  base.parentProduct = "";
-  base.variant = "";
-  base.specGroups = AGGREGATE_SPEC_GROUPS;
-  rememberSource(base, rows);
+  const byParent = (name) => rows.filter((product) => aggregateParent(product) === name);
+  const coarse = byParent("Coarse Aggregate");
+  const subbase = byParent("Sub-base");
+  const granular = byParent("Granular Fill");
+  const rockfill = byParent("Rockfill");
+  const used = new Set([...coarse, ...subbase, ...granular, ...rockfill]);
+  const leftover = rows.filter((product) => !used.has(product));
+  const coarseSource = coarse.find((product) => product.productNo === "MKT-LOC-MN0AS1TM-001") || coarse[0] || rows[0];
+  const subbaseSource = subbase[0] || coarseSource;
+  const stoneGroups = [
+    {
+      id: "agg-type",
+      label: "類型",
+      labelEn: "Type",
+      options: [
+        { label: "Coarse Aggregate", image: String(coarseSource?.image || "") },
+        { label: "Sub-base", image: String(subbaseSource?.image || "") },
+      ],
+    },
+    {
+      id: "agg-size",
+      label: "尺寸",
+      labelEn: "Size",
+      dependsOn: "agg-type",
+      options: [
+        ...AGGREGATE_SIZES.map((size) => ({ label: size, key: `coarse-${size}`, parent: "Coarse Aggregate" })),
+        ...AGGREGATE_SIZES.map((size) => ({ label: `Type 1 — ${size}`, key: `subbase-${size}`, parent: "Sub-base", match: size })),
+      ],
+    },
+  ];
+  const granularGroups = [
+    {
+      id: "fill-type",
+      label: "類型",
+      labelEn: "Type",
+      options: ["Type A", "Type B"],
+    },
+  ];
+  const rockGroups = [
+    {
+      id: "rock-grade",
+      label: "等級",
+      labelEn: "Grade",
+      options: ["Grade 75", "Grade 200", "Grade 400", "Grade 700"],
+    },
+  ];
+  const folded = [];
+  if (coarse.length || subbase.length) {
+    folded.push(aggregateProduct(
+      coarseSource,
+      "石料, Aggregate & Sub-base",
+      stoneGroups,
+      [...coarse, ...subbase],
+    ));
+  }
+  folded.push(aggregateShell(coarseSource, "mkt-aggregate-recycle", "MKT-AGG-RECYCLE", "重用石料, Aggregate Recycle"));
+  if (rockfill.length) {
+    folded.push(aggregateProduct(
+      rockfill.find((product) => product.productNo === "MKT-LOC-OKPDQN87-001") || rockfill[0],
+      "堆料, Rockfill",
+      rockGroups,
+      rockfill,
+    ));
+  }
+  if (granular.length) {
+    folded.push(aggregateProduct(
+      granular.find((product) => product.productNo === "MKT-LOC-S94FDIM7-001") || granular[0],
+      "砂石料, Granular Fill",
+      granularGroups,
+      granular,
+    ));
+  }
+  folded.push(aggregateShell(coarseSource, "mkt-aggregate-gravel", "MKT-AGG-GRAVEL", "砂礫, Gravel"));
   const at = insertAt < 0 ? rest.length : insertAt;
-  return [...rest.slice(0, at), base, ...rest.slice(at)];
+  return [...rest.slice(0, at), ...folded, ...leftover, ...rest.slice(at)];
 }
 
 const PIPE_CATEGORY = "喉管、配件, Pipe & Fittings & Accessories";
@@ -1083,6 +1179,8 @@ export function foldDrainageGratings(products) {
 
 const FORGE_CATEGORY = "焊接鋼格板, Forge-welded Grating";
 const PRESS_CATEGORY = "壓鎖鋼格板, Press-Lock Grating";
+const PRESS_IMAGE = "/assets/press-lock-grating.jpg?v=1";
+const FORGE_IMAGE = "/assets/forge-welded-grating.jpg?v=7";
 
 function steelGratingOption(product) {
   const label = String(product?.variant || product?.parentProduct || "").trim();
@@ -1108,6 +1206,16 @@ function foldOneSteelGrating(products, category, anchor, groupId) {
   rows.sort((a, b) => String(a.productNo || "").localeCompare(String(b.productNo || ""), undefined, { numeric: true }));
   const source = rows.find((product) => product.productNo === anchor) || rows[0];
   const base = { ...source };
+  if (category === PRESS_CATEGORY) {
+    base.image = PRESS_IMAGE;
+    base.images = [PRESS_IMAGE];
+    base.imageFallback = "/assets/press-lock-grating.jpg";
+  }
+  if (category === FORGE_CATEGORY) {
+    base.image = FORGE_IMAGE;
+    base.images = [FORGE_IMAGE];
+    base.imageFallback = "/assets/forge-welded-grating.jpg";
+  }
   base.name = category;
   base.category = category;
   base.parentProduct = "";
@@ -1134,36 +1242,17 @@ export function foldSteelGratings(products) {
 }
 
 const GYPSUM_BLOCK_NAME = "石膏磚, Gypsum Block";
+const GYPSUM_BLOCK_CATEGORY = "石膏磚, Gypsum Block";
 
 function isGypsumBlockSeries(product) {
   return /^Gypsum Block\s*[—–]\s*\d+\s*mm\b/i.test(String(product?.variant || ""));
 }
 
-function gypsumBlockBits(product) {
-  const bits = String(product?.variant || "").split(/\s*[—–]\s*/).map((part) => part.trim()).filter(Boolean);
-  if (/^gypsum block$/i.test(bits[0] || "")) bits.shift();
-  return bits;
-}
-
-function gypsumBlockFacts(product) {
-  const detail = String(product?.sizeDesc || "").trim();
-  const summary = String(product?.description || "").trim();
-  return {
-    detail,
-    summary: summary && summary !== detail ? summary : "",
-    image: String(product?.image || ""),
-    sku: String(product?.productNo || "").trim().toUpperCase(),
-    moq: product?.moq,
-    unit: product?.unit,
-    leadTime: product?.leadTime,
-    leadTimeLabel: product?.leadTimeLabel,
-    specs: Array.isArray(product?.specs) ? product.specs : [],
-  };
-}
-
-function thicknessOrder(label) {
-  const match = String(label || "").match(/(\d+(?:\.\d+)?)/);
-  return match ? Number(match[1]) : 999;
+function isListedGypsumBlock(product) {
+  const parent = String(product?.parentProduct || "").trim();
+  const variant = String(product?.variant || "").trim();
+  const category = String(product?.category || "").trim();
+  return parent === "Gypsum Block" || variant === "Gypsum Block" || category === GYPSUM_BLOCK_CATEGORY;
 }
 
 export function foldGypsumBlocks(products) {
@@ -1171,80 +1260,69 @@ export function foldGypsumBlocks(products) {
   const rest = [];
   let insertAt = -1;
   for (const product of products || []) {
-    if (!isGypsumBlockSeries(product)) {
+    if (!isGypsumBlockSeries(product) && !isListedGypsumBlock(product)) {
       rest.push(product);
       continue;
     }
     if (insertAt < 0) insertAt = rest.length;
     rows.push(product);
   }
-  if (rows.length < 2) return products || [];
+  if (!rows.length) return products || [];
 
-  const byThickness = new Map();
-  for (const product of rows) {
-    const bits = gypsumBlockBits(product);
-    const thickness = bits[0] || "Gypsum Block";
-    if (!byThickness.has(thickness)) byThickness.set(thickness, []);
-    byThickness.get(thickness).push({ bits, facts: gypsumBlockFacts(product) });
-  }
-
-  const seriesOptions = [];
-  const gradeOptions = [];
-  const leafOptions = [];
-  for (const thickness of [...byThickness.keys()].sort((a, b) => thicknessOrder(a) - thicknessOrder(b))) {
-    const items = byThickness.get(thickness);
-    if (items.length === 1) {
-      seriesOptions.push({ label: thickness, key: thickness, ...items[0].facts });
-      continue;
-    }
-    seriesOptions.push({ label: thickness, key: thickness });
-    const grades = [];
-    for (const item of items) {
-      const grade = item.bits[4] || "Standard";
-      if (!grades.includes(grade)) grades.push(grade);
-    }
-    grades.sort((a, b) => (a === "Standard" ? 0 : 1) - (b === "Standard" ? 0 : 1) || a.localeCompare(b));
-    const oneGrade = grades.length < 2;
-    for (const grade of grades) {
-      const gradeKey = `${thickness}::${grade}`;
-      const children = items
-        .filter((item) => (item.bits[4] || "Standard") === grade)
-        .sort((a, b) => thicknessOrder(a.bits[1]) - thicknessOrder(b.bits[1]) || String(a.bits[3]).localeCompare(String(b.bits[3])));
-      if (!oneGrade) gradeOptions.push({ label: grade, key: gradeKey, parent: thickness });
-      const seen = new Set();
-      for (const item of children) {
-        let label = [item.bits[1], item.bits[2], item.bits[3]].filter(Boolean).join(" · ") || item.facts.detail || "Option";
-        if (seen.has(label)) label = item.facts.detail ? `${label} · ${item.facts.detail}` : `${label} · ${seen.size + 1}`;
-        seen.add(label);
-        const option = {
-          label,
-          key: `${oneGrade ? thickness : gradeKey}::${label}`,
-          parent: oneGrade ? thickness : gradeKey,
-          ...item.facts,
-        };
-        if (oneGrade) gradeOptions.push(option);
-        else leafOptions.push(option);
-      }
-    }
-  }
-
-  const base = { ...rows[0] };
+  const face = rows.find((product) => String(product.category || "") === GYPSUM_BLOCK_CATEGORY && product.image) || rows.find((product) => product.image) || rows[0];
+  const sheet = rows.find((product) => product.specUrl);
+  const base = { ...face };
+  base.id = "mkt-gypsum-block";
+  base.productNo = "MKT-GB-0001";
+  base.provisionalSku = "MKT-GB-0001";
   base.name = GYPSUM_BLOCK_NAME;
+  base.category = GYPSUM_BLOCK_CATEGORY;
+  base.green = false;
   base.sizeDesc = "";
   base.description = "";
   base.primarySpec = "";
   base.parentProduct = "";
   base.variant = "";
+  base.specs = [];
+  base.price = null;
+  base.unit_price = null;
+  base.priceUponRequest = true;
+  base.quote = null;
+  base.image = face.image || "";
+  base.images = base.image ? [base.image] : [];
+  base.imageUrl = face.imageUrl || base.image;
+  base.imageFallback = face.imageFallback || "/assets/type-gypsum.webp?v=20260929b";
+  if (sheet?.specUrl) base.specUrl = sheet.specUrl;
+  delete base.specChoices;
   base.specGroups = [
-    { id: "block-thickness", label: "分類 1", labelEn: "Category 1", options: seriesOptions },
-    { id: "block-grade", label: "分類 2", labelEn: "Category 2", dependsOn: "block-thickness", options: gradeOptions },
-    { id: "block-spec", label: "分類 3", labelEn: "Category 3", dependsOn: "block-grade", options: leafOptions },
+    { id: "block-size", label: "尺寸", labelEn: "Size", keepOrder: true, options: ["500mm x 500mm", "500mm x 250mm"] },
+    { id: "block-thickness", label: "厚度", labelEn: "Thickness", keepOrder: true, options: ["80mm", "100mm", "150mm"] },
+    { id: "block-density", label: "密度", labelEn: "Density", keepOrder: true, options: ["1,100kg/m3", "1,200kg/m3", "1,400kg/m3"] },
+    { id: "block-standard", label: "規格", labelEn: "Spec.", keepOrder: true, options: ["BS EN 13279", "BS 476", "BS EN ISO 140-3", "BS EN 12859", "BS EN 1364"] },
   ];
   const at = insertAt < 0 ? rest.length : insertAt;
   return [...rest.slice(0, at), base, ...rest.slice(at)];
 }
 
 const MANHOLE_NAME = "沙井蓋, Manhole Cover";
+
+/** Series hero images for SpecGroupPicker (logo-free catalog shots under /assets/manhole-series/). */
+const MANHOLE_SERIES_IMG_V = "v2";
+const MANHOLE_SERIES_IMAGES = {
+  "Cast Iron Hinged Grating with Frame for OTG": `/assets/manhole-series/cast-iron-hinged-grating-otg.jpg?${MANHOLE_SERIES_IMG_V}`,
+  "Cast Iron Hinged Cover with Frame for STG/BIGT": `/assets/manhole-series/cast-iron-hinged-cover-stg.jpg?${MANHOLE_SERIES_IMG_V}`,
+  "Ductile Iron Hinged Grating with Frame for OTG": `/assets/manhole-series/ductile-hinged-grating-otg.jpg?${MANHOLE_SERIES_IMG_V}`,
+  "Ductile Iron Hinged Cover with Frame for STG/BIGT": `/assets/manhole-series/ductile-hinged-cover-stg.jpg?${MANHOLE_SERIES_IMG_V}`,
+  "Cast Iron Double Seal Solid Cover and Frame (with screws)": `/assets/manhole-series/cast-iron-double-seal-solid.jpg?${MANHOLE_SERIES_IMG_V}`,
+  "Cast Iron Double-Triangular & Desilting Manhole Cover and Frame": `/assets/manhole-series/cast-iron-double-triangular.jpg?${MANHOLE_SERIES_IMG_V}`,
+  "Double Seal Ductile Iron Manhole Cover and Frame": `/assets/manhole-series/ductile-double-seal.jpg?${MANHOLE_SERIES_IMG_V}`,
+  "Square Ductile Iron Surface Box": `/assets/manhole-series/square-ductile-surface-box.jpg?${MANHOLE_SERIES_IMG_V}`,
+};
+
+function manholeSeriesImage(series) {
+  const key = String(series || "").trim();
+  return MANHOLE_SERIES_IMAGES[key] || "";
+}
 
 function coverBits(product) {
   const raw = String(product?.variant || product?.name || "");
@@ -1313,11 +1391,12 @@ export function foldManholeCovers(products) {
     const detail = String(product.sizeDesc || "").trim();
     const summary = String(product.description || "").trim();
     const sku = String(product.productNo || "").trim().toUpperCase();
+    const seriesImage = manholeSeriesImage(series) || String(product.image || "");
     bySeries.get(series).push({
       rest: bits.slice(1),
       detail: detail || summary,
       summary: summary && summary !== detail ? summary : "",
-      image: String(product.image || ""),
+      image: seriesImage,
       sku,
       moq: product.moq,
       unit: product.unit,
@@ -1332,6 +1411,7 @@ export function foldManholeCovers(products) {
   const leafOptions = [];
   for (const series of seriesOrder) {
     const items = bySeries.get(series);
+    const seriesImage = manholeSeriesImage(series) || items[0]?.image || "";
     const hasMid = items.some((item) => item.rest.length >= 2);
     if (!hasMid && items.length < 2) {
       seriesOptions.push({
@@ -1339,7 +1419,7 @@ export function foldManholeCovers(products) {
         key: series,
         detail: items[0].detail,
         summary: items[0].summary,
-        image: items[0].image,
+        image: seriesImage || items[0].image,
         sku: items[0].sku,
         moq: items[0].moq,
         unit: items[0].unit,
@@ -1349,7 +1429,7 @@ export function foldManholeCovers(products) {
       });
       continue;
     }
-    seriesOptions.push({ label: series, key: series });
+    seriesOptions.push({ label: series, key: series, image: seriesImage });
     if (!hasMid) {
       const labels = uniqueCoverLabels(items, 0);
       for (const item of items) {
@@ -1406,10 +1486,15 @@ export function foldManholeCovers(products) {
   base.name = MANHOLE_NAME;
   base.parentProduct = "";
   base.variant = "";
+  const hero = seriesOptions.find((option) => option?.image)?.image || manholeSeriesImage(seriesOrder[0]) || base.image;
+  if (hero) {
+    base.image = hero;
+    base.images = [hero, ...(Array.isArray(base.images) ? base.images.filter((url) => url && url !== hero) : [])];
+  }
   base.specGroups = [
-    { id: "cover-series", label: "分類 1", labelEn: "Category 1", options: seriesOptions },
-    { id: "cover-kind", label: "分類 2", labelEn: "Category 2", dependsOn: "cover-series", options: midOptions },
-    { id: "cover-size", label: "分類 3", labelEn: "Category 3", dependsOn: "cover-kind", options: leafOptions },
+    { id: "cover-series", label: "系列", labelEn: "Series", options: seriesOptions },
+    { id: "cover-kind", label: "類型", labelEn: "Type", dependsOn: "cover-series", options: midOptions },
+    { id: "cover-size", label: "尺寸", labelEn: "Size", dependsOn: "cover-kind", options: leafOptions },
   ];
   const at = insertAt < 0 ? rest.length : insertAt;
   return [...rest.slice(0, at), base, ...rest.slice(at)];
@@ -1530,7 +1615,7 @@ function tileAnchor(rows, sku) {
   return rows.find((product) => product.productNo === sku) || rows.find((product) => product.image) || rows[0];
 }
 
-function finishTile(rows, sku, name, specGroups) {
+function finishTile(rows, sku, name, specGroups, choices) {
   const source = tileAnchor(rows, sku);
   if (!source) return null;
   const base = { ...source };
@@ -1545,7 +1630,8 @@ function finishTile(rows, sku, name, specGroups) {
   base.variant = "";
   base.specs = (Array.isArray(source.specs) ? source.specs : []).filter((line) => /^Cert:/i.test(String(line)));
   base.specGroups = specGroups;
-  rememberSource(base, rows);
+  if (choices?.length) base.specChoices = choices;
+  else rememberSource(base, rows);
   return base;
 }
 
@@ -1556,6 +1642,68 @@ function uniqueLabels(rows, pick) {
     if (label && !labels.includes(label)) labels.push(label);
   }
   return labels;
+}
+
+function vinylFloorSpecGroups() {
+  return [
+    {
+      id: "vinyl-code",
+      label: "編號 / 分類",
+      labelEn: "Code / Category",
+      keepOrder: true,
+      options: [
+        "Homogeneous Non-Directional (F2)",
+        "Homogeneous Electico (F2a)",
+        "Homogeneous Acoustic Vinyl (F2b)",
+        "Homogeneous Directional (F2d)",
+      ],
+    },
+    {
+      id: "vinyl-slip",
+      label: "防滑",
+      labelEn: "Slip Resistance",
+      keepOrder: true,
+      options: ["R9", "R10", "R11"],
+    },
+    {
+      id: "vinyl-fire",
+      label: "防火反應",
+      labelEn: "Reaction to Fire",
+      keepOrder: true,
+      options: ["B1"],
+    },
+    {
+      id: "vinyl-size",
+      label: "尺寸 (厚度 x 闊度 x 長度)",
+      labelEn: "Size (thickness x width x length)",
+      keepOrder: true,
+      options: ["2.0mm x 2m x 20m", "Customize Size"],
+    },
+    {
+      id: "vinyl-thickness",
+      label: "厚度",
+      labelEn: "Thickness",
+      field: "thickness",
+      unit: "mm",
+      dependsOn: "vinyl-size",
+    },
+    {
+      id: "vinyl-width",
+      label: "闊度",
+      labelEn: "Width",
+      field: "width",
+      unit: "m",
+      dependsOn: "vinyl-size",
+    },
+    {
+      id: "vinyl-length",
+      label: "長度",
+      labelEn: "Length",
+      field: "length",
+      unit: "m",
+      dependsOn: "vinyl-size",
+    },
+  ];
 }
 
 function vinylGroups(rows) {
@@ -1593,32 +1741,117 @@ function seriesKey(product) {
   return english;
 }
 
-function ceramicGroups(rows) {
-  const sizesBySeries = new Map();
+function tileDimension(label) {
+  return String(label || "").replace(/\s+/g, "").replace(/[x×]/gi, "*");
+}
+
+/** "600*600mm R10" and "600*600mm Matt surface-R9 …" keep the dimension separate from surface and slip rating. */
+function parseTileFacet(label) {
+  const text = String(label || "").replace(/\s+/g, " ").trim();
+  const match = text.match(/^(\d+(?:\.\d+)?(?:\s*[*x×]\s*\d+(?:\.\d+)?){1,2}\s*mm)\b\s*(.*)$/i);
+  if (!match) return { size: text, parts: [] };
+  const size = tileDimension(match[1]);
+  const rest = match[2].trim();
+  if (!rest) return { size, parts: [] };
+  if (/^glazed$/i.test(rest)) return { size, parts: [{ surface: "Glazed", rating: "" }] };
+  if (/^R\d{1,2}$/i.test(rest)) return { size, parts: [{ surface: "", rating: rest.toUpperCase() }] };
+  const parts = [];
+  const surfaces = /(Matt|Rough|Cloth)\s+surface\s*-?\s*(R\d{1,2})/gi;
+  let found = surfaces.exec(rest);
+  while (found) {
+    const word = found[1].toLowerCase();
+    parts.push({
+      surface: `${word.charAt(0).toUpperCase()}${word.slice(1)} surface`,
+      rating: found[2].toUpperCase(),
+    });
+    found = surfaces.exec(rest);
+  }
+  if (parts.length) return { size, parts };
+  return { size: text, parts: [] };
+}
+
+function ceramicSpec(rows) {
+  const series = [];
+  const sizes = [];
+  const surfaces = [];
+  const slips = [];
+  const seenSeries = new Set();
+  const seenSize = new Set();
+  const seenSurface = new Set();
+  const seenSlip = new Set();
+  const choices = [];
   for (const row of rows) {
-    const series = seriesKey(row);
-    if (!series) continue;
-    if (!sizesBySeries.has(series)) sizesBySeries.set(series, []);
-    const size = tileSizeLabel(row);
-    const sizes = sizesBySeries.get(series);
-    if (size && !sizes.includes(size)) sizes.push(size);
+    const name = seriesKey(row);
+    if (!name) continue;
+    if (!seenSeries.has(name)) {
+      seenSeries.add(name);
+      series.push(name);
+    }
+    const parsed = parseTileFacet(tileSizeLabel(row));
+    const sizeKey = `${name}::${parsed.size}`;
+    if (parsed.size && !seenSize.has(sizeKey)) {
+      seenSize.add(sizeKey);
+      sizes.push({ label: parsed.size, parent: name, key: sizeKey });
+    }
+    const parts = parsed.parts.length ? parsed.parts : [null];
+    for (const part of parts) {
+      const picks = { "tile-series": name };
+      if (parsed.size) picks["tile-size"] = sizeKey;
+      if (part?.surface) {
+        const surfaceKey = `${sizeKey}::${part.surface}`;
+        if (!seenSurface.has(surfaceKey)) {
+          seenSurface.add(surfaceKey);
+          surfaces.push({ label: part.surface, parent: sizeKey, key: surfaceKey });
+        }
+        picks["tile-surface"] = surfaceKey;
+      }
+      if (part?.rating) {
+        const slipParent = part.surface ? `${sizeKey}::${part.surface}` : sizeKey;
+        const slipKey = `${slipParent}::${part.rating}`;
+        if (!seenSlip.has(slipKey)) {
+          seenSlip.add(slipKey);
+          const option = { label: part.rating, parent: sizeKey, key: slipKey };
+          if (part.surface) {
+            option.with = slipParent;
+            option.withGroup = "tile-surface";
+          }
+          slips.push(option);
+        }
+        picks["tile-slip"] = slipKey;
+      }
+      choices.push({ picks, ...orderFacts(row) });
+    }
   }
-  const series = [...sizesBySeries.keys()].sort((a, b) => a.localeCompare(b));
-  const sizeOptions = [];
-  for (const name of series) {
-    for (const size of sizesBySeries.get(name)) sizeOptions.push({ label: size, parent: name });
-  }
+  series.sort((a, b) => a.localeCompare(b));
   const groups = [{ id: "tile-series", label: "分類 1", labelEn: "Category 1", options: series }];
-  if (sizeOptions.length) {
+  if (sizes.length) {
     groups.push({
       id: "tile-size",
       label: "分類 2",
       labelEn: "Category 2",
       dependsOn: "tile-series",
-      options: sizeOptions,
+      options: sizes,
     });
   }
-  return groups;
+  if (surfaces.length) {
+    groups.push({
+      id: "tile-surface",
+      label: "分類 3",
+      labelEn: "Category 3",
+      dependsOn: "tile-size",
+      options: surfaces,
+    });
+  }
+  if (slips.length) {
+    groups.push({
+      id: "tile-slip",
+      label: "分類 4",
+      labelEn: "Category 4",
+      dependsOn: "tile-size",
+      options: slips,
+    });
+  }
+  return { groups, choices };
 }
 
 function marbleGroups(rows) {
@@ -1668,9 +1901,10 @@ export function foldTiles(products) {
     buckets[role].push(product);
   }
   if (insertAt < 0) return products || [];
+  const ceramic = ceramicSpec(buckets.ceramic);
   const folded = [
     finishTile(buckets.homogenous, "MKT-LOC-SS97X4VR-001", "通體磚, Homogenous Tile", ratingGroup(buckets.homogenous)),
-    finishTile(buckets.ceramic, "MKT-T-0001", "瓷磚, Ceramic Tiles", ceramicGroups(buckets.ceramic)),
+    finishTile(buckets.ceramic, "MKT-T-0001", "瓷磚, Ceramic Tiles", ceramic.groups, ceramic.choices),
     finishTile(buckets.marble, "MKT-T-0007", "天然大理石磚, Natural Marble Tile", marbleGroups(buckets.marble)),
     finishTile(buckets.roof, "MKT-LOC-H88YVLMY-001", "屋面瓦, Roof Tile", ratingGroup(buckets.roof)),
     finishTile(buckets.tactile, "MKT-LOC-F7KUYGFV-001", "觸覺引路磚, Tactile Tile", ratingGroup(buckets.tactile)),
@@ -1692,20 +1926,32 @@ const TIMBER_FOLDS = [
   {
     kind: "white-faced",
     match: /White faced Plywood/i,
-    name: "白板夾板, White faced Plywood",
+    name: "白板夾板, FSC White Faced Plywood",
+    aliases: ["White faced Plywood", "白板夾板"],
     withThickness: true,
+    dropThickness: ["17mm"],
+    grade: "F2",
+    thicknessNote: "with +/- 1mm to tolerance",
+    spec: "FSC & BS1455:1972",
   },
   {
     kind: "red-faced",
     match: /Red faced Plywood/i,
-    name: "紅板夾板, Red faced Plywood",
+    name: "紅板夾板, FSC Red Faced Plywood",
+    aliases: ["Red faced Plywood", "紅板夾板"],
     withThickness: true,
+    dropThickness: ["17mm"],
+    grade: "F3",
+    thicknessNote: "with +/- 1mm to tolerance",
+    spec: "FSC & BS1455:1972",
   },
   {
     kind: "filmface",
     match: /Film\s*face Plywood/i,
     name: "菲林板, Filmface Plywood",
     withThickness: true,
+    dropThickness: ["17mm"],
+    thicknessNote: "with +/- 1mm to tolerance",
   },
   {
     kind: "softwood",
@@ -1746,7 +1992,9 @@ function timberThicknessKey(size, thickness) {
   return `${size}::${thickness}`;
 }
 
-function timberGroups(rows, { withThickness }) {
+function timberGroups(rows, spec) {
+  const withThickness = spec?.withThickness !== false;
+  const drop = new Set((spec?.dropThickness || []).map((item) => String(item).trim().toLowerCase()));
   const sizes = [];
   const thicknessOpts = [];
   const gradeOpts = [];
@@ -1756,6 +2004,7 @@ function timberGroups(rows, { withThickness }) {
   for (const row of rows) {
     const { size, thickness, grade } = timberParts(row);
     if (!size) continue;
+    if (drop.has(String(thickness).trim().toLowerCase())) continue;
     if (!seenSize.has(size)) {
       seenSize.add(size);
       sizes.push(size);
@@ -1766,14 +2015,14 @@ function timberGroups(rows, { withThickness }) {
         seenThick.add(thickKey);
         thicknessOpts.push({ label: thickness, parent: size, key: thickKey });
       }
-      if (grade) {
+      if (!spec?.grade && grade) {
         const gradeKey = `${thickKey}::${grade}`;
         if (!seenGrade.has(gradeKey)) {
           seenGrade.add(gradeKey);
           gradeOpts.push({ label: grade, parent: thickKey, key: gradeKey });
         }
       }
-    } else if (grade) {
+    } else if (!spec?.grade && grade) {
       const gradeKey = `${size}::${grade}`;
       if (!seenGrade.has(gradeKey)) {
         seenGrade.add(gradeKey);
@@ -1781,64 +2030,102 @@ function timberGroups(rows, { withThickness }) {
       }
     }
   }
-  // Size → Thickness (mm) → Grade
-  return [
+  const groups = [
     { id: "ply-size", label: "尺寸", labelEn: "Size", options: sizes },
     {
       id: "ply-thickness",
       label: "厚度 (mm)",
       labelEn: "Thickness (mm)",
       dependsOn: "ply-size",
+      note: spec?.thicknessNote || "",
       options: thicknessOpts,
     },
-    {
+  ];
+  if (spec?.grade) {
+    groups.push({ id: "ply-grade", label: "等級", labelEn: "Grade", keepOrder: true, options: [spec.grade] });
+  } else if (gradeOpts.length) {
+    groups.push({
       id: "ply-grade",
       label: "等級",
       labelEn: "Grade",
-      dependsOn: "ply-thickness",
+      dependsOn: withThickness ? "ply-thickness" : "ply-size",
       options: gradeOpts,
-    },
-  ].filter((group) => (group.options || []).length > 0);
+    });
+  }
+  if (spec?.spec) {
+    groups.push({ id: "ply-spec", label: "規格", labelEn: "Spec", keepOrder: true, options: [spec.spec] });
+  }
+  return groups.filter((group) => (group.options || []).length > 0);
 }
 
 function timberChoices(rows, groups, spec) {
   const withThickness = spec?.withThickness !== false;
+  const drop = new Set((spec?.dropThickness || []).map((item) => String(item).trim().toLowerCase()));
+  const seen = new Set();
   const choices = [];
   for (const row of rows) {
     const { size, thickness, grade } = timberParts(row);
     if (!size) continue;
+    if (drop.has(String(thickness).trim().toLowerCase())) continue;
     const picks = { "ply-size": size };
-    if (withThickness && thickness) {
-      picks["ply-thickness"] = timberThicknessKey(size, thickness);
-      if (grade) picks["ply-grade"] = `${picks["ply-thickness"]}::${grade}`;
-    } else if (grade) {
-      picks["ply-grade"] = `${size}::${grade}`;
-    }
+    if (withThickness && thickness) picks["ply-thickness"] = timberThicknessKey(size, thickness);
+    if (spec?.grade) picks["ply-grade"] = spec.grade;
+    else if (withThickness && thickness && grade) picks["ply-grade"] = `${picks["ply-thickness"]}::${grade}`;
+    else if (grade) picks["ply-grade"] = `${size}::${grade}`;
+    if (spec?.spec) picks["ply-spec"] = spec.spec;
     const groupIds = new Set((groups || []).map((group) => group.id));
     for (const key of Object.keys(picks)) {
       if (!groupIds.has(key)) delete picks[key];
     }
     if (!Object.keys(picks).length) continue;
+    const signature = JSON.stringify(picks);
+    if (seen.has(signature)) continue;
+    seen.add(signature);
     const facts = orderFacts(row);
     // Keep buyer description as the tolerance note — do not leak host plywood essays into picks.
-    if (spec?.tolerance !== false) facts.summary = TIMBER_TOLERANCE;
+    if (spec?.grade) {
+      facts.detail = [size, thickness, spec.grade].filter(Boolean).join(" · ");
+      if (Array.isArray(facts.specs)) {
+        facts.specs = facts.specs.map((line) => (/^size\s*:/i.test(line) ? `Size: ${facts.detail}` : line));
+      }
+    }
+    if (spec?.thicknessNote) delete facts.summary;
+    else if (spec?.tolerance !== false) facts.summary = TIMBER_TOLERANCE;
     else delete facts.summary;
     choices.push({ picks, ...facts });
   }
   return choices;
 }
 
+const TIMBER_CARD_IMAGES = {
+  "white-faced": "/assets/timber/white-faced-plywood.jpg?v=1",
+  "red-faced": "/assets/timber/red-faced-plywood.jpg?v=1",
+  filmface: "/assets/timber/film-faced-plywood.jpg?v=1",
+  softwood: "/assets/timber/softwood.jpg?v=1",
+  triangle: "/assets/timber/triangle-string.jpg?v=1",
+};
+
+function applyCardImage(product, src) {
+  if (!product || !src) return product;
+  product.image = src;
+  product.images = [src];
+  product.imageFallback = src.split("?")[0];
+  return product;
+}
+
 function foldedTimber(list, spec) {
   if (!list.length) return null;
   list.sort((a, b) => String(a.productNo || "").localeCompare(String(b.productNo || "")));
   const base = { ...list[0] };
+  applyCardImage(base, TIMBER_CARD_IMAGES[spec.kind]);
   base.name = spec.name;
   base.category = TIMBER_CATEGORY;
   base.sizeDesc = "";
   base.primarySpec = "";
   base.parentProduct = "";
   base.variant = "";
-  base.description = spec.tolerance === false ? "" : TIMBER_TOLERANCE;
+  base.description = spec.thicknessNote || spec.tolerance === false ? "" : TIMBER_TOLERANCE;
+  if (spec.aliases?.length) base.searchAliases = spec.aliases;
   base.specGroups = timberGroups(list, spec);
   const choices = timberChoices(list, base.specGroups, spec);
   if (choices.length) base.specChoices = choices;
@@ -1854,7 +2141,7 @@ function isTimberStub(product, foldedKinds) {
   if ((foldedKinds.has("white-faced") || foldedKinds.has("red-faced") || foldedKinds.has("filmface")) && /^Plywood$/i.test(english) && !/—/.test(english)) {
     return true;
   }
-  if (foldedKinds.has("softwood") && /^Timber$/i.test(english) && !/—/.test(english)) return true;
+  // "木材, Timber" stays so the shop can move it into flooring.
   return false;
 }
 
@@ -1875,14 +2162,613 @@ export function foldTimberPlywood(products) {
   const folded = TIMBER_FOLDS.map((spec) => foldedTimber(buckets[spec.kind], spec)).filter(Boolean);
   if (!folded.length) return products || [];
   const foldedKinds = new Set(TIMBER_FOLDS.filter((spec) => buckets[spec.kind].length).map((spec) => spec.kind));
-  const cleaned = rest.filter((product) => !isTimberStub(product, foldedKinds));
+  const cleaned = rest.filter((product) => !isTimberStub(product, foldedKinds)).map((product) => {
+    if (/Triangle String|三角線/i.test(String(product?.name || ""))) return applyCardImage({ ...product }, TIMBER_CARD_IMAGES.triangle);
+    return product;
+  });
   const removed = rest.length - cleaned.length;
   const at = Math.max(0, (insertAt < 0 ? cleaned.length : insertAt) - removed);
   return [...cleaned.slice(0, at), ...folded, ...cleaned.slice(at)];
 }
 
+const REBAR_CATEGORY = "鋼筋網, Reinforcement Mesh";
+const REBAR_STANDARD = "British Standard: BS 4483:2005; BS 4449:2005";
+const REBAR_CUSTOM = "Customize Size";
+
+const REBAR_FAMILIES = [
+  {
+    id: "mkt-mesh-a142",
+    name: "方格鋼筋網, Square Mesh Fabric",
+    rows: [
+      ["A393", "62.09", "2.1 × 4.8 m", "MKT-MESH-A393"],
+      ["A252", "39.82", "2.1 × 4.8 m", "MKT-MESH-A252"],
+      ["A193", "30.44", "2.1 × 4.8 m", "MKT-MESH-A193"],
+      ["A142", "22.38", "2.1 × 4.8 m", "MKT-MESH-A142"],
+    ],
+  },
+  {
+    id: "mkt-mesh-structural",
+    name: "建築物結構網, Structural Mesh Fabric",
+    rows: [
+      ["B1131", "109.87", "2.1 × 4.8 m", "MKT-MESH-B1131"],
+      ["B785", "82.05", "2.1 × 4.8 m", "MKT-MESH-B785"],
+      ["B503", "59.77", "2.1 × 4.8 m", "MKT-MESH-B503"],
+      ["B385", "45.66", "2.1 × 4.8 m", "MKT-MESH-B385"],
+      ["B283", "37.6", "2.1 × 4.8 m", "MKT-MESH-B283"],
+    ],
+  },
+  {
+    id: "mkt-mesh-long",
+    name: "長格鋼筋網, Long Mesh Fabric",
+    rows: [
+      ["C785", "67.74", "2.1 × 4.8 m", "MKT-MESH-C785"],
+      ["C636", "55.94", "2.1 × 4.8 m", "MKT-MESH-C636"],
+      ["C503", "45.46", "2.1 × 4.8 m", "MKT-MESH-C503"],
+      ["C385", "36.09", "2.1 × 4.8 m", "MKT-MESH-C385"],
+      ["C283", "28.02", "2.1 × 4.8 m", "MKT-MESH-C283"],
+    ],
+  },
+  {
+    id: "mkt-mesh-wrapping",
+    name: "小方格鋼筋網, Wrapping Mesh Fabric",
+    rows: [
+      ["D98", "15.52", "2.1 × 4.8 m", "MKT-MESH-D98"],
+      ["D49", "5.82", "2.1 × 3.6 m", "MKT-MESH-D49"],
+    ],
+  },
+];
+
+function rebarSpecGroups(rows) {
+  return [
+    {
+      id: "mesh-ref",
+      label: "英國標準編號",
+      labelEn: "BS Ref.No.",
+      keepOrder: true,
+      options: rows.map(([code, , , sku]) => ({
+        label: code,
+        key: code,
+        sku,
+        moq: 1,
+        unit: "sheet",
+      })),
+    },
+    {
+      id: "mesh-mass",
+      label: "網片重量",
+      labelEn: "Mass Per Sheet",
+      dependsOn: "mesh-ref",
+      keepOrder: true,
+      options: rows.map(([code, mass]) => ({
+        label: `${mass} kg`,
+        key: `${mass} kg`,
+        parent: code,
+      })),
+    },
+    {
+      id: "mesh-size",
+      label: "網片規格",
+      labelEn: "Size of Sheet",
+      dependsOn: "mesh-ref",
+      keepOrder: true,
+      options: [
+        ...rows.map(([code, , size]) => ({ label: size, key: size, parent: code })),
+        ...rows.map(([code]) => ({ label: REBAR_CUSTOM, key: REBAR_CUSTOM, parent: code })),
+      ],
+    },
+    {
+      id: "mesh-width",
+      label: "闊度",
+      labelEn: "Width",
+      field: "width",
+      unit: "m",
+      dependsOn: "mesh-size",
+    },
+    {
+      id: "mesh-length",
+      label: "長度",
+      labelEn: "Length",
+      field: "length",
+      unit: "m",
+      dependsOn: "mesh-size",
+    },
+  ];
+}
+
+function isRebarRow(product) {
+  if (String(product?.category || "") === REBAR_CATEGORY) return true;
+  const name = String(product?.name || "");
+  return /Square Reinforcement Mesh|Building Structural Mesh|Rectangular Reinforcement Mesh|方格鋼筋網 —|結構用鋼筋網 —|長方格鋼筋網 —/.test(name);
+}
+
+export function foldReinforcementMesh(products) {
+  const rows = [];
+  const rest = [];
+  let insertAt = -1;
+  for (const product of products || []) {
+    if (!isRebarRow(product)) {
+      rest.push(product);
+      continue;
+    }
+    if (insertAt < 0 && String(product?.category || "") === REBAR_CATEGORY) insertAt = rest.length;
+    rows.push(product);
+  }
+  if (!rows.some((product) => String(product?.category || "") === REBAR_CATEGORY)) return products || [];
+  const image = rows.find((product) => String(product?.category || "") === REBAR_CATEGORY && product.image)?.image || "/assets/prod-mesh.webp";
+  const imageFallback = rows.find((product) => product.imageFallback)?.imageFallback || "/assets/prod-mesh.webp";
+  const folded = REBAR_FAMILIES.map((family) => {
+    const base = {
+      ...(rows.find((product) => product.productNo === "MKT-MESH-A142") || rows[0]),
+    };
+    base.id = family.id;
+    base.name = family.name;
+    base.category = REBAR_CATEGORY;
+    base.productNo = family.rows[0][3];
+    base.provisionalSku = family.rows[0][3];
+    base.parentProduct = "";
+    base.variant = "";
+    base.sizeDesc = "";
+    base.description = "";
+    base.primarySpec = "";
+    base.specs = [];
+    base.specifications = "";
+    base.standard = REBAR_STANDARD;
+    base.certifications = "";
+    base.unit = "sheet";
+    base.salesUnit = "sheet";
+    base.moq = 1;
+    base.unit_price = null;
+    base.price = null;
+    base.priceUponRequest = true;
+    base.listedPrice = false;
+    base.quote = null;
+    base.hit = false;
+    base.tailorMade = false;
+    base.image = image;
+    base.images = [image];
+    base.imageFallback = imageFallback;
+    base.specGroups = rebarSpecGroups(family.rows);
+    delete base.specChoices;
+    return base;
+  });
+  const at = insertAt < 0 ? rest.length : insertAt;
+  return [...rest.slice(0, at), ...folded, ...rest.slice(at)];
+}
+
+const MARKET_CATEGORY_RENAMES = {
+  "Aggregate 石料": "石料, Aggregate",
+  "板材, Board": "板, Board",
+  "鋼筋網, Reinforcement Mesh": "網, Mesh",
+  "預製混凝土, Precasted Concrete": "預製混凝土製品, Precast Concrete Products",
+  "磚、砌塊, Brick & Block": "沙磚, Brick & Block",
+  "喉管、配件, Pipe & Fittings & Accessories": "管道及配件, Pipe & Fittings & Accessories",
+  "批盪, Plastering": "泥水工程, Plastering",
+  "瓷磚, Tiles": "磚, Tile",
+  "木材、夾板, Timber / Plywood": "木板/夾板, Timber / Plywood",
+  Software: "數位與科技服務, Digital & Technology Services",
+  "結構鋼、金屬製品, Structure Steel Element, Metal Product": "結構性鋼材、金屬製品, Structure Steel Element, Metal Product",
+};
+
+function marketShell(template, id, sku, name, category) {
+  const base = { ...(template || {}) };
+  base.id = id;
+  base.productNo = sku;
+  base.provisionalSku = sku;
+  base.name = name;
+  base.category = category;
+  base.sizeDesc = "";
+  base.description = "";
+  base.primarySpec = "";
+  base.parentProduct = "";
+  base.variant = "";
+  base.specs = [];
+  base.specifications = "";
+  base.specGroups = [];
+  base.purposes = [];
+  base.certifications = "";
+  base.standard = "";
+  base.image = "";
+  base.images = [];
+  base.imageUrl = "";
+  base.imageFallback = "";
+  base.unit_price = null;
+  base.price = null;
+  base.priceUponRequest = true;
+  base.quote = null;
+  delete base.specChoices;
+  return base;
+}
+
+function bilingualCut(name) {
+  const text = String(name || "").replace(/\s+/g, " ").trim();
+  let from = 0;
+  let cut = -1;
+  while (from < text.length) {
+    const comma = text.indexOf(", ", from);
+    if (comma < 0) break;
+    const left = text.slice(0, comma).trim();
+    const right = text.slice(comma + 2).trim();
+    let depth = 0;
+    let balanced = true;
+    for (const char of left) {
+      if (char === "(") depth += 1;
+      else if (char === ")") depth -= 1;
+      if (depth < 0) balanced = false;
+    }
+    if (depth !== 0) balanced = false;
+    if (
+      balanced &&
+      /[\u4e00-\u9fff]/.test(left) &&
+      right &&
+      !/[\u4e00-\u9fff]/.test(right) &&
+      /^[A-Z]/.test(right)
+    ) {
+      cut = comma;
+      const leftTail = left.split(/\s+[—–]\s+/).slice(1).join(" — ");
+      const rightTail = right.split(/\s+[—–]\s+/).slice(1).join(" — ");
+      if (leftTail && leftTail === rightTail) return comma;
+    }
+    from = comma + 2;
+  }
+  return cut;
+}
+
+function englishHead(name) {
+  const text = String(name || "").replace(/\s+/g, " ").trim();
+  const cut = bilingualCut(text);
+  const right = cut >= 0 ? text.slice(cut + 2).trim() : text;
+  return right.split(/\s+[—–]\s+/)[0].trim();
+}
+
+function optionLabel(product) {
+  const text = String(product?.name || "").replace(/\s+/g, " ").trim();
+  const cut = bilingualCut(text);
+  const left = cut >= 0 ? text.slice(0, cut).trim() : text;
+  const parts = left.split(/\s+[—–]\s+/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 1) return parts[1];
+  const variant = String(product?.variant || "").trim();
+  const variantParts = variant.split(/\s+[—–]\s+/).map((part) => part.trim()).filter(Boolean);
+  if (variantParts.length > 1) return variantParts[variantParts.length - 1];
+  if (variant && variant !== parts[0]) return variant;
+  return "";
+}
+
+function retitleProducts(products, test, name, category) {
+  let found = false;
+  for (const product of products) {
+    if (!test(product)) continue;
+    product.name = name;
+    product.category = category;
+    found = true;
+  }
+  return found;
+}
+
+function oneMarketProduct(products, spec) {
+  const rows = [];
+  const rest = [];
+  for (const product of products) {
+    if (spec.test(product)) rows.push(product);
+    else rest.push(product);
+  }
+  const template = rows[0] || products[0];
+  if (!template) return products;
+  const base = rows.length ? { ...rows[0] } : marketShell(template, spec.id, spec.sku, spec.name, spec.category);
+  base.name = spec.name;
+  base.category = spec.category;
+  if (!rows.length) {
+    base.id = spec.id;
+    base.productNo = spec.sku;
+    base.provisionalSku = spec.sku;
+  } else if (rows.length === 1) {
+    base.sizeDesc = rows[0].sizeDesc;
+    base.description = rows[0].description;
+    base.specGroups = rows[0].specGroups;
+    base.specChoices = rows[0].specChoices;
+  } else {
+    const options = [];
+    const seen = new Set();
+    const choiceRows = [];
+    for (const row of rows) {
+      const option = optionLabel(row);
+      if (!option || seen.has(option)) continue;
+      seen.add(option);
+      options.push(option);
+      choiceRows.push(row);
+    }
+    base.sizeDesc = "";
+    base.parentProduct = "";
+    base.variant = "";
+    base.description = "";
+    base.primarySpec = "";
+    if (options.length > 1) {
+      base.specGroups = [{
+        id: spec.groupId,
+        label: spec.label,
+        labelEn: spec.labelEn,
+        options,
+      }];
+      base.specChoices = choiceRows.map((row) => ({
+        picks: { [spec.groupId]: optionLabel(row) },
+        ...orderFacts(row),
+      }));
+    }
+  }
+  const at = products.findIndex((product) => spec.test(product));
+  rest.splice(at < 0 ? rest.length : at, 0, base);
+  return rest;
+}
+
+export function applyMarketList(products) {
+  let next = (products || []).map((product) => {
+    const category = MARKET_CATEGORY_RENAMES[String(product?.category || "")];
+    return category ? { ...product, category } : product;
+  });
+  const chemical = "化學品, Chemical Products";
+  const flooring = "地板系統, Flooring System";
+  const board = "板, Board";
+  const mesh = "網, Mesh";
+  const precast = "預製混凝土製品, Precast Concrete Products";
+  next = oneMarketProduct(next, {
+    test: (product) => /concrete additive|混凝土添加劑/i.test(product?.name || ""),
+    name: "混凝土添加劑, Concrete Additive",
+    category: chemical,
+    id: "mkt-chemical-additive",
+    sku: "MKT-CHEM-ADDITIVE",
+    groupId: "chem-type",
+    label: "類型",
+    labelEn: "Type",
+  });
+  next = oneMarketProduct(next, {
+    test: (product) => /^base plaster$/i.test(englishHead(product?.name)) && /\d+\s*mpa/i.test(product?.name || ""),
+    name: "批盪料, Cement Base Plaster",
+    category: chemical,
+    id: "mkt-chemical-plaster",
+    sku: "MKT-CHEM-PLASTER",
+    groupId: "plaster-grade",
+    label: "等級",
+    labelEn: "Grade",
+  });
+  retitleProducts(next, (product) => /non-shrink grout|不收縮灌漿/i.test(product?.name || ""), "不收縮灌漿料, Non-shrink Grout", chemical);
+  next = oneMarketProduct(next, {
+    test: (product) => /其他化學產品|chemical product \(others\)/i.test(product?.name || ""),
+    name: "其他化學產品, Chemical Product (Others)",
+    category: chemical,
+    id: "mkt-chemical-others",
+    sku: "MKT-CHEM-OTHERS",
+  });
+  retitleProducts(next, (product) => /wood plastic|木塑複合板/i.test(product?.name || ""), "木塑複合板, Wood Plastic Composite", "環保產品, Environmental Product");
+  retitleProducts(next, (product) => /^timber$/i.test(englishHead(product?.name)), "木地板, Flooring System - Timber Floor", flooring);
+  retitleProducts(next, (product) => /tiles\s*\/\s*wall\s*&\s*flooring|牆身及地板系統/i.test(product?.name || ""), "升高地台板, Flooring System - Rising Floor", flooring);
+  retitleProducts(next, (product) => /vinyl tile|膠地板/i.test(product?.name || ""), "乙烯基地板, Flooring System - Vinyl Floor", flooring);
+  next = oneMarketProduct(next, {
+    test: (product) => /sport flooring|運動地板/i.test(product?.name || ""),
+    name: "運動地板, Flooring System - Sport Flooring",
+    category: flooring,
+    id: "mkt-floor-sport",
+    sku: "MKT-FLOOR-SPORT",
+  });
+  next = oneMarketProduct(next, {
+    test: (product) => /flooring system - hardener|硬化劑/i.test(product?.name || ""),
+    name: "硬化劑, Flooring System - Hardener",
+    category: flooring,
+    id: "mkt-floor-hardener",
+    sku: "MKT-FLOOR-HARDENER",
+  });
+  next = oneMarketProduct(next, {
+    test: (product) => /recycled plastic floor|再生塑料地板/i.test(product?.name || ""),
+    name: "再生塑料地板, Flooring System - Recycled Plastic Floor",
+    category: flooring,
+    id: "mkt-floor-recycled",
+    sku: "MKT-FLOOR-RECYCLED",
+  });
+  retitleProducts(next, (product) => /xps foam board|擠塑板/i.test(product?.name || ""), "隔熱板, Board (Insulation)", board);
+  retitleProducts(next, (product) => /gypsum board|石膏板/i.test(product?.name || "") && !/block|石膏磚/i.test(product?.name || ""), "石膏板, Board (Gypsum)", board);
+  next = oneMarketProduct(next, {
+    test: (product) => /partition board|間隔板/i.test(product?.name || ""),
+    name: "間隔板, Board (Partition)",
+    category: board,
+    id: "mkt-board-partition",
+    sku: "MKT-BOARD-PARTITION",
+    groupId: "partition-frr",
+    label: "耐火時效",
+    labelEn: "Fire rating",
+  });
+  retitleProducts(next, (product) => /cement board|水泥板|泥水板/i.test(product?.name || ""), "泥水板, Board (Cement)", board);
+  next = oneMarketProduct(next, {
+    test: (product) => /aluminium plate|aluminum plate|鋁板,/i.test(product?.name || ""),
+    name: "鋁板, Aluminium Plate",
+    category: "鋁製品, Aluminium Product",
+    id: "mkt-aluminium-plate",
+    sku: "MKT-AL-PLATE",
+  });
+  next = oneMarketProduct(next, {
+    test: (product) => /mild steel galvanized wire mesh|低碳鋼鍍鋅絲網/i.test(product?.name || ""),
+    name: "低碳鋼鍍鋅絲網, Mild Steel Galvanized Wire Mesh",
+    category: mesh,
+    id: "mkt-mesh-gi-wire",
+    sku: "MKT-MESH-GI-WIRE",
+  });
+  next = oneMarketProduct(next, {
+    test: (product) => /mild steel wire mesh|低碳鋼絲網/i.test(product?.name || ""),
+    name: "低碳鋼絲網, Mild Steel Wire Mesh",
+    category: mesh,
+    id: "mkt-mesh-ms-wire",
+    sku: "MKT-MESH-MS-WIRE",
+  });
+  next = oneMarketProduct(next, {
+    test: (product) => /ytong|aac block|輕磚/i.test(`${product?.name || ""} ${product?.parentProduct || ""}`),
+    name: "輕磚, Precast Concrete Products (Light-weight Block)",
+    category: precast,
+    id: "mkt-precast-aac",
+    sku: "MKT-PRECAST-AAC",
+    groupId: "aac-size",
+    label: "尺寸",
+    labelEn: "Size",
+  });
+  next = oneMarketProduct(next, {
+    test: (product) => /prestressed concrete pile|預製預應力混凝土樁/i.test(product?.name || ""),
+    name: "預製預應力混凝土樁, Precast Prestressed Concrete Pile",
+    category: precast,
+    id: "mkt-precast-pile",
+    sku: "MKT-PRECAST-PILE",
+  });
+  next = oneMarketProduct(next, {
+    test: (product) => /prestressed concrete items|預製預應力混凝土項目/i.test(product?.name || ""),
+    name: "預製預應力混凝土項目, Precast Prestressed Concrete Items",
+    category: precast,
+    id: "mkt-precast-prestress",
+    sku: "MKT-PRECAST-PRESTRESS",
+  });
+  next = oneMarketProduct(next, {
+    test: (product) => /concrete façade|concrete facade|預製混凝土立面/i.test(product?.name || ""),
+    name: "預製混凝土立面, Precast Concrete Façade",
+    category: precast,
+    id: "mkt-precast-facade",
+    sku: "MKT-PRECAST-FACADE",
+  });
+  next = oneMarketProduct(next, {
+    test: (product) => /precast concrete manhole|預製混凝土沙井/i.test(product?.name || ""),
+    name: "預製混凝土沙井, Precast Concrete Manhole",
+    category: precast,
+    id: "mkt-precast-manhole",
+    sku: "MKT-PRECAST-MANHOLE",
+  });
+  const tile = "磚, Tile";
+  for (const product of next) {
+    const name = String(product?.name || "");
+    if (/防滑瓷磚|ceramic tiles r7/i.test(name)) {
+      product.name = "防滑瓷磚, Anti-slip Tile";
+      product.category = tile;
+      product.searchAliases = ["Ceramic Tiles R7–R11", "Ceramic Tiles R7-R11"];
+    } else if (/過底磚|通體磚|homogenous tile/i.test(name)) {
+      product.name = "過底磚, Homogenous Tile";
+      product.category = tile;
+      product.searchAliases = ["通體磚", "Homogenous Tile"];
+      if (Array.isArray(product.specGroups)) {
+        product.specGroups = product.specGroups.filter((group) => group?.id !== "tile-color");
+      }
+    } else if (/乙烯基地板|flooring system - vinyl floor/i.test(name)) {
+      const kept = (Array.isArray(product.specGroups) ? product.specGroups : []).filter((group) => {
+        const id = String(group?.id || "");
+        return id !== "tile-color" && id !== "vinyl-type" && id !== "vinyl-code" && id !== "vinyl-slip" && id !== "vinyl-fire" && id !== "vinyl-size" && id !== "vinyl-thickness" && id !== "vinyl-width" && id !== "vinyl-length";
+      });
+      product.specGroups = [...kept, ...vinylFloorSpecGroups(), homogenousColorGroup()];
+    } else if (/天面磚|屋面瓦|roof tile/i.test(name)) {
+      product.name = "天面磚, Roof Tile";
+      product.category = tile;
+      product.searchAliases = ["屋面瓦", "Roof Tile"];
+    } else if (/馬賽克磚|馬賽克,|mosaic tile/i.test(name)) {
+      product.name = "馬賽克磚, Mosaic Tile";
+      product.category = tile;
+      product.searchAliases = ["馬賽克", "Mosaic Tile"];
+    } else if (/天然大理石|natural marble/i.test(name)) {
+      product.name = "天然大理石磚, Natural Marble Tiles";
+      product.category = tile;
+      product.searchAliases = ["Natural Marble Tile"];
+    } else if (/^瓷磚,/.test(name) && /ceramic tiles?$/i.test(name)) {
+      product.name = "瓷磚, Ceramic Tile";
+      product.category = tile;
+    } else if (/玻璃磚|glass tile/i.test(name)) {
+      product.name = "玻璃磚, Glass Tile";
+      product.category = tile;
+      product.searchAliases = ["Other Tiles — Glass Tile", "Other Tiles"];
+    } else if (/金屬磚|metal tile/i.test(name)) {
+      product.name = "金屬磚, Metal Tile";
+      product.category = tile;
+      product.searchAliases = ["Other Tiles — Metal Tile", "Other Tiles"];
+    } else if (/軟木磚|cork tile/i.test(name)) {
+      product.name = "軟木磚, Cork Tile";
+      product.category = tile;
+      product.searchAliases = ["Other Tiles — Cork Tile", "Other Tiles"];
+    } else if (/隔音磚|acoustic tile/i.test(name)) {
+      product.name = "隔音磚, Acoustic Tile";
+      product.category = tile;
+      product.searchAliases = ["Other Tiles — Acoustic Tile", "Other Tiles"];
+    } else if (/預製混凝土地磚|precast concrete paving/i.test(name)) {
+      product.name = "預製混凝土地磚, Precast Concrete Paving";
+      product.category = tile;
+      product.searchAliases = ["預製混凝土製品", "Precast Concrete Products"];
+    }
+  }
+  return replaceDigitalServices(next);
+}
+
+const DIGITAL_CATEGORY = "數位與科技服務, Digital & Technology Services";
+const DIGITAL_OFFER = [
+  ["mkt-sw-eprocurement-tmm", "MKT-SW-TMM", "電子採購 (TMM), eProcurement (TMM)"],
+  ["mkt-sw-dwss", "MKT-SW-DWSS", "數位工程監督系統 (DWSS), Digital Works Supervision System (DWSS)"],
+  ["mkt-sw-sdm", "MKT-SW-SDM", "智能文件管理 (SDM), Smart Document Management (SDM)"],
+  ["mkt-sw-cet", "MKT-SW-CET", "補償事件工具, Compensation Event Tool"],
+  ["mkt-sw-pay", "MKT-SW-PAY", "付款方案, Payment Solution"],
+  ["mkt-sw-4s", "MKT-SW-4S", "智能工地安全系統 (4S), Smart Site Safety System (4S)"],
+];
+
+function isDigitalService(product) {
+  const category = String(product?.category || "");
+  return category === "Software" || category === DIGITAL_CATEGORY || category === "數位與科技服務";
+}
+
+function replaceDigitalServices(products) {
+  const template = products.find(isDigitalService);
+  if (!template) return products;
+  const index = products.findIndex(isDigitalService);
+  const rest = products.filter((product) => !isDigitalService(product));
+  const shells = DIGITAL_OFFER.map(([id, sku, name]) => {
+    const shell = marketShell(template, id, sku, name, DIGITAL_CATEGORY);
+    shell.unit = "license";
+    shell.salesUnit = "license";
+    shell.moq = 1;
+    shell.supplier = template.supplier || "Mattex";
+    shell.image = template.image || "";
+    shell.images = shell.image ? [shell.image] : [];
+    shell.imageFallback = template.imageFallback || "";
+    return shell;
+  });
+  const at = index < 0 ? rest.length : Math.min(index, rest.length);
+  return [...rest.slice(0, at), ...shells, ...rest.slice(at)];
+}
+
+const CLAY_PIPE_SIZES = [
+  [150, 1500],
+  [200, 2000],
+  [225, 2000],
+  [250, 2000],
+  [300, 2000],
+  [375, 2000],
+  [450, 2000],
+  [600, 2000],
+];
+
+function clayPipeSpecGroups() {
+  return [
+    {
+      id: "clay-class",
+      label: "等級",
+      labelEn: "Class",
+      options: [{ label: "120" }],
+    },
+    {
+      id: "clay-size",
+      label: "尺寸（直徑 x 長度）",
+      labelEn: "Size(Diameter x Length)",
+      options: CLAY_PIPE_SIZES.map(([diameter, length]) => ({ label: `${diameter} mm x ${length} mm` })),
+    },
+  ];
+}
+
+function attachClayPipeSpecs(products) {
+  return (products || []).map((product) => {
+    const sku = String(product?.productNo || product?.sku || "").toUpperCase();
+    const name = String(product?.name || "");
+    if (sku !== "MKT-LOC-YFXTEFOC-001" && !/clay pipe|瓦管/i.test(name)) return product;
+    return { ...product, specGroups: clayPipeSpecGroups(), shopCategoryId: "pipe-clay" };
+  });
+}
+
 const BUYER_PROJECTION = "buyer-catalog-v1";
-const BUYER_ETAG_SUFFIX = "-timber-ply-fold3";
+const BUYER_ETAG_SUFFIX = "-timber-ply-fold4-press1-forge7-mesh3-lead1-plaster2-custom1-agg6-tax4-digital1-vinylspec5-equip1-gypsum1-plyfsc3-oxygenhide1-claypipe2";
+
 
 export function buyerCatalogVersion(etag) {
   const value = String(etag || "");
@@ -1898,7 +2784,8 @@ export function toPublicCatalog(catalog) {
     foldOxygenChamber, foldDowelBar, foldPaint, foldRaisedFloors, foldAluminumCladding,
     foldCable, foldShoeWashing, foldFinishBoards, foldAggregate, foldPipeFittings,
     foldWindows, foldTiles, foldDrainageGratings, foldSteelGratings, foldManholeCovers,
-    foldGypsumBlocks, foldTimberPlywood]) products = fold(products);
+    foldGypsumBlocks, foldTimberPlywood, foldReinforcementMesh]) products = fold(products);
+  products = attachClayPipeSpecs(applyMarketList(products));
   const previous = new Map((catalog.categories || []).map((item) => [item?.name, item]));
   const categories = [...new Set(products.map((p) => String(p.category || "").trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, "zh"))

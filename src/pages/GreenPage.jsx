@@ -9,8 +9,7 @@ import Seo, { breadcrumbJsonLd, orgJsonLd } from "../components/Seo";
 import { useStore } from "../hooks/useStore";
 import { useLanguage } from "../i18n";
 import { catalogGroupIndex, collapseCatalog, useCatalogGroups } from "../lib/catalogGroups";
-import { jumpToId } from "../lib/jumpTo";
-import { allProductsTo, siteOrigin, withLocale } from "../lib/locale";
+import { allProductsTo, freshCatalogLocation, productDetailsLocation, siteOrigin, withLocale } from "../lib/locale";
 import { seoCopy } from "../lib/seoCopy";
 import { addFromStorefront, getGreenProducts, searchProducts } from "../lib/store";
 
@@ -59,11 +58,10 @@ export default function GreenPage() {
       />
       <SiteHeader
         searchValue={searchQuery}
-        onSearchChange={setSearchQuery}
+        onSearchChange={(value) => navigate(freshCatalogLocation(lang, value))}
         onSearchSubmit={(event, value) => {
           event?.preventDefault();
-          setSearchQuery(value ?? "");
-          jumpToId("catalog-results");
+          navigate(freshCatalogLocation(lang, value ?? ""));
         }}
         suggestProducts={suggestPool}
       />
@@ -101,15 +99,9 @@ export default function GreenPage() {
             <span className="sr-only">{t("search")}</span>
             <ProductSearchBox
               value={searchQuery}
-              onValue={setSearchQuery}
-              onTerm={(term) => {
-                setSearchQuery(term);
-                jumpToId("catalog-results");
-              }}
-              onProduct={(product) => {
-                setSearchQuery(product.name);
-                jumpToId("catalog-results");
-              }}
+              onValue={(value) => navigate(freshCatalogLocation(lang, value))}
+              onTerm={(term) => navigate(freshCatalogLocation(lang, term))}
+              onProduct={(product) => navigate(productDetailsLocation(lang, product))}
               products={suggestPool}
               placeholder={t("navSearchPlaceholder")}
               ariaLabel={t("search")}

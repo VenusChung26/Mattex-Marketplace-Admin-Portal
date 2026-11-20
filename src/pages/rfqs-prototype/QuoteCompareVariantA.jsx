@@ -6,6 +6,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { formatPrice, buildSupplierMetrics, getSupplier, supplierSlug } from "../../lib/store";
 import { scrollLeftSoon, scrollNodeIntoView } from "../../lib/scrollInto";
 import { useLanguage } from "../../i18n";
+import { selectSearchOnFocus } from "../../components/SearchSuggestions";
 
 function metricsForSupplier(name) {
   return getSupplier(name)?.metrics || buildSupplierMetrics(supplierSlug(name));
@@ -1061,6 +1062,8 @@ export default function VariantA({ rfq, quotes, acceptance, onAccept, onSupplier
             <input
               type="search"
               value={productQuery}
+              onMouseDown={selectSearchOnFocus}
+              onFocus={selectSearchOnFocus}
               onChange={(e) => setProductQuery(e.target.value)}
               placeholder={t("filterProductPlaceholder")}
               className="field-input w-full !pl-9 !py-2 h-full"
