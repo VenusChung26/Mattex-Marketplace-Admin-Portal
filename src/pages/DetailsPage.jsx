@@ -1,5 +1,5 @@
 import { findSelectionLine, initialSpecPicks, openingSpecPicks, preparedSpecGroups, resolveSelection, selectedProduct, selectionMessage } from "../lib/productSelection.js";
-import { migratePickedSpecs, searchSpecPicks } from "../lib/specSearch.js";
+import { isPlainCustomizeLabel, migratePickedSpecs, searchSpecPicks } from "../lib/specSearch.js";
 import { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import CopyLinkButton from "../components/CopyLinkButton";
@@ -8,7 +8,7 @@ import SiteFooter from "../components/SiteFooter";
 import Seo, { breadcrumbJsonLd, orgJsonLd, productJsonLd } from "../components/Seo";
 import ProductPrice from "../components/ProductPrice";
 import ProductRating from "../components/ProductRating";
-import { ProductActions, ProductBadges, ProductImage, QtyStepper, ShopCategoryLinks, SizeChoicePicker, SpecGroupPicker, sectionNameFromLabels, sortMembersAscending } from "../components/ProductCard";
+import { CustomSizeFields, ProductActions, ProductBadges, ProductImage, QtyStepper, ShopCategoryLinks, SizeChoicePicker, SpecGroupPicker, sectionNameFromLabels, sortMembersAscending } from "../components/ProductCard";
 import CartToast from "../components/CartToast";
 import { productImageList } from "../lib/compressImage";
 import { buyerPurposes, displayUnit, looksLikeSize, lowerDeliveryQty, pickedSpecFields, productImageUrl } from "../lib/productFields";
@@ -37,7 +37,7 @@ import {
   isBuyerVisible,
   productSkuId,
   productDescriptionText,
-  shopCategoryTrail,
+  shopCategoryNodes,
   certStandardLines,
   specificationRows,
   stockStatusKey,
@@ -153,11 +153,17 @@ function specPicksFor(product, line, pickLabel) {
   return searchSpecPicks(product, pickLabel) || openingSpecPicks(product);
 }
 
+function certTextFromSpecs(specs) {
+  const line = (Array.isArray(specs) ? specs : []).find((item) => /^cert\s*:/i.test(String(item || "").trim()));
+  return line ? String(line).replace(/^cert\s*:\s*/i, "").trim() : "";
+}
+
 function certRows(product, label) {
   const fromSpecs = specificationRows(product).filter((row) => row.kind === "cert" && row.lines?.length);
   if (fromSpecs.length) return fromSpecs.map((row) => ({ key: "cert", label, value: row.lines }));
   const standard = staffCertText(product) || String(product?.standard || "").trim();
-  return standard ? [{ key: "cert", label, value: standard }] : [];
+  const lines = certStandardLines(standard);
+  return lines.length ? [{ key: "cert", label, value: lines }] : [];
 }
 
 export default function DetailsPage() {
@@ -186,6 +192,7 @@ export default function DetailsPage() {
   const pickLabel = params.get("pick") || "";
   const [pickedSpecs, setPickedSpecs] = useState(() => specPicksFor(product, editingLine, pickLabel));
   const [sizeChoice, setSizeChoice] = useState("");
+  const [customOpen, setCustomOpen] = useState(false);
   const pickedFields = pickedSpecFields(product?.specGroups, pickedSpecs || {}, product?.specChoices);
   const orderMoq = Math.max(1, Number(pickedFields.moq != null && pickedFields.moq !== "" ? pickedFields.moq : product?.moq) || 1);
   const [tailorNonce, setTailorNonce] = useState(0);
@@ -213,10 +220,17 @@ export default function DetailsPage() {
   useEffect(() => {
     setPickedSpecs(specPicksFor(product, editingLine, params.get("pick") || ""));
     setSizeChoice(editingLine?.pickedSize || "");
+    setCustomOpen(Boolean(editingLine?.pickedSize) || params.get("custom") === "1");
     setQty(editingLine?.qty || product?.moq || 1);
     const next = productImageList(product);
     setActiveImage(next[0] || product?.image || "");
   }, [product?.id, editRef, pickLabel]);
+
+  useEffect(() => {
+    if (editingLine) return;
+    const moq = Math.max(1, Number(product?.moq) || 1);
+    setQty((current) => (Number(current) < moq ? moq : current));
+  }, [product?.moq, editingLine]);
 
   useEffect(() => {
     if (editingLine || !shown.length) return;
@@ -263,12 +277,15 @@ export default function DetailsPage() {
         : priced
           ? ""
           : t("requestQuoteOnlyHint");
+  const pickedCert = certTextFromSpecs(pickedFields.specs);
   const viewProduct = {
     ...selectedProduct(product, { pickedSpecs, pickedSize: sizeChoice }),
     specs: pickedFields.specs || product.specs,
     moq: pickedFields.moq != null && pickedFields.moq !== "" ? pickedFields.moq : product.moq,
     unit: pickedFields.unit || product.unit,
     salesUnit: pickedFields.unit || product.salesUnit,
+    certifications: pickedCert || product.certifications,
+    standard: pickedCert || product.standard,
     leadTime: pickedFields.leadTime || product.leadTime,
     leadTimeLabel: pickedFields.leadTimeLabel || (pickedFields.leadTime ? "" : product.leadTimeLabel),
   };
@@ -282,7 +299,11 @@ export default function DetailsPage() {
   const description = (summaryText && !summaryIsSizeList ? summaryText : "")
     || (pickedDetail && !pickedSize ? pickedDetail : "")
     || productDescriptionText(product);
-  const orderStandard = certStandardLines(staffCertText(product) || product.standard || "");
+  const orderStandard = certStandardLines(staffCertText(viewProduct) || viewProduct.standard || "");
+  const customizing = isPlainCustomizeLabel(
+    optionLabels(variantOptions)[variantOptions.findIndex((member) => member.productId === product?.id)] || ""
+  );
+  const customSizeMissing = customizing && !String(sizeChoice || "").trim();
   const facts = [
     {
       label: t("stockStatus"),
@@ -310,6 +331,7 @@ export default function DetailsPage() {
         return;
       }
       const sendQty = Math.floor(Number(nextQty)) || 0;
+      if (customSizeMissing) return;
       if (!resolveSelection(product, { productId: product.id, qty: sendQty, pickedSpecs, pickedSize: sizeChoice }).ok) return;
       const result = addFromStorefront(product.id, intent, sendQty, lang, {
         pickedSpecs: pickedSpecs || undefined,
@@ -356,8 +378,8 @@ export default function DetailsPage() {
           <Link to={allProductsTo(lang)} className="hover:text-brand-600">
             {t("catalog")}
           </Link>
-          {shopCategoryTrail(product).length ? (
-            shopCategoryTrail(product).map((node) => (
+          {shopCategoryNodes(product).length ? (
+            shopCategoryNodes(product).map((node) => (
               <span key={node.id}>
                 <span className="mx-2 text-line">/</span>
                 <Link to={`${withLocale(lang, `/catalog/${node.id}`)}#catalog-top`} className="relative z-10 hover:text-brand-600">
@@ -391,7 +413,7 @@ export default function DetailsPage() {
 
           <div className="reveal">
             <div className="flex items-center justify-between gap-3">
-              {shopCategoryTrail(product).length ? (
+              {shopCategoryNodes(product).length ? (
                 <ShopCategoryLinks product={product} lang={lang} className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-600" />
               ) : CATEGORY_LIST_PAUSED ? null : (
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-600">
@@ -450,11 +472,31 @@ export default function DetailsPage() {
                           {labels.map((label, index) => {
                             const member = variantOptions[index];
                             const selected = member.productId === product.id;
+                            const customize = isPlainCustomizeLabel(label);
+                            if (selected && customize && customOpen) {
+                              return (
+                                <CustomSizeFields
+                                  key={member.productId}
+                                  inline
+                                  onChange={setSizeChoice}
+                                  onCancel={() => {
+                                    setSizeChoice("");
+                                    setCustomOpen(false);
+                                  }}
+                                />
+                              );
+                            }
+                            const path = withLocale(lang, `/details/${member.productId}`);
                             return (
                               <Link
                                 key={member.productId}
-                                to={withLocale(lang, `/details/${member.productId}`)}
+                                to={customize ? `${path}?custom=1` : path}
                                 aria-current={selected ? "true" : undefined}
+                                onClick={(event) => {
+                                  if (!selected || !customize) return;
+                                  event.preventDefault();
+                                  setCustomOpen(true);
+                                }}
                                 className={`w-fit max-w-full rounded-none border px-3 py-1.5 text-left text-sm ${
                                   selected
                                     ? "border-brand-700 bg-brand-50 font-semibold text-brand-800"
@@ -484,7 +526,7 @@ export default function DetailsPage() {
                     {lang === "en" ? "Confirm current standard size" : "確認目前標準尺寸"}
                   </button>
                 ) : null}
-                <button type="button" className="btn-primary disabled:opacity-40" disabled={!selectionStatus.ok} onClick={() => {
+                <button type="button" className="btn-primary disabled:opacity-40" disabled={!selectionStatus.ok || customSizeMissing} onClick={() => {
                   const result = replaceDraftSelection(editRef, product.id, { qty, pickedSpecs, pickedSize: sizeChoice });
                   if (result.ok) navigate(withLocale(lang, "/rfq"));
                 }}>{lang === "en" ? "Apply to draft" : "套用至草稿"}</button>
@@ -495,7 +537,7 @@ export default function DetailsPage() {
                 <QtyStepper
                   value={qty}
                   min={minQty}
-                  unit={product.unit || product.salesUnit}
+                  unit={viewProduct.unit || viewProduct.salesUnit}
                   onChange={setQty}
                   size="detail"
                   t={t}
@@ -534,7 +576,7 @@ export default function DetailsPage() {
                   qty={qty}
                   onQtyChange={setQty}
                   hideQty
-                  disabled={offline || Boolean(editingLine)}
+                  disabled={offline || Boolean(editingLine) || customSizeMissing}
                   onAdd={(_, intent, nextQty) => goToRfq(intent, nextQty)}
                   size="detail"
                   autoOpenTailor={autoOpenTailor}
@@ -652,10 +694,10 @@ export default function DetailsPage() {
         ) : (
           <div className="max-w-7xl mx-auto">
             <ProductActions
-              product={product}
+              product={{ ...product, unit: viewProduct.unit, salesUnit: viewProduct.salesUnit }}
               qty={qty}
               onQtyChange={setQty}
-              disabled={offline || Boolean(editingLine)}
+              disabled={offline || Boolean(editingLine) || customSizeMissing}
               onAdd={(_, intent, nextQty) => goToRfq(intent, nextQty)}
               size="bar"
               tailorNonce={tailorNonce}

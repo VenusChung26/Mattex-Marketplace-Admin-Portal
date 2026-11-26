@@ -12,7 +12,7 @@ import { normalizeProfileProjects, snapshotRfqRequest, rfqRequestVersionList, ac
 import { adoptGuestSpecMatch } from "./specMatchSession.js";
 import { foldHan } from "./han.js";
 import { CATEGORY_LIST_PAUSED } from "./categoryPause.js";
-import { SHOP_CATEGORY_TREE, shopCategoryById, shopCategoryByName, shopCategoryRows } from "./categoryTree.js";
+import { SHOP_CATEGORY_TREE, productShopCategoryIds, shopCategoryById, shopCategoryByName, shopCategoryRows } from "./categoryTree.js";
 import { buyerListPrice, buyerSpecSourceLines, displaySku, isLeadSpec, isTailorMade, localizeLeadTime, orderMinimum, productImageUrl, sellingAmount, specParts } from "./productFields.js";
 import { staffCertText } from "./editedProductText.js";
 import { shopTitle, splitSizeChoices } from "./catalogGroup.js";
@@ -324,9 +324,26 @@ function certStandardLines(value) {
   const lines = [];
   const breakBefore = /(?:\s*\/\s*|[\s\-–—]+)(?=BS\b|(?<!EN )ISO\b|(?<!BS )(?<!DIN )EN\b|ASTM\b|DIN\b|AWS\b|AS\b)/;
   for (const raw of String(value || "").split(/\n+/)) {
+    const bits = [];
     for (const bit of String(raw).split(breakBefore)) {
       const line = readableCertLine(bit);
-      if (!line || seen.has(line)) continue;
+      if (!line) continue;
+      if (bits.length && bits[bits.length - 1] === "FSC &" && /^BS\b/.test(line)) {
+        bits[bits.length - 1] = `FSC & ${line}`;
+        continue;
+      }
+      if (bits.length && /\bBE$/.test(bits[bits.length - 1]) && /^EN\b/.test(line)) {
+        bits[bits.length - 1] = `${bits[bits.length - 1]} ${line}`;
+        continue;
+      }
+      if (bits.length && !/\b(?:BS|ISO|EN|ASTM|DIN|AWS|AS|CS\d|QSPSC|FSC)\b/i.test(bits[bits.length - 1]) && /^(?:BS|ISO|EN|ASTM|DIN|AWS|AS)\b/.test(line)) {
+        bits[bits.length - 1] = `${bits[bits.length - 1]} ${line}`;
+        continue;
+      }
+      bits.push(line);
+    }
+    for (const line of bits) {
+      if (seen.has(line)) continue;
       seen.add(line);
       lines.push(line);
     }
@@ -784,22 +801,147 @@ function nameSpecBlob(product) {
   ).toLowerCase();
 }
 
-function shopCategoryTally() {
+function shopCategoryMembership() {
   const tally = new Map();
+  const parentProducts = new Map();
   for (const product of activeCatalog(PRODUCTS)) {
-    const id = String(product?.shopCategoryId || "");
-    if (!id) continue;
-    tally.set(id, (tally.get(id) || 0) + 1);
+    const parents = new Set();
+    for (const id of productShopCategoryIds(product)) {
+      tally.set(id, (tally.get(id) || 0) + 1);
+      const node = shopCategoryById(id);
+      if (node) parents.add(node.parentId || node.id);
+    }
+    for (const parentId of parents) {
+      if (!parentProducts.has(parentId)) parentProducts.set(parentId, new Set());
+      parentProducts.get(parentId).add(product.id || product.productNo);
+    }
   }
-  return tally;
+  return { tally, parentProducts };
+}
+
+function shopCategoryShot(product) {
+  const image = String(productImageUrl(product) || "").trim();
+  if (!image) return null;
+  return { image, imageFallback: String(product.imageFallback || "") };
+}
+
+const CATEGORY_FILE = {
+  "aluminium-product": "aluminium",
+  artificial: "shop-artificial",
+  bearing: "shop-bearing",
+  bollard: "shop-bollard",
+  ceiling: "shop-ceiling",
+  cladding: "shop-cladding",
+  concrete: "shop-concrete",
+  "cement-sand": "shop-cement-sand",
+  "corner-guard-bump-rail": "shop-corner-guard",
+  door: "shop-door",
+  equipment: "shop-equipment",
+  "expansion-joint": "shop-expansion-joint",
+  fender: "shop-fender",
+  fencing: "shop-fencing",
+  "fiberglass-grp-products": "shop-fiberglass",
+  "fire-protection-products": "shop-fire-protection",
+  gabion: "shop-gabion",
+  "gas-industrial": "shop-gas",
+  "gate-turnster-shutters": "shop-gate",
+  "general-hardware-ironmongery": "shop-hardware",
+  "geotextile-geosynthetics": "shop-geotextile",
+  "glass-gaizer": "shop-glass",
+  "hot-dip-galvanizing": "shop-galvanizing",
+  laminate: "shop-laminate",
+  "manhole-cover-access-hatch-cover-grating": "shop-manhole-cover",
+  matting: "shop-matting",
+  "mild-steel-product": "shop-mild-steel",
+  "noise-barrier": "shop-noise-barrier",
+  paint: "shop-paint",
+  "pebbles-stone-chips": "shop-pebbles",
+  "penstock-stoplog": "shop-penstock",
+  "plastic-and-rubber-products": "shop-plastic",
+  plastering: "plastering",
+  polyfoam: "shop-polyfoam",
+  "rock-bolt-soil-nail": "shop-rock-bolt",
+  "rock-fall-netting": "shop-rock-fall",
+  "safety-products": "shop-safety",
+  "sanitary-fittings": "shop-sanitary",
+  scaffolding: "shop-scaffolding",
+  "soundproof-materials": "shop-soundproof",
+  "stainless-steel-products": "shop-stainless",
+  stone: "shop-stone",
+  valve: "shop-valve",
+  "vehicular-parapet": "shop-vehicular-parapet",
+  "wall-covering": "shop-wall-covering",
+  petro: "shop-petro",
+};
+
+const CATEGORY_STOCK = [
+  [/aggregate|石料/, "/assets/type-aggregate.webp"],
+  [/aluminium|鋁/, "/assets/type-aluminium.webp"],
+  [/board|板材|^board/, "/assets/cat-board.webp"],
+  [/bolt|螺栓/, "/assets/gearbox.webp"],
+  [/brick|沙磚|砌塊/, "/assets/type-bricks.webp"],
+  [/chemical|化學/, "/assets/type-paint.webp"],
+  [/electrical|電子|cable|電線/, "/assets/type-cable.webp"],
+  [/environmental|環保/, "/assets/cat-timber.webp"],
+  [/floor|地板/, "/assets/type-floor.webp"],
+  [/mesh|^網/, "/assets/prod-mesh.webp"],
+  [/pipe|管道|喉/, "/assets/type-pipe.webp"],
+  [/precast|預製/, "/assets/prod-precast.webp"],
+  [/print|印刷/, "/assets/vfd.webp"],
+  [/steel|鋼/, "/assets/cat-steel.webp"],
+  [/tile|瓷磚|過底/, "/assets/prod-tile.webp"],
+  [/timber|夾板|木/, "/assets/type-timber.webp"],
+  [/waterproof|防水/, "/assets/type-waterproof.webp"],
+  [/window|窗/, "/assets/type-window.webp"],
+  [/digital|科技/, "/assets/plc.webp"],
+  [/gyps|石膏/, "/assets/type-gypsum.webp"],
+];
+
+function stockCategoryImage(node) {
+  const file = CATEGORY_FILE[node?.id];
+  if (file) return `/assets/categories/${file}.webp`;
+  const generated = generatedCategoryImage(node?.id, node?.name);
+  if (generated) return generated;
+  const text = `${node?.id || ""} ${node?.name || ""}`;
+  const hit = CATEGORY_STOCK.find(([pattern]) => pattern.test(text));
+  return hit ? hit[1] : "/assets/cat-steel.webp";
+}
+
+function categoryPicture(node, photos) {
+  const own = String(node?.image || "").trim();
+  if (own && !isGenericCategoryImage(own)) return { image: own, imageFallback: node.imageFallback || own };
+  const shot = photos.get(node?.id);
+  if (shot) return shot;
+  const stock = stockCategoryImage(node);
+  return { image: stock, imageFallback: stock };
 }
 
 function countedShopTree() {
-  const tally = shopCategoryTally();
+  const { tally, parentProducts } = shopCategoryMembership();
+  const photos = new Map();
+  for (const product of activeCatalog(PRODUCTS)) {
+    const shot = shopCategoryShot(product);
+    if (!shot) continue;
+    for (const id of productShopCategoryIds(product)) {
+      if (!photos.has(id)) photos.set(id, shot);
+    }
+  }
   return SHOP_CATEGORY_TREE.map((parent) => {
-    const children = (parent.children || []).map((child) => ({ ...child, count: tally.get(child.id) || 0 }));
+    const children = (parent.children || []).map((child) => {
+      const picture = categoryPicture(child, photos);
+      return { ...child, ...picture, count: tally.get(child.id) || 0 };
+    });
+    const ownShot = photos.get(parent.id);
+    const childShot = children.map((child) => photos.get(child.id)).find(Boolean);
+    const picture = ownShot || childShot || categoryPicture(parent, photos);
     const own = tally.get(parent.id) || 0;
-    return { ...parent, children, count: own + children.reduce((sum, child) => sum + child.count, 0) };
+    const unique = parentProducts.get(parent.id)?.size;
+    return {
+      ...parent,
+      ...picture,
+      children,
+      count: unique == null ? own + children.reduce((sum, child) => sum + child.count, 0) : unique,
+    };
   });
 }
 
@@ -1011,10 +1153,28 @@ function getCategoryByName(name) {
 }
 
 function shopCategoryTrail(product) {
-  const child = shopCategoryById(product?.shopCategoryId);
+  const id = String(product?.shopCategoryId || "").trim() || productShopCategoryIds(product)[0];
+  const child = shopCategoryById(id);
   if (!child) return [];
   const parent = child.parentId ? shopCategoryById(child.parentId) : null;
   return parent ? [parent, child] : [child];
+}
+
+function shopCategoryNodes(product) {
+  const nodes = [];
+  const seen = new Set();
+  const push = (node) => {
+    if (!node || seen.has(node.id)) return;
+    seen.add(node.id);
+    nodes.push(node);
+  };
+  for (const id of productShopCategoryIds(product)) {
+    const child = shopCategoryById(id);
+    if (!child) continue;
+    push(child.parentId ? shopCategoryById(child.parentId) : null);
+    push(child);
+  }
+  return nodes.length ? nodes : shopCategoryTrail(product);
 }
 
 function catalogPathForCategory(nameOrSlug) {
@@ -1071,7 +1231,7 @@ function getProductsByCategory(category) {
       ids.add(node.id);
       for (const child of node.children || []) ids.add(child.id);
     }
-    return source.filter((product) => ids.has(String(product.shopCategoryId || "")));
+    return source.filter((product) => productShopCategoryIds(product).some((id) => ids.has(id)));
   }
   const defs = names.map((n) => findCategoryDef(n)).filter(Boolean);
   if (!defs.length) {
@@ -5128,6 +5288,9 @@ function pdfSpecGroupLabel(group, index) {
   const fixed = {
     colour: "顏色",
     "paving-colour": "顏色",
+    "paving-size": "尺寸",
+    "wpc-size": "尺寸",
+    "paving-thickness": "厚度",
     "mesh-size": "尺寸",
     "marble-size": "尺寸",
     "tile-size": "尺寸",
@@ -5138,6 +5301,41 @@ function pdfSpecGroupLabel(group, index) {
     "cover-size": "尺寸",
     "slab-size": "尺寸",
     "kerb-length": "長度",
+    "dowel-length": "長度",
+    "ladder-material": "材料",
+    "ladder-size": "尺寸",
+    "ladder-spec": "規格",
+    "wpc-spec": "規格",
+    "floor-spec": "規格",
+    "clad-spec": "規格",
+    "kerb-grade": "等級",
+    "lintel-grade": "等級",
+    "plaster-grade": "等級",
+    "skim-grade": "等級",
+    "emulsion-product": "產品",
+    "grout-option": "選項",
+    "grout-color": "顏色",
+    "screed-product": "產品",
+    "screed-color": "顏色",
+    "bitumen-product": "產品",
+    "membrane-thickness": "厚度",
+    "homo-size": "尺寸",
+    "homo-color": "顏色",
+    "homo-slip": "防滑等級",
+    "ceramic-size": "尺寸",
+    "ceramic-finish": "飾面",
+    "ceramic-color": "顏色",
+    "marble-slip": "防滑",
+    "marble-color": "顏色",
+    "roof-size": "尺寸",
+    "roof-thickness": "厚度",
+    "roof-color": "顏色",
+    "tactile-type": "類型",
+    "tactile-material": "材料",
+    "tactile-color": "顏色",
+    "gblock-size": "尺寸",
+    "gblock-thickness": "厚度",
+    "gblock-density": "密度",
     "cable-length": "長度",
     diameter: "直徑",
     "block-thickness": "厚度",
@@ -9336,6 +9534,7 @@ export {
   getCategoryByName,
   catalogPathForCategory,
   shopCategoryTrail,
+  shopCategoryNodes,
   getTopProducts,
   getGreenProducts,
   getSalesProducts,

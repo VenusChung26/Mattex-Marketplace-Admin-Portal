@@ -23,7 +23,7 @@ import {
   productDescriptionText,
   specificationRows,
   certStandardLines,
-  shopCategoryTrail,
+  shopCategoryNodes,
   supplierDisplayName,
   supplierPath,
 } from "./store.js";
@@ -344,7 +344,7 @@ function buyerPurposeHtml(lang, product) {
 }
 
 function shopCategoryHtml(lang, product) {
-  const trail = shopCategoryTrail(product);
+  const trail = shopCategoryNodes(product);
   if (!trail.length) return "";
   return trail
     .map((node) => `<a href="${esc(withLocale(lang, `/catalog/${node.id}`))}">${esc(node.name)}</a>`)

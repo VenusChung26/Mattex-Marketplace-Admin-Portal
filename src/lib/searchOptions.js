@@ -1,7 +1,7 @@
 import { foldHan } from "./han.js";
 import { bestSpecMatch } from "./specSearch.js";
 import { CATEGORY_LIST_PAUSED } from "./categoryPause.js";
-import { shopCategoryRows } from "./categoryTree.js";
+import { productShopCategoryIds, shopCategoryById, shopCategoryRows } from "./categoryTree.js";
 
 export function productSku(product) {
   return String(product?.productNo || product?.provisionalSku || product?.id || "").trim();
@@ -20,22 +20,24 @@ export function categoriesInCatalog(catalog) {
 
 function shopTreeCategoryHits(catalog, query) {
   const tally = new Map();
+  const parentProducts = new Map();
   for (const product of catalog || []) {
-    const id = String(product?.shopCategoryId || "");
-    if (!id) continue;
-    tally.set(id, (tally.get(id) || 0) + 1);
-  }
-  const childSum = new Map();
-  const rows = shopCategoryRows();
-  for (const row of rows) {
-    if (!row.parentId) continue;
-    childSum.set(row.parentId, (childSum.get(row.parentId) || 0) + (tally.get(row.id) || 0));
+    const parents = new Set();
+    for (const id of productShopCategoryIds(product)) {
+      tally.set(id, (tally.get(id) || 0) + 1);
+      const node = shopCategoryById(id);
+      if (node) parents.add(node.parentId || node.id);
+    }
+    for (const parentId of parents) {
+      if (!parentProducts.has(parentId)) parentProducts.set(parentId, new Set());
+      parentProducts.get(parentId).add(product.id || product.productNo);
+    }
   }
   const hits = [];
-  for (const row of rows) {
+  for (const row of shopCategoryRows()) {
     const name = String(row.name || "").trim();
     if (!name || !foldHan(name).toLowerCase().includes(query)) continue;
-    const count = (tally.get(row.id) || 0) + (row.parentId ? 0 : childSum.get(row.id) || 0);
+    const count = row.parentId ? tally.get(row.id) || 0 : parentProducts.get(row.id)?.size || tally.get(row.id) || 0;
     hits.push([name, count]);
   }
   return hits;

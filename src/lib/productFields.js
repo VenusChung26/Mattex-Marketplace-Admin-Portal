@@ -58,10 +58,21 @@ const ZH_UNIT = {
   set: "套",
   sets: "套",
   lot: "批",
+  m_ton: "公噸",
   lots: "批",
+  drum: "圓桶",
+  drums: "圓桶",
+  pack: "套",
+  packs: "套",
+  roll: "卷",
+  rolls: "卷",
+  tin: "罐",
+  tins: "罐",
   license: "許可",
-  no: "個",
-  "no.": "個",
+  no: "件",
+  "no.": "件",
+  nr: "件",
+  "nr.": "件",
 };
 
 const LEAD_TIME_ZH = {
@@ -233,20 +244,30 @@ export function pickedSpecFields(groups, picked = {}, choices = []) {
   }
   ranked.sort((a, b) => b.score - a.score || choiceCompleteness(b.item) - choiceCompleteness(a.item));
   const top = ranked.filter((entry) => entry.score === ranked[0]?.score);
-  if (top.length === 1) return { ...found, ...optionFacts(top[0].item) };
+  if (top.length === 1) return mergeSpecFacts(optionFacts(top[0].item), found);
   if (top.length > 1) {
     const richest = [...top].sort((a, b) => choiceCompleteness(b.item) - choiceCompleteness(a.item));
     if (choiceCompleteness(richest[0].item) > choiceCompleteness(richest[1].item)) {
-      return { ...found, ...optionFacts(richest[0].item) };
+      return mergeSpecFacts(optionFacts(richest[0].item), found);
     }
     const detailed = top.filter((entry) => String(entry.item.detail || "").trim());
     const skus = [...new Set(detailed.map((entry) => String(entry.item.sku || "").trim()).filter(Boolean))];
     const picked = detailed.length === 1 ? detailed[0] : skus.length === 1 ? detailed.find((entry) => entry.item.sku) : null;
-    if (picked) return { ...found, ...optionFacts(picked.item) };
+    if (picked) return mergeSpecFacts(optionFacts(picked.item), found);
     const details = [...new Set(detailed.map((entry) => String(entry.item.detail || "").trim()))];
     if (details.length === 1) found = { ...found, detail: details[0] };
   }
   return found;
+}
+
+function filledFacts(facts) {
+  if (!facts) return {};
+  return Object.fromEntries(Object.entries(facts).filter(([, value]) => value != null && value !== ""));
+}
+
+/** Choice facts fill the row. A picked option's own unit or certificate replaces them. */
+function mergeSpecFacts(choiceFacts, optionFactsFound) {
+  return { ...filledFacts(choiceFacts), ...filledFacts(optionFactsFound) };
 }
 
 function choiceCompleteness(item) {
@@ -332,11 +353,18 @@ export function isLeadSpec(text) {
   return /^lead\s*:/i.test(String(text || "").trim());
 }
 
-/** Sales unit in the current language. Stored values stay English. */
+const COUNT_NO = new Set(["件", "no", "no.", "nr", "nr."]);
+
+/** Sales unit in the current language. Counted items use the engineering pair No. / 件. */
 export function displayUnit(unit, lang) {
   const raw = String(unit || "").trim();
-  if (!raw || lang !== "zh") return raw;
-  return ZH_UNIT[raw.toLowerCase()] || raw;
+  if (!raw) return "";
+  const key = raw.toLowerCase();
+  if (COUNT_NO.has(key)) return lang === "zh" ? "件" : "No.";
+  if (key === "m_ton") return lang === "zh" ? "公噸" : "M_Ton";
+  if (key === "包") return lang === "zh" ? "包" : "Bag";
+  if (lang !== "zh") return raw;
+  return ZH_UNIT[key] || raw;
 }
 
 /** Quantity at which delivery is lower. Missing or non-positive means no public line. */

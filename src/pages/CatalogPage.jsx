@@ -115,9 +115,10 @@ export default function CatalogPage() {
     }));
   }, [listActive, products, tileState, groupEpoch]);
 
+  const catalogResetKey = `${searchQuery}|${category?.id || ""}|${searchFields.join(",")}|${priceFilter}|${greenOnly ? 1 : 0}|${params.toString()}`;
   useEffect(() => {
     setCatalogShown(CATALOG_BATCH);
-  }, [searchQuery, category?.id, searchFields, priceFilter, greenOnly, tileState]);
+  }, [catalogResetKey]);
 
   const handleAdd = useCallback((productId, intent = "quote", qty, options) => {
     const note = listActive ? tileProductNote(options?.tileNote, lang, tileState) : "";

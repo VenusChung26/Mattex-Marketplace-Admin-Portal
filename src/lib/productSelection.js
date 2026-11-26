@@ -80,13 +80,42 @@ function isCustomizeSizeSelection(value) {
   return /^(customize size|custom dimensions)$/i.test(String(value || "").trim());
 }
 
+const INLINE_CUSTOM_SKIP = new Set(["floor-size", "mesh-size", "vinyl-size"]);
+
+/** Customize chips become an inline field, except the size groups that open their own dimension inputs. */
+export function groupUsesInlineCustomize(group) {
+  if (group?.customText) return true;
+  if (group?.customUnit || group?.field) return false;
+  if (INLINE_CUSTOM_SKIP.has(group?.id)) return false;
+  return (group?.options || []).some((item) => {
+    const label = selectionOptionLabel(item);
+    return isCustomSelection(label) || isCustomizeSizeSelection(label);
+  });
+}
+
+export function isCustomTextPick(group, value) {
+  if (!groupUsesInlineCustomize(group)) return false;
+  const text = String(value || "").trim();
+  if (!text || /^(custom|customize)$/i.test(text)) return false;
+  return !(group.options || []).some((item) => selectionOptionLabel(item) === text || selectionOptionKey(item) === text);
+}
+
+export function isCustomUnitPick(group, value) {
+  const unit = String(group?.customUnit || "").trim();
+  if (!unit) return false;
+  const escaped = unit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^\\d+(?:\\.\\d+)?${escaped}$`, "i").test(String(value || "").trim());
+}
+
 function isCustomSelection(value) {
   return /^(customize|customization|customize size|customize drawing upload)$/i.test(String(value || "").trim());
 }
 
 function optionNeedsCustomForm(group, option) {
   const label = selectionOptionLabel(option);
+  if (groupUsesInlineCustomize(group)) return false;
   if ((group?.id === "mesh-size" || group?.id === "vinyl-size") && isCustomizeSizeSelection(label)) return false;
+  if (group?.id === "floor-size" && /^customize$/i.test(label)) return false;
   return isCustomSelection(label);
 }
 
@@ -244,7 +273,7 @@ export function resolveSelection(product, line) {
     const value = corrected[group.id];
     if (group.field) {
       const parent = group.dependsOn ? corrected[group.dependsOn] : "";
-      const required = isCustomizeSizeSelection(parent);
+      const required = isCustomizeSizeSelection(parent) || /^customize$/i.test(String(parent || "").trim());
       const numberOk = Number(value) > 0 && Number.isFinite(Number(value));
       if ((required && !numberOk) || (value && !numberOk)) invalid.push(group.id);
       continue;
@@ -252,6 +281,7 @@ export function resolveSelection(product, line) {
     if (!groupHasMatchingOption(group, corrected)) continue;
     const option = findPickedSpecOption(group, corrected);
     if (!option) {
+      if (isCustomUnitPick(group, value) || isCustomTextPick(group, value)) continue;
       // Empty, or a listed option from another size/thickness, follows the current parent.
       // A saved option that no longer exists stays invalid.
       const known = value && (group.options || []).find((item) => selectionOptionKey(item) === value || selectionOptionLabel(item) === value);
@@ -263,14 +293,19 @@ export function resolveSelection(product, line) {
         }
       }
       if (!isCustomOnlyGroup(group, corrected)) invalid.push(group.id);
+    } else if ((group.customUnit || groupUsesInlineCustomize(group)) && isCustomSelection(String(value || ""))) {
+      customPending.push(group.id);
     } else if (optionNeedsCustomForm(group, option)) {
       customPending.push(group.id);
     }
   }
   const size = normalizePickedSize(line?.pickedSize);
+  const listedSize = String(product.sizeDesc || "").trim();
   const choices = splitSizeChoices(product.sizeDesc || product.primarySpec);
   if (size && isCustomSelection(size)) customPending.push("size");
-  else if (size && (choices.length ? !choices.includes(size) : size !== String(product.sizeDesc || "").trim())) invalid.push("size");
+  else if (size && isCustomSelection(listedSize)) {
+    // The Customize variant stores the buyer's typed dimensions as the size.
+  } else if (size && (choices.length ? !choices.includes(size) : size !== listedSize)) invalid.push("size");
   if (invalid.length) return { ok: false, error: "selection_invalid", invalidGroups: [...new Set(invalid)] };
   if (customPending.length) return { ok: false, error: "custom_required", invalidGroups: [...new Set(customPending)] };
   const nextLine = { ...line, pickedSpecs: normalizePickedSpecs(corrected) || line?.pickedSpecs || null };
@@ -285,6 +320,21 @@ export function selectionMessage(error, lang = "zh", minimum, invalidGroups) {
   const missing = invalidGroups || [];
   if (error === "selection_invalid" && missing.length && missing.every((id) => id === "mesh-width" || id === "mesh-length")) {
     return lang === "en" ? "Enter the width and length." : "請填寫闊度及長度。";
+  }
+  if (error === "selection_invalid" && missing.length && missing.every((id) => id === "floor-thickness" || id === "floor-width" || id === "floor-length")) {
+    return lang === "en" ? "Enter the size." : "請填寫尺寸。";
+  }
+  if (error === "custom_required" && missing.length === 1 && (missing[0] === "wpc-size" || missing[0] === "clad-size" || missing[0] === "ladder-size")) {
+    return lang === "en" ? "Enter the size." : "請填寫尺寸。";
+  }
+  if (error === "custom_required" && missing.length === 1 && (missing[0] === "ladder-spec" || missing[0] === "wpc-spec" || missing[0] === "floor-spec" || missing[0] === "clad-spec")) {
+    return lang === "en" ? "Enter the spec." : "請填寫規格。";
+  }
+  if (error === "custom_required" && missing.length === 1 && missing[0] === "paving-colour") {
+    return lang === "en" ? "Enter the colour." : "請填寫顏色。";
+  }
+  if (error === "custom_required" && missing.length === 1 && (missing[0] === "kerb-length" || missing[0] === "dowel-length" || missing[0] === "ply-length")) {
+    return lang === "en" ? "Enter the length." : "請填寫長度。";
   }
   if (error === "custom_required") {
     return lang === "en" ? "Enter the custom specification before submitting." : "請填寫自訂規格後再提交。";

@@ -1,8 +1,8 @@
 import { findPickedSpecOption, specGroupApplies } from "../lib/productFields.js";
-import { preparedSpecGroups, initialSpecPicks, openingSpecPicks, resolveSelection, selectedProduct, selectionMessage } from "../lib/productSelection.js";
+import { preparedSpecGroups, initialSpecPicks, openingSpecPicks, resolveSelection, selectedProduct, selectionMessage, isCustomUnitPick, isCustomTextPick, groupUsesInlineCustomize } from "../lib/productSelection.js";
 import { memo, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { displayLeadTime, getProduct, isBuyerVisible, isHitProduct, productSkuId, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, buildTailorPrefillDescription, requireBuyerAuth, catalogPathForCategory, shopCategoryTrail, canDirectBuy, CATEGORY_LIST_PAUSED } from "../lib/store";
+import { displayLeadTime, getProduct, isBuyerVisible, isHitProduct, productSkuId, stockStatusKey, supplierDisplayName, supplierPath, addCustomLine, buildTailorPrefillDescription, requireBuyerAuth, catalogPathForCategory, shopCategoryNodes, shopCategoryTrail, canDirectBuy, CATEGORY_LIST_PAUSED } from "../lib/store";
 import { customizeButtonText, isCustomizeLabel, isCustomizeSizeLabel, isPlainCustomizeLabel } from "../lib/specSearch";
 import { displayUnit, lowerDeliveryQty, orderMinimum, productImageUrl } from "../lib/productFields";
 import { groupOf, useCatalogGroups } from "../lib/catalogGroups";
@@ -405,7 +405,7 @@ function tailorInitialFromProduct(product, qty, { pickedSize = "", pickedSpecs =
 }
 
 export function ShopCategoryLinks({ product, lang, className }) {
-  const trail = shopCategoryTrail(product);
+  const trail = shopCategoryNodes(product);
   if (!trail.length) return null;
   return (
     <p className={className}>
@@ -624,7 +624,10 @@ export function ProductActions({ product, onAdd, size = "card", qty: qtyProp, on
   const selectionAlert = !selectionIssue.ok ? (
     <p role="alert" className="text-xs text-amber-800">
       {selectionMessage(selectionIssue.error, lang, minQty, selectionIssue.invalidGroups)}
-      {selectionIssue.error === "custom_required" ? (
+      {selectionIssue.error === "custom_required" && (selectionIssue.invalidGroups || []).some((id) => {
+        const group = (product.specGroups || []).find((item) => item.id === id);
+        return group && !group.customUnit && !groupUsesInlineCustomize(group);
+      }) ? (
         <> <button type="button" className="underline" onClick={openTailor}>{lang === "en" ? "Add specification" : "填寫規格"}</button></>
       ) : null}
     </p>
@@ -706,6 +709,9 @@ const SPEC_ID_NAMES = {
   colour: ["顏色", "Colour"],
   "tile-color": ["顏色", "Colour"],
   "paving-colour": ["顏色", "Colour"],
+  "paving-size": ["尺寸", "Size"],
+  "wpc-size": ["尺寸", "Size"],
+  "paving-thickness": ["厚度", "Thickness"],
   "mesh-size": ["尺寸", "Size"],
   "marble-size": ["尺寸", "Size"],
   "tile-size": ["尺寸", "Size"],
@@ -719,6 +725,20 @@ const SPEC_ID_NAMES = {
   "ply-thickness": ["厚度 (mm)", "Thickness (mm)"],
   "ply-grade": ["等級", "Grade"],
   "kerb-length": ["長度", "Length"],
+  "dowel-length": ["長度", "Length"],
+  "ladder-material": ["材料", "Material"],
+  "ladder-size": ["尺寸", "Size"],
+  "ladder-spec": ["規格", "spec"],
+  "wpc-spec": ["規格", "spec"],
+  "floor-spec": ["規格", "spec"],
+  "agg-type": ["規格", "Spec"],
+  "agg-size": ["尺寸", "Size"],
+  "agg-unit": ["單位", "Unit"],
+  "fill-type": ["規格", "Spec"],
+  "fill-unit": ["單位", "Unit"],
+  "rock-grade": ["規格", "Spec"],
+  "rock-unit": ["單位", "Unit"],
+  "clad-spec": ["規格", "Spec"],
   "cable-length": ["長度", "Length"],
   diameter: ["直徑", "Diameter"],
   "block-thickness": ["厚度", "Thickness"],
@@ -739,7 +759,34 @@ const SPEC_ID_NAMES = {
   "gypsum-frr": ["耐火時效", "Fire rating"],
   "block-grade": ["等級", "Grade"],
   cabin: ["人數", "Occupancy"],
-  "kerb-kind": ["種類", "Kind"],
+  "kerb-grade": ["等級", "Grade"],
+  "lintel-grade": ["等級", "Grade"],
+  "plaster-grade": ["等級", "Grading / Option"],
+  "skim-grade": ["等級", "Grading / Option"],
+  "emulsion-product": ["產品", "Product"],
+  "grout-option": ["選項", "Option"],
+  "grout-color": ["顏色", "Color"],
+  "screed-product": ["產品", "Product"],
+  "screed-color": ["顏色", "color"],
+  "bitumen-product": ["產品", "Product"],
+  "membrane-thickness": ["厚度", "Thickness"],
+  "homo-size": ["尺寸", "Size"],
+  "homo-color": ["顏色", "Colour"],
+  "homo-slip": ["防滑等級", "Slip rating"],
+  "ceramic-size": ["尺寸", "Size"],
+  "ceramic-finish": ["飾面", "Finishes"],
+  "ceramic-color": ["顏色", "Colour"],
+  "marble-slip": ["防滑", "Slip resistance"],
+  "marble-color": ["顏色", "Colour"],
+  "roof-size": ["尺寸", "Size"],
+  "roof-thickness": ["厚度", "thickness"],
+  "roof-color": ["顏色", "Colour"],
+  "tactile-type": ["類型", "Type"],
+  "tactile-material": ["材料", "Material"],
+  "tactile-color": ["顏色", "Colour"],
+  "gblock-size": ["尺寸", "Size"],
+  "gblock-thickness": ["厚度", "Thickness"],
+  "gblock-density": ["密度", "Density"],
   "aggregate-unit": ["單位", "Unit"],
   "aggregate-type": ["規格", "Spec"],
   "block-spec": ["規格", "Spec"],
@@ -812,13 +859,75 @@ function sectionPlan(product, members) {
 }
 
 const SPEC_OPTION_ZH = {
+  "Bonding agent and polymer additive": "界面劑及聚合物添加劑",
+  "Co-polymer emulsion": "共聚物乳液",
+  "Styrene acrylic co-polymer dispersion": "苯乙烯-丙烯酸酯共聚物分散體",
+  "25 Liter": "25 公升",
+  "200 Liter": "200 公升",
   "Customize Size": "自訂尺寸",
   Customize: "自訂",
+  Custom: "自訂",
   Orange: "橙色",
+  Glossy: "光面",
+  Matt: "啞面",
+  Amber: "琥珀色",
+  Lemon: "檸檬黃",
+  Mint: "薄荷綠",
+  Navy: "海軍藍",
   Green: "綠色",
   Grey: "灰色",
   Red: "紅色",
   "Dark Grey": "深灰色",
+  Brown: "棕色",
+  White: "白色",
+  "Light Grey": "淺灰色",
+  "Light Grey (SRI>75)": "淺灰色（SRI>75）",
+  Directional: "導向型",
+  "Hazard Warning": "警示型",
+  "Oriental (Positional)": "定位型",
+  "Homogeneous Tactile": "均質觸覺磚",
+  "Precast concrete tactile": "預製混凝土觸覺磚",
+  Cream: "奶油色",
+  "Purplish Brown": "紫棕色",
+  Ivory: "象牙色",
+  "Light Beige": "淺米色",
+  Sand: "沙色",
+  Apricot: "杏色",
+  "Light Brown": "淺棕色",
+  "Dusty Pink": "灰粉色",
+  "Sage Green": "鼠尾草綠",
+  "Medium Grey": "中灰色",
+  Almond: "杏仁色",
+  Peach: "桃色",
+  Bone: "骨色",
+  Buff: "淺黃褐",
+  "Light Green": "淺綠色",
+  "Apple Green": "苹果绿",
+  Opal: "蛋白色",
+  Pink: "粉紅色",
+  Rose: "玫瑰色",
+  Tan: "黃褐色",
+  Chocolate: "巧克力色",
+  Brick: "磚紅色",
+  "Light Blue": "淺藍色",
+  Black: "黑色",
+  Peru: "秘魯棕",
+  "Light Yellow": "淺黃色",
+  "Blue-Grey": "藍灰色",
+  Yellow: "黃色",
+  "Dark Brown": "深棕色",
+  "Light Salmon": "淺鮭紅",
+  Blue: "藍色",
+  "Greyish Blue": "灰藍色",
+  Beige: "米色",
+  Charcoal: "炭灰色",
+  "Dim Grey": "暗灰色",
+  "Ash Grey": "灰白色",
+  "Cool Grey": "冷灰色",
+  "Warm Grey": "暖灰色",
+  "Dark Green": "深綠色",
+  "Forest Green": "森綠色",
+  "Olive Green": "橄欖綠",
   "Natural Concrete": "天然混凝土",
   "Normal Kerb": "普通路緣",
   "Edge Kerb (Terminate Kerb)": "邊路緣（收口路緣）",
@@ -915,6 +1024,23 @@ const SPEC_OPTION_ZH = {
   "2 hr FRR": "2 小時耐火",
   "4 hr FRR": "4 小時耐火",
   Aggregates: "石料",
+  Aggregate: "碎石/骨料",
+  "Fine Aggregate": "細骨料",
+  "General Fill": "一般填料 / 普通填土",
+  "Type A Granular Bed": "A型墊層材料",
+  "Type B Granular Fill": "B型回填材料",
+  Rockfill: "塊石填料",
+  "Sub-base": "路面碎石底基層",
+  M_Ton: "公噸",
+  Bag: "袋",
+  "Coarse Aggregate": "粗骨料",
+  "Type A": "A 類",
+  "Type B": "B 類",
+  "Grade 75": "75 級",
+  "Grade 200": "200 級",
+  "Grade 400": "400 級",
+  "Grade 700": "700 級",
+  lot: "批",
   "Coarse Aggregate 5 mm": "粗骨料 5 mm",
   "Coarse Aggregate 10 mm": "粗骨料 10 mm",
   "Coarse Aggregate 20 mm": "粗骨料 20 mm",
@@ -1028,7 +1154,7 @@ function sortLengthOptions(options) {
   const custom = [];
   const rest = [];
   for (const option of options || []) {
-    if (isCustomizeLabel(specOptionLabel(option))) custom.push(option);
+    if (isCustomizeLabel(specOptionLabel(option)) || /^custom$/i.test(specOptionLabel(option))) custom.push(option);
     else if (rank(option) != null) sized.push(option);
     else rest.push(option);
   }
@@ -1166,9 +1292,13 @@ function reconcileSpecPicks(groups, current) {
       return (key === rawWanted || label === rawWanted || (wantedLabel && label === wantedLabel)) && usable(item);
     };
     const standard = (item) => !isCustomizeLabel(specOptionLabel(item));
-    const chosen = (rawWanted && options.find(named))
-      || options.find((item) => usable(item) && standard(item));
-    if (chosen) next[group.id] = specOptionKey(chosen);
+    const matched = rawWanted && options.find(named);
+    if (matched) next[group.id] = specOptionKey(matched);
+    else if (isCustomUnitPick(group, rawWanted) || isCustomTextPick(group, rawWanted)) next[group.id] = rawWanted.trim();
+    else {
+      const fallback = options.find((item) => usable(item) && standard(item));
+      if (fallback) next[group.id] = specOptionKey(fallback);
+    }
   }
   return next;
 }
@@ -1190,8 +1320,31 @@ function cardPreviewOptions(listed, selectable) {
 }
 
 
+function meterDraft(group, picked) {
+  const value = String(picked?.[group.id] || "").trim();
+  if (groupUsesInlineCustomize(group)) return isCustomTextPick(group, value) ? value : "";
+  if (!isCustomUnitPick(group, value)) return "";
+  const presets = new Set((group.options || []).map((option) => specOptionLabel(option) || specOptionKey(option)));
+  if (presets.has(value)) return "";
+  return value.slice(0, value.length - String(group.customUnit).length);
+}
+
+function customMeterActive(group, picked) {
+  if (!group?.customUnit && !groupUsesInlineCustomize(group)) return false;
+  const value = String(picked?.[group.id] || "").trim();
+  if (isCustomizeLabel(value)) return true;
+  return Boolean(meterDraft(group, picked));
+}
+
+function isUnitCustomOption(group, label) {
+  if (group?.customUnit && /^(custom|customize)$/i.test(String(label || "").trim())) return true;
+  return groupUsesInlineCustomize(group) && isCustomizeLabel(label);
+}
+
 export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, onPick, compact = false, moreHref = "", extraSections = 0, onVisibleCount, value, hiddenIds = [], seed = null }) {
   const { lang, t } = useLanguage();
+  const [unitDraft, setUnitDraft] = useState({});
+  const [forcedOpen, setForcedOpen] = useState({});
   const shown = preparedSpecGroups(groups);
   const shownKey = specGroupsSignature(shown);
   const [localPicks, setLocalPicks] = useState(() => reconcileSpecPicks(shown, initialSpecPicks(shown, seed)));
@@ -1205,6 +1358,32 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
     const next = reconcileSpecPicks(shown, raw);
     setLocalPicks(next);
     onPick?.(next);
+  }
+  function writeCustomUnit(group, raw) {
+    const text = String(raw || "").trim();
+    if (groupUsesInlineCustomize(group) || !group.customUnit) {
+      if (text.length > 40) return;
+      const preset = text && (group.options || []).some((option) => (specOptionLabel(option) || specOptionKey(option)) === text);
+      setUnitDraft((current) => ({ ...current, [group.id]: preset ? "" : text }));
+      setPicked((current) => {
+        const next = { ...current };
+        next[group.id] = text ? text : "Customize";
+        return next;
+      });
+      return;
+    }
+    if (text && !/^\d*\.?\d*$/.test(text)) return;
+    const number = Number(text);
+    const ready = Boolean(text) && Number.isFinite(number) && number > 0 && !text.endsWith(".");
+    const label = ready ? `${text}${group.customUnit}` : "";
+    const preset = ready && (group.options || []).some((option) => (specOptionLabel(option) || specOptionKey(option)) === label);
+    setUnitDraft((current) => ({ ...current, [group.id]: preset ? "" : text }));
+    setPicked((current) => {
+      const next = { ...current };
+      if (ready) next[group.id] = label;
+      else next[group.id] = "Customize";
+      return next;
+    });
   }
   useEffect(() => {
     onPick?.(picked);
@@ -1220,10 +1399,29 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
     }
     onImage?.("");
   }, [shownKey, onImage, picked]);
+  function childFields(group) {
+    return (shown || []).filter((item) => item.field && item.dependsOn === group?.id);
+  }
+  function slotOpen(group) {
+    if (!group) return false;
+    const value = String(picked[group.id] || "").trim();
+    const listed = (group.options || []).some((item) => {
+      const label = specOptionLabel(item);
+      return label && !isCustomizeLabel(label) && (specOptionKey(item) === value || label === value);
+    });
+    if (listed) return false;
+    if (forcedOpen[group.id] === false) return false;
+    if (forcedOpen[group.id] === true) return true;
+    return customMeterActive(group, picked) || childFields(group).some((field) => String(picked[field.id] || "").trim());
+  }
   const visible = (shown || []).filter((group) => {
     if (hiddenIds.includes(group.id)) return false;
     if (!specGroupApplies(group, picked)) return false;
-    if (group.field) return customDimensionsOpen(group, picked);
+    if (group.field) {
+      const parent = (shown || []).find((item) => item.id === group.dependsOn);
+      if (parent && childFields(parent).length) return false;
+      return customDimensionsOpen(group, picked);
+    }
     return listedGroupOptions(group, picked).some((option) => optionIsSelectable(group, option, picked));
   });
   const obsolete = Object.keys(picked).filter((id) => !shown.some((group) => group.id === id));
@@ -1255,7 +1453,7 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
         if (group.field === "length" && visible[index - 1]?.field === "width" && visible[index - 2]?.field === "thickness") return null;
         if (group.field === "length" && visible[index - 1]?.field === "width") return null;
         const paired = group.field === "width" && next?.field === "length";
-        const options = group.field ? [] : listedGroupOptions(group, picked).filter((option) => optionIsSelectable(group, option, picked));
+        const options = group.field ? [] : listedGroupOptions(group, picked).filter((option) => group.showDisabled || optionIsSelectable(group, option, picked));
         const named = groupHeading(group, index, total, lang, t("variantOption"));
         const writeField = (id, nextValue) =>
           setPicked((current) => syncDependentPicks(shown, { ...current, [id]: nextValue }));
@@ -1342,6 +1540,17 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
               const pickedKey = String(picked[group.id] || "");
               const active = resolveGroupOption(group, pickedKey, picked);
               const activeLabel = specOptionLabel(active) || specOptionKey(active);
+              const fields = childFields(group);
+              const closeCustom = () => {
+                setForcedOpen((current) => ({ ...current, [group.id]: false }));
+                setUnitDraft((current) => ({ ...current, [group.id]: "" }));
+                setPicked((current) => {
+                  const next = { ...current };
+                  delete next[group.id];
+                  for (const field of fields) delete next[field.id];
+                  return next;
+                });
+              };
               // Compact cards: preview a few chips, then jump to details for the rest.
               const preview = compact ? cardPreviewOptions(options, options) : options;
               const hiddenCount = options.length - preview.length;
@@ -1352,22 +1561,81 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
                     const label = specOptionLabel(option);
                     const displayKey = label || specOptionKey(option);
                     const customize = isCustomizeLabel(label);
+                    const isUnitCustom = isUnitCustomOption(group, label);
                     const enabled = customize || isGroupOptionEnabled(group, option, picked);
-                    const on = Boolean(activeLabel) && activeLabel === displayKey;
+                    const on = isUnitCustom ? customMeterActive(group, picked) : Boolean(activeLabel) && activeLabel === displayKey;
                     const swatch = specOptionSwatch(option);
                     const photo = specOptionImage(option);
                     const choose = () => {
                       if (!enabled) return;
+                      if (customize) {
+                        setForcedOpen((current) => ({ ...current, [group.id]: true }));
+                        if (!slotOpen(group)) {
+                          setUnitDraft((current) => ({ ...current, [group.id]: "" }));
+                          setPicked((current) => syncDependentPicks(shown, { ...current, [group.id]: specOptionKey(option) }));
+                        }
+                        return;
+                      }
+                      setForcedOpen((current) => ({ ...current, [group.id]: false }));
+                      setUnitDraft((current) => ({ ...current, [group.id]: "" }));
                       const resolved = resolveGroupOption(group, displayKey, picked) || option;
                       const nextKey = specOptionKey(resolved);
-                      setPicked((current) =>
-                        syncDependentPicks(shown, { ...current, [group.id]: nextKey })
-                      );
-                      if (!customize) return;
-                      if (isCustomizeSizeLabel(label) && group.id !== "slab-size") return;
-                      onCustomize?.(group.id === "slab-size" ? { dimensions: true } : undefined);
+                      setPicked((current) => {
+                        const next = syncDependentPicks(shown, { ...current, [group.id]: nextKey });
+                        for (const field of fields) delete next[field.id];
+                        return next;
+                      });
                     };
-                    if (swatch || photo) {
+                    if (customize && slotOpen(group) && group.id === "slab-size") {
+                      return (
+                        <CustomSizeFields
+                          key={`${group.id}:${displayKey}`}
+                          inline
+                          compact={compact}
+                          onChange={(value) => {
+                            setPicked((current) => syncDependentPicks(shown, { ...current, [group.id]: value || specOptionKey(option) }));
+                          }}
+                          onCancel={closeCustom}
+                        />
+                      );
+                    }
+                    if (customize && slotOpen(group)) {
+                      if (fields.length) {
+                        return (
+                          <span key={`${group.id}:${displayKey}`} data-custom-fields className="inline-flex items-center rounded-none border border-brand-700 bg-brand-50">
+                            {fields.map((field, fieldIndex) => (
+                              <span key={field.id} className="inline-flex items-center">
+                                {fieldIndex > 0 ? <span className={`px-1 text-mute ${compact ? "text-xs" : "text-sm"}`}>x</span> : null}
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  aria-label={field.labelEn || field.label || named}
+                                  placeholder="0"
+                                  autoFocus={fieldIndex === 0}
+                                  value={picked[field.id] || ""}
+                                  onChange={(event) => writeField(field.id, event.target.value.replace(/[^\d.]/g, "").slice(0, 6))}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") focusNextCustomInput(event);
+                                    if (event.key === "Escape") closeCustom();
+                                  }}
+                                  className={`bg-transparent text-center font-semibold text-brand-800 outline-none placeholder:font-normal placeholder:text-mute ${compact ? "w-12 py-1 text-xs" : "w-14 py-1.5 text-sm"}`}
+                                />
+                                {field.unit ? <span className={`pr-1 text-ink ${compact ? "text-xs" : "text-sm"}`}>{field.unit}</span> : null}
+                              </span>
+                            ))}
+                            <button
+                              type="button"
+                              aria-label={lang === "en" ? "Clear" : "取消"}
+                              onClick={closeCustom}
+                              className={`flex items-center justify-center self-stretch border-l border-brand-700/30 text-mute hover:bg-brand-100 hover:text-ink ${compact ? "w-7 text-sm" : "w-9 text-lg"}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      }
+                    }
+                    if ((swatch || photo) && !(customize && slotOpen(group))) {
                       const colorName = homogenousColorName(option, lang) || specOptionText(option, lang);
                       return (
                         <button
@@ -1395,13 +1663,44 @@ export function SpecGroupPicker({ groups, className = "", onCustomize, onImage, 
                         </button>
                       );
                     }
+                    if (customize && slotOpen(group)) {
+                      const clearCustom = closeCustom;
+                      return (
+                        <label key={`${group.id}:${displayKey}`} className="inline-flex items-center gap-1">
+                          <span className="relative inline-flex">
+                            <input
+                              type="text"
+                              inputMode={groupUsesInlineCustomize(group) ? "text" : "decimal"}
+                              aria-label={named}
+                              placeholder="_"
+                              autoFocus
+                              value={unitDraft[group.id] ?? meterDraft(group, picked)}
+                              onChange={(event) => writeCustomUnit(group, event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Escape") clearCustom();
+                              }}
+                              className={`${groupUsesInlineCustomize(group) ? "w-36" : "w-24"} rounded-none border border-brand-700 bg-brand-50 text-center font-semibold text-brand-800 outline-none placeholder:font-normal placeholder:text-mute focus:border-brand-700 ${compact ? "py-1 pr-8 text-xs" : "py-1.5 pr-10 text-sm"}`}
+                            />
+                            <button
+                              type="button"
+                              aria-label={lang === "en" ? "Clear" : "取消"}
+                              onClick={clearCustom}
+                              className={`absolute inset-y-0 right-0 flex items-center justify-center border-l border-brand-700/30 text-mute hover:bg-brand-100 hover:text-ink ${compact ? "w-7 text-sm" : "w-9 text-lg"}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                          {group.customUnit ? <span className={`text-ink ${compact ? "text-xs" : "text-sm"}`}>{group.customUnit}</span> : null}
+                        </label>
+                      );
+                    }
                     return (
                       <button
                         key={`${group.id}:${displayKey}`}
                         type="button"
                         aria-pressed={on}
                         disabled={!enabled}
-                        title={isPlainCustomizeLabel(label) ? customizeHint(lang) : undefined}
+                        title={isPlainCustomizeLabel(label) && !isUnitCustom ? customizeHint(lang) : undefined}
                         onClick={choose}
                         className={chipClass(on, !enabled)}
                       >
@@ -1431,16 +1730,94 @@ function isCustomizeChoice(label) {
   return isCustomizeLabel(label);
 }
 
+function focusNextCustomInput(event) {
+  event.preventDefault();
+  const box = event.currentTarget.closest("[data-custom-fields]");
+  const inputs = box ? [...box.querySelectorAll("input")] : [];
+  const next = inputs[inputs.indexOf(event.currentTarget) + 1];
+  if (next) next.focus();
+}
+
+export function CustomSizeFields({ onChange, onCancel, compact = false, inline = false }) {
+  const { lang } = useLanguage();
+  const [parts, setParts] = useState(["", "", ""]);
+  const placeholders = lang === "zh" ? ["長度", "闊度", "高度"] : ["Length", "Width", "Height"];
+  function write(index, raw) {
+    const next = String(raw || "").replace(/[^\d.]/g, "").slice(0, 6);
+    setParts((current) => {
+      const copy = current.map((part, partIndex) => (partIndex === index ? next : part));
+      const filled = copy.every((bit) => Number(bit) > 0 && Number.isFinite(Number(bit)));
+      queueMicrotask(() => onChange?.(filled ? `${copy[0]} x ${copy[1]} x ${copy[2]}mm` : ""));
+      return copy;
+    });
+  }
+  function clear() {
+    setParts(["", "", ""]);
+    onChange?.("");
+    onCancel?.();
+  }
+  const ready = parts.every((bit) => Number(bit) > 0 && Number.isFinite(Number(bit)));
+  const inputClass = `bg-transparent text-center font-semibold text-brand-800 outline-none placeholder:font-normal placeholder:text-mute ${compact ? "w-16 py-1 text-xs" : "w-24 py-1.5 text-sm"}`;
+  return (
+    <div className={inline ? "" : "mt-2"}>
+      <label className="inline-flex items-center gap-1">
+        <span data-custom-fields className="inline-flex items-center rounded-none border border-brand-700 bg-brand-50">
+          {placeholders.map((placeholder, index) => (
+            <span key={placeholder} className="inline-flex items-center">
+              {index > 0 ? <span className={`px-1 text-mute ${compact ? "text-xs" : "text-sm"}`}>x</span> : null}
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder={placeholder}
+                aria-label={placeholder}
+                value={parts[index]}
+                onChange={(event) => write(index, event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") focusNextCustomInput(event);
+                  if (event.key === "Escape") clear();
+                }}
+                className={inputClass}
+              />
+            </span>
+          ))}
+          <button
+            type="button"
+            aria-label={lang === "en" ? "Clear" : "取消"}
+            onClick={clear}
+            className={`flex items-center justify-center self-stretch border-l border-brand-700/30 text-mute hover:bg-brand-100 hover:text-ink ${compact ? "w-7 text-sm" : "w-9 text-lg"}`}
+          >
+            ×
+          </button>
+        </span>
+        <span className={`text-ink ${compact ? "text-xs" : "text-sm"}`}>mm</span>
+      </label>
+      {ready ? null : (
+        <p className={`mt-1 text-mute ${compact ? "text-[11px]" : "text-xs"}`}>
+          {lang === "zh" ? "請填長度、闊度、高度。" : "Enter length, width and height."}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function SizeChoicePicker({ choices, className = "", onCustomize, onPick, compact = false, title = "" }) {
   const { lang } = useLanguage();
   const sortedChoices = [...(choices || [])].sort(compareSpecText);
   const key = sortedChoices.join("\n");
   const [picked, setPicked] = useState(() => sortedChoices.find((choice) => !isCustomizeChoice(choice)) || "");
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customDraft, setCustomDraft] = useState("");
   useEffect(() => {
     onPick?.(picked);
   }, [onPick, picked]);
   const list = key ? key.split("\n") : [];
   if (list.length < 2) return null;
+  const standardChoice = list.find((choice) => !isCustomizeChoice(choice)) || "";
+  function closeCustom() {
+    setCustomOpen(false);
+    setCustomDraft("");
+    setPicked(standardChoice);
+  }
   const chipClass = (on) =>
     `w-fit max-w-full rounded-none border text-left ${
       compact ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-sm"
@@ -1455,15 +1832,54 @@ export function SizeChoicePicker({ choices, className = "", onCustomize, onPick,
       <div className={`mt-2 items-start ${compact ? "flex flex-col gap-1.5" : "flex flex-wrap gap-2"}`}>
         {list.map((choice) => {
           const on = picked === choice;
+          if (isCustomizeChoice(choice) && customOpen) {
+            return (
+              <label key={choice} className="inline-flex items-center">
+                <span className="relative inline-flex">
+                  <input
+                    type="text"
+                    aria-label={specOptionText(choice, lang)}
+                    placeholder="_"
+                    autoFocus
+                    value={customDraft}
+                    onChange={(event) => {
+                      const text = event.target.value.slice(0, 40);
+                      setCustomDraft(text);
+                      setPicked(text.trim() || choice);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") closeCustom();
+                    }}
+                    className={`rounded-none border border-brand-700 bg-brand-50 text-center font-semibold text-brand-800 outline-none placeholder:font-normal placeholder:text-mute ${compact ? "w-28 py-1 pr-8 text-xs" : "w-36 py-1.5 pr-10 text-sm"}`}
+                  />
+                  <button
+                    type="button"
+                    aria-label={lang === "en" ? "Clear" : "取消"}
+                    onClick={closeCustom}
+                    className={`absolute inset-y-0 right-0 flex items-center justify-center border-l border-brand-700/30 text-mute hover:bg-brand-100 hover:text-ink ${compact ? "w-7 text-sm" : "w-9 text-lg"}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              </label>
+            );
+          }
           return (
             <button
               key={choice}
               type="button"
               aria-pressed={on}
-              title={isPlainCustomizeLabel(choice) ? customizeHint(lang) : undefined}
+              title={isPlainCustomizeLabel(choice) && !customOpen ? customizeHint(lang) : undefined}
               onClick={() => {
+                if (isCustomizeChoice(choice)) {
+                  setCustomDraft("");
+                  setCustomOpen(true);
+                  setPicked(choice);
+                  return;
+                }
+                setCustomOpen(false);
+                setCustomDraft("");
                 setPicked(choice);
-                if (isCustomizeChoice(choice)) onCustomize?.();
               }}
               className={chipClass(on)}
             >
@@ -1482,6 +1898,7 @@ function ModelAndSizeSpecs({ members: rawMembers, selectedId, onSelect, moreHref
   const sizes = groupSizeChoices(members);
   const showVariants = members.length >= 2;
   const showSizes = sizes.length >= 2;
+  const [customOpen, setCustomOpen] = useState(false);
   if (!showVariants && !showSizes) return null;
   const prefix = showVariants ? sharedOptionPrefix(optionLabels(members)) : "";
   const own = (showVariants ? 1 : 0) + (showSizes ? 1 : 0);
@@ -1503,10 +1920,26 @@ function ModelAndSizeSpecs({ members: rawMembers, selectedId, onSelect, moreHref
           <VariantChips
             members={members}
             selectedId={selectedId}
-            onSelect={onSelect}
+            onSelect={(id) => {
+              onSelect(id);
+              const index = members.findIndex((member) => member.productId === id);
+              const label = stripOptionPrefix(optionLabels(members)[index] || "", prefix);
+              setCustomOpen(isPlainCustomizeLabel(label));
+            }}
             moreHref={moreHref}
             moreLabel={moreLabel}
             prefix={prefix}
+            replacement={isPlainCustomizeLabel(variantLabels[members.findIndex((member) => member.productId === selectedId)] || "") && customOpen ? (
+              <CustomSizeFields
+                inline
+                compact={compact}
+                onChange={onSizePick}
+                onCancel={() => {
+                  onSizePick?.("");
+                  setCustomOpen(false);
+                }}
+              />
+            ) : null}
           />
         </>
       ) : null}
@@ -1517,7 +1950,7 @@ function ModelAndSizeSpecs({ members: rawMembers, selectedId, onSelect, moreHref
   );
 }
 
-function VariantChips({ members, selectedId, onSelect, moreHref, moreLabel, prefix = "" }) {
+function VariantChips({ members, selectedId, onSelect, moreHref, moreLabel, prefix = "", replacement = null }) {
   const { lang } = useLanguage();
   if (members.length < 2) return null;
   const overflow = members.length > 3;
@@ -1534,6 +1967,7 @@ function VariantChips({ members, selectedId, onSelect, moreHref, moreLabel, pref
     <div data-tour="specs" className="mt-2 flex flex-col items-start gap-1.5">
       {visible.map((member) => {
         const on = member.productId === selectedId;
+        if (on && replacement) return <span key={member.productId}>{replacement}</span>;
         return (
           <button key={member.productId} type="button" aria-pressed={on} onClick={() => onSelect(member.productId)} className={chipClass(on)}>
             {labelOf.get(member.productId)}
@@ -1681,7 +2115,8 @@ export const ProductListRow = memo(function ProductListRow({ product, onAdd, gro
       <div className="min-w-0 self-start sm:w-60 sm:shrink-0">
         <TileCustomBox tileCustom={tileCustom} note={tileNote} onNote={setTileNote} />
         <ProductActions product={selected} onAdd={onAdd} size="row" tailorNonce={tailorNonce}
-            tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} tileNote={tileNote} />
+            tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} tileNote={tileNote}
+            disabled={isPlainCustomizeLabel(optionLabels(members)[members.findIndex((member) => member.productId === selectedId)] || "") && !pickedSize} />
       </div>
     </article>
   );
@@ -1769,7 +2204,8 @@ function ProductCard({ product, onAdd, rank = null, compact = false, grouped = f
           <TileCustomBox tileCustom={tileCustom} note={tileNote} onNote={setTileNote} />
           <div className="mt-2.5 min-[752px]:mt-3">
             <ProductActions product={selected} onAdd={onAdd} size="card" tailorNonce={tailorNonce}
-            tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} tileNote={tileNote} />
+            tailorDimensions={tailorDimensions} pickedSpecs={pickedSpecs} pickedSize={pickedSize} tileNote={tileNote}
+            disabled={isPlainCustomizeLabel(optionLabels(members)[members.findIndex((member) => member.productId === selectedId)] || "") && !pickedSize} />
           </div>
         </div>
       </div>

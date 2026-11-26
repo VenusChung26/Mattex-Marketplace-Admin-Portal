@@ -1799,63 +1799,6 @@
       ]
     },
     {
-      "id": "喉管-配件-pipe-fittings-accessories-upvc-pipe-fittings",
-      "name": "UPVC Pipe & Fittings",
-      "members": [
-        {
-          "productId": "mkt-loc-xdb0b1rf-001",
-          "productNo": "MKT-LOC-XDB0B1RF-001",
-          "option": "Color: Grey"
-        },
-        {
-          "productId": "mkt-loc-xdb0b1rf-002",
-          "productNo": "MKT-LOC-XDB0B1RF-002",
-          "option": "Color: White"
-        }
-      ]
-    },
-    {
-      "id": "喉管-配件-pipe-fittings-accessories-concrete-pipe",
-      "name": "Concrete Pipe",
-      "members": [
-        {
-          "productId": "mkt-loc-fy2wox2l-001",
-          "productNo": "MKT-LOC-FY2WOX2L-001",
-          "option": "Diameter 150mm"
-        },
-        {
-          "productId": "mkt-loc-fy2wox2l-002",
-          "productNo": "MKT-LOC-FY2WOX2L-002",
-          "option": "Diameter 225mm"
-        },
-        {
-          "productId": "mkt-loc-fy2wox2l-003",
-          "productNo": "MKT-LOC-FY2WOX2L-003",
-          "option": "Diameter 300mm"
-        },
-        {
-          "productId": "mkt-loc-fy2wox2l-004",
-          "productNo": "MKT-LOC-FY2WOX2L-004",
-          "option": "Diameter 375mm"
-        },
-        {
-          "productId": "mkt-loc-fy2wox2l-005",
-          "productNo": "MKT-LOC-FY2WOX2L-005",
-          "option": "Diameter 450mm"
-        },
-        {
-          "productId": "mkt-loc-fy2wox2l-006",
-          "productNo": "MKT-LOC-FY2WOX2L-006",
-          "option": "Diameter 525mm"
-        },
-        {
-          "productId": "mkt-loc-fy2wox2l-007",
-          "productNo": "MKT-LOC-FY2WOX2L-007",
-          "option": "Diameter 600mm"
-        }
-      ]
-    },
-    {
       "id": "批盪-plastering-cement",
       "name": "Cement",
       "members": [
@@ -1941,32 +1884,6 @@
           "productId": "mkt-loc-e4ap0exl-004",
           "productNo": "MKT-LOC-E4AP0EXL-004",
           "option": "Grading / option: Natural Concrete"
-        }
-      ]
-    },
-    {
-      "id": "磚-砌塊-brick-block-precast-concrete-block",
-      "name": "Precast Concrete Block",
-      "members": [
-        {
-          "productId": "mkt-loc-tdhe8gv6-001",
-          "productNo": "MKT-LOC-TDHE8GV6-001",
-          "option": "Grading / option: Standard / not stated"
-        },
-        {
-          "productId": "mkt-loc-tdhe8gv6-002",
-          "productNo": "MKT-LOC-TDHE8GV6-002",
-          "option": "Grading / option: 1 Hour"
-        },
-        {
-          "productId": "mkt-loc-tdhe8gv6-003",
-          "productNo": "MKT-LOC-TDHE8GV6-003",
-          "option": "Grading / option: 2 Hours"
-        },
-        {
-          "productId": "mkt-loc-tdhe8gv6-004",
-          "productNo": "MKT-LOC-TDHE8GV6-004",
-          "option": "Grading / option: 4 Hours"
         }
       ]
     },
@@ -2449,32 +2366,6 @@
       ]
     },
     {
-      "id": "磚-砌塊-brick-block-ytong-aac-block",
-      "name": "YTONG AAC Block",
-      "members": [
-        {
-          "productId": "mkt-loc-y974em5j-001",
-          "productNo": "MKT-LOC-Y974EM5J-001",
-          "option": "600mm x 200mm x 75mm"
-        },
-        {
-          "productId": "mkt-loc-y974em5j-002",
-          "productNo": "MKT-LOC-Y974EM5J-002",
-          "option": "600mm x 200mm x 100mm"
-        },
-        {
-          "productId": "mkt-loc-y974em5j-003",
-          "productNo": "MKT-LOC-Y974EM5J-003",
-          "option": "600mm x 200mm x 150mm"
-        },
-        {
-          "productId": "mkt-loc-y974em5j-004",
-          "productNo": "MKT-LOC-Y974EM5J-004",
-          "option": "600mm x 200mm x 225mm"
-        }
-      ]
-    },
-    {
       "id": "密目防燃安全網-dense-mesh-flame-retardant-safety-net-safety-net",
       "name": "Safety Net",
       "members": [
@@ -2767,27 +2658,6 @@
           "productId": "mkt-raf-0016",
           "productNo": "MKT-RAF-0016",
           "option": "500*500*25"
-        }
-      ]
-    },
-    {
-      "id": "石膏磚-gypsum-block-gypsum-block",
-      "name": "Gypsum Block",
-      "members": [
-        {
-          "productId": "mkt-gypsum-block-gypsum-block-500x500x80mm-1100-1200kg-m3",
-          "productNo": "MKT-GB-0001",
-          "option": "500*500*80mm"
-        },
-        {
-          "productId": "mkt-gypsum-block-gypsum-block-500x500x100mm-1100-1200kg-m3",
-          "productNo": "MKT-GB-0002",
-          "option": "500*500*100mm"
-        },
-        {
-          "productId": "mkt-gypsum-block-gypsum-block-500x250x150mm-1100-1200kg-m3",
-          "productNo": "MKT-GB-0003",
-          "option": "500*250*150mm"
         }
       ]
     },

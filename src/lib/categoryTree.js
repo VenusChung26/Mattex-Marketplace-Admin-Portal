@@ -11,17 +11,6 @@ export const SHOP_CATEGORY_TREE = [
     "depth": 0,
     "children": [
       {
-        "id": "drainage-subsoil-materials",
-        "name": "Drainage / Subsoil Materials (疏水材料)",
-        "count": 0,
-        "image": "",
-        "imageFallback": "",
-        "parentId": "aggregate",
-        "parentName": "Aggregate (石料)",
-        "depth": 1,
-        "children": []
-      },
-      {
         "id": "aggregate-sub-base",
         "name": "Aggregate & Sub-base (石料)",
         "count": 0,
@@ -57,17 +46,6 @@ export const SHOP_CATEGORY_TREE = [
       {
         "id": "granular-fill",
         "name": "Granular Fill (砂石料)",
-        "count": 0,
-        "image": "",
-        "imageFallback": "",
-        "parentId": "aggregate",
-        "parentName": "Aggregate (石料)",
-        "depth": 1,
-        "children": []
-      },
-      {
-        "id": "gravel",
-        "name": "Gravel (砂礫)",
         "count": 0,
         "image": "",
         "imageFallback": "",
@@ -328,6 +306,17 @@ export const SHOP_CATEGORY_TREE = [
       {
         "id": "lightweight-block",
         "name": "Lightweight Block (輕磚)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "brick-block",
+        "parentName": "Brick & Block (沙磚)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "aac-block",
+        "name": "Autoclaved Aerated Concrete (AAC) Block (蒸壓加氣混凝土磚)",
         "count": 0,
         "image": "",
         "imageFallback": "",
@@ -1745,6 +1734,105 @@ export const SHOP_CATEGORY_TREE = [
         "parentName": "Plastering (泥水工程)",
         "depth": 1,
         "children": []
+      },
+      {
+        "id": "base-plaster",
+        "name": "Base Plaster (底層批盪)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "plastering",
+        "parentName": "Plastering (泥水工程)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "skimcoat",
+        "name": "Skimcoat (抹灰)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "plastering",
+        "parentName": "Plastering (泥水工程)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "plaster-concrete-additive",
+        "name": "Concrete Additive (混凝土外加劑)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "plastering",
+        "parentName": "Plastering (泥水工程)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "plaster-non-shrink-grout",
+        "name": "Non-shrink Grout (無收縮灌漿料)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "plastering",
+        "parentName": "Plastering (泥水工程)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "masonry-mortar",
+        "name": "Masonry Mortar (砌築砂漿)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "plastering",
+        "parentName": "Plastering (泥水工程)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "tile-adhesive",
+        "name": "Tile Adhesive (瓷磚黏結劑)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "plastering",
+        "parentName": "Plastering (泥水工程)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "tile-grout",
+        "name": "Tile Grout (瓷磚填縫劑)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "plastering",
+        "parentName": "Plastering (泥水工程)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "floor-screed",
+        "name": "Floor Screed (地台砂漿)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "plastering",
+        "parentName": "Plastering (泥水工程)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "self-levelling-screed",
+        "name": "Self-Levelling Screed (自流平砂漿)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "plastering",
+        "parentName": "Plastering (泥水工程)",
+        "depth": 1,
+        "children": []
       }
     ]
   },
@@ -1794,6 +1882,28 @@ export const SHOP_CATEGORY_TREE = [
       {
         "id": "precast-concrete-paving-block",
         "name": "Precast Concrete Paving Block (預製混凝土鋪路磚)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "precast-concrete-products",
+        "parentName": "Precast Concrete Products (預製混凝土製品)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "precast-concrete-slabs",
+        "name": "Precast Concrete Slabs (預製混凝土板)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "precast-concrete-products",
+        "parentName": "Precast Concrete Products (預製混凝土製品)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "precast-concrete-lintel",
+        "name": "Precast Concrete Lintel (預鑄混凝土楣樑)",
         "count": 0,
         "image": "",
         "imageFallback": "",
@@ -2264,6 +2374,17 @@ export const SHOP_CATEGORY_TREE = [
         "children": []
       },
       {
+        "id": "dowel-bar",
+        "name": "Dowel Bar (傳力桿)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "structure-steel-element-metal-product",
+        "parentName": "Structure Steel Element, Metal Product (結構性鋼材、金屬製品)",
+        "depth": 1,
+        "children": []
+      },
+      {
         "id": "structure-steel-element",
         "name": "Structure Steel Element (結構性鋼材)",
         "count": 0,
@@ -2365,6 +2486,17 @@ export const SHOP_CATEGORY_TREE = [
       {
         "id": "railing",
         "name": "Railing (扶手欄桿)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "structure-steel-element-metal-product",
+        "parentName": "Structure Steel Element, Metal Product (結構性鋼材、金屬製品)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "cat-ladder",
+        "name": "Cat Ladder (貓梯)",
         "count": 0,
         "image": "",
         "imageFallback": "",
@@ -2609,6 +2741,17 @@ export const SHOP_CATEGORY_TREE = [
       {
         "id": "natural-marble-tiles",
         "name": "Natural Marble Tiles (天然大理石磚)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "tile",
+        "parentName": "Tile (磚)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "artificial-granite",
+        "name": "Artificial Granite (人造麻石)",
         "count": 0,
         "image": "",
         "imageFallback": "",
@@ -2896,6 +3039,72 @@ export const SHOP_CATEGORY_TREE = [
         "parentName": "Waterproofing (防水)",
         "depth": 1,
         "children": []
+      },
+      {
+        "id": "cementitious-waterproofing-coating",
+        "name": "Cementitious Waterproofing Coating (英泥質防水塗層)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "waterproofing",
+        "parentName": "Waterproofing (防水)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "bitumen-emulsion-coating",
+        "name": "Bitumen Emulsion Protective Coating (瀝青油)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "waterproofing",
+        "parentName": "Waterproofing (防水)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "coal-tar-epoxy-coating",
+        "name": "Coal Tar Epoxy Coating (環氧樹脂塗層)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "waterproofing",
+        "parentName": "Waterproofing (防水)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "polyethylene-membrane",
+        "name": "Polyethylene Membrane (馬路膠紙)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "waterproofing",
+        "parentName": "Waterproofing (防水)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "acrylic-waterproofing-coating",
+        "name": "Acrylic Waterproofing Coating (丙烯酸防水塗料)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "waterproofing",
+        "parentName": "Waterproofing (防水)",
+        "depth": 1,
+        "children": []
+      },
+      {
+        "id": "waterplug",
+        "name": "Waterplug (止水泥)",
+        "count": 0,
+        "image": "",
+        "imageFallback": "",
+        "parentId": "waterproofing",
+        "parentName": "Waterproofing (防水)",
+        "depth": 1,
+        "children": []
       }
     ]
   },
@@ -3149,6 +3358,17 @@ for (const parent of SHOP_CATEGORY_TREE) {
 
 export function shopCategoryById(id) {
   return byId.get(String(id || "").trim()) || null;
+}
+
+/** One product can be listed under several sub-categories. `shopCategoryIds` is the display order. */
+export function productShopCategoryIds(product) {
+  const listed = Array.isArray(product?.shopCategoryIds)
+    ? product.shopCategoryIds.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
+  const primary = String(product?.shopCategoryId || "").trim();
+  const ids = listed.length ? [...listed] : primary ? [primary] : [];
+  if (primary && !ids.includes(primary)) ids.unshift(primary);
+  return [...new Set(ids)];
 }
 
 export function shopCategoryByName(name) {

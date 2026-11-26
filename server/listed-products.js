@@ -334,11 +334,12 @@ function siblingImage(products, category) {
 function addProduct(products, row) {
   const name = displayName(row);
   const category = categoryName(row);
-  const id = `list-${createHash("sha256").update(`${row.market}|${name}|${row.price || ""}`).digest("hex").slice(0, 12)}`;
+  const sku = String(row.sku || "").trim().toUpperCase();
+  const id = sku ? sku.toLowerCase() : `list-${createHash("sha256").update(`${row.market}|${name}|${row.price || ""}`).digest("hex").slice(0, 12)}`;
   const image = siblingImage(products, category);
   const product = {
     id,
-    productNo: `MKT-LIST-${id.slice(5, 11).toUpperCase()}`,
+    productNo: sku || `MKT-LIST-${id.slice(5, 11).toUpperCase()}`,
     name,
     category,
     supplier: "Mattex Asia Development Limited",
